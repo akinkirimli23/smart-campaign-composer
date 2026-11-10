@@ -1,4 +1,4 @@
-module github.com/akinkirimli/smart-campaign-composer/backend
+module github.com/akinkirimli23/smart-campaign-composer/backend
 
 go 1.24.0
 

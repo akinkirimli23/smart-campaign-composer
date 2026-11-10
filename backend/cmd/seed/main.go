@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/akinkirimli/smart-campaign-composer/backend/internal/config"
-	"github.com/akinkirimli/smart-campaign-composer/backend/internal/db"
-	"github.com/akinkirimli/smart-campaign-composer/backend/internal/seed"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/config"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/seed"
 )
 
 func main() {

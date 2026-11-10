@@ -14,7 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/akinkirimli/smart-campaign-composer/backend/internal/db"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
 )
 
 func New(t *testing.T) *pgxpool.Pool {

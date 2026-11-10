@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akinkirimli/smart-campaign-composer/backend/internal/seed"
-	"github.com/akinkirimli/smart-campaign-composer/backend/internal/testdb"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/seed"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/testdb"
 )
 
 func TestLoadIsIdempotent(t *testing.T) {
