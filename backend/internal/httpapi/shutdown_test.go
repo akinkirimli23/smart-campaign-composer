@@ -16,7 +16,7 @@ import (
 // like a live progress stream with nothing new to report.
 func streamingServer(t *testing.T) (*Server, <-chan error) {
 	t.Helper()
-	s := New(fakePinger{})
+	s := New(Options{DB: fakePinger{}})
 	rcErr := make(chan error, 1)
 	s.mux.HandleFunc("GET /test/stream", func(w http.ResponseWriter, r *http.Request) {
 		rc := http.NewResponseController(w)

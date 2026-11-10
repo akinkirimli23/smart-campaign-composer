@@ -189,3 +189,100 @@ gerektirir; doğrulayıcının birim testleri veritabanına bağımlı hale geli
 **Ne zaman değişir.** `events`'e seed dışında bir yazan eklenirse (ör. gerçek olay toplayan bir
 API), kategoriler bir `categories` tablosuna taşınır, foreign key konur ve doğrulayıcı listeyi
 açılışta oradan yükler.
+
+---
+
+## 13. Segment kuralı formatı: düz, tipli koşul listesi
+
+**Karar.** Kural `match` (`all` / `any`) ve en fazla 10 koşuldan oluşan düz bir liste. Koşul iki
+tipten biri: `attribute` (`city`, `language`, `gender` için `in` / `not_in`; `age` için
+`between` + `min` / `max`) ya da `event` (`cart_add` / `purchase`, opsiyonel `category`,
+`within_days` 1–365, `exists`). İç içe grup yok. Kuralda serbest metin alan yok.
+
+```json
+{
+  "match": "all",
+  "conditions": [
+    { "type": "attribute", "field": "city", "op": "in", "values": ["İstanbul"] },
+    { "type": "event", "event": "cart_add", "within_days": 30, "exists": true },
+    { "type": "event", "event": "purchase", "within_days": 30, "exists": false }
+  ]
+}
+```
+
+**Neden.**
+- **Şemaya uyan her kural anlamlı.** Her koşul tipinin alanları sabit; doğrulayıcı tüm
+  ihtimalleri kapsayabiliyor. Başka tipe ait bir alan (`city` koşulunda `within_days`) ya da
+  bilinmeyen bir alan hatadır.
+- **Claude tarafında da zorlanabiliyor.** Claude'un structured outputs özelliği özyinelemeli
+  şemayı desteklemiyor. Düz format `anyOf` ile tam ifade ediliyor, kapalı kümeler (`enum`) dahil;
+  şema doğrulayıcının kullandığı tablolardan üretiliyor (`segment.JSONSchema`), ikisi ayrışamaz.
+- **Derleyici basit.** Her koşul sabit bir SQL kalıbına ve bind parametrelerine dönüşüyor;
+  parantezleme ya da özyineleme yok.
+
+**Şemanın yetmediği yer.** Structured outputs sayısal sınır (`within_days` 1–365), dizi uzunluğu ve
+koşullar arası kuralları ifade edemiyor; mock LLM zaten şemaya bağlı değil. Bu yüzden asıl otorite
+backend: `segment.Parse` ayrıca aralıkları, tekrar eden alanı ve birlikte kimseyi seçmeyen
+koşulları ("son 7 günde aldı" + "son 30 günde almadı") reddediyor. `segment.Compile` kendi
+başına da doğruluyor; Go'da elle kurulmuş bir kural da doğrulanmadan SQL'e ulaşamıyor.
+
+**Yaş.** Taslaktaki `birth_year` yerine `age` kullanıldı. Pazarlamacı "25–34 yaş" der; yılı
+Claude'a hesaplatmak gereksiz bir hata kaynağı. Backend `asOf` yılından doğum yılı aralığını
+kendisi çıkarıyor (yaklaşık: ay ve gün yok).
+
+**Alternatif.** İç içe `all` / `any` / `not` ağacı ve genel `field` / `op` / `value` yaprakları
+(JSON Logic benzeri). Her kombinasyonu ifade eder; ama şema özyinelemeli olur (Claude tarafında
+zorlanamaz), "şemaya uyan ama anlamsız" kurallar mümkün olur (`city` + `occurred_within_days`,
+altı seviye `not`), aynı niyet birden çok şekilde yazılabilir ve derinlik sınırı ayrıca gerekir.
+
+**Bedeli.** "(İstanbul ve sepet) veya (Ankara ve satın alma)" gibi iç içe mantık ifade
+edilemiyor. Bu durumda Claude "desteklenmiyor" der (bkz. 15) ve pazarlamacı brief'i iki
+kampanyaya böler.
+
+**Ne zaman değişir.** İç içe mantık gerçekten gerekirse tek seviye grup eklenir (koşul listesi
+yerine grup listesi); bu hâlâ özyinelemesiz bir şemadır.
+
+---
+
+## 14. Kitle açıklamasını backend üretir, Claude yalnızca yorumlarını bildirir
+
+**Karar.** Pazarlamacıya gösterilen kitle açıklaması Claude'dan gelmez; `segment.Describe`
+onu kuraldan türetir ("Şehir: İstanbul", "Son 30 günde hiç satın alma yapmadı"). Claude ayrıca
+`assumptions` listesi döner: brief'teki belirsiz bir ifadeyi nasıl yorumladığını, ilgili
+koşulun indeksiyle birlikte yazar. Arayüz bunu o koşulun satırının yanında gösterir.
+
+**Neden.**
+- İnsan onayı güvenlik mekanizmasıdır; insanın okuduğu şey SQL'e derlenen şeyle aynı kaynaktan
+  gelmeli. Claude'un yazdığı açıklama kuralla çelişirse ("son 30 gün" yazar, kural 7 gündür)
+  insan yanlış şeyi onaylar ve bunu hiçbir doğrulayıcı yakalayamaz, çünkü serbest metin
+  doğrulanamaz.
+- Yorumlar ise gizlenmemeli. "Alışveriş yapmayan" iki şekilde okunabilir: son 30 günde hiç
+  satın almamış, ya da sepete eklediği ürünü almamış. Format yalnızca ilkini ifade edebiliyor;
+  pazarlamacı bunu bilerek onaylamalı.
+
+**Sınırı.** `assumptions` de serbest metin, doğruluğu kontrol edilemez. Bu yüzden açıklamanın
+yerine değil yanına konur; backend yalnızca indeksin gerçek bir koşulu gösterdiğini ve
+uzunluğu kontrol eder. Çelişki olursa doğru olan türetilmiş açıklamadır.
+
+**Alternatif.** Kuralın içinde Claude'un yazdığı bir `explanation` alanı (ilk taslak). Daha
+doğal bir cümle verir, ama yukarıdaki çelişki riskini taşır.
+
+---
+
+## 15. Claude "desteklenmiyor" diyebilir; kısmi kural üretilmez
+
+**Karar.** Üretim çıktısı iki tipten biridir: `kind: "rule"` (kural + yorumlar) ya da
+`kind: "unsupported"` (neden + ifade edilemeyen ifadeler). Brief'in herhangi bir kitle koşulu
+formatla tam ifade edilemiyorsa Claude kural üretmez. Endpoint bu durumda 200 ve
+`status: "unsupported"` döner; sorgu çalışmaz.
+
+**Neden.** Çıkış yolu olmayan bir şema modeli uydurmaya zorlar: "500 TL üzeri harcayan
+İstanbullular" için en yakın geçerli çıktı "İstanbullular"dır, yani istenenden geniş bir kitle.
+Yanlış kitleye gönderim, gönderememekten daha pahalı bir hatadır.
+
+**Alternatif.** Desteklenen kısım için kural + desteklenmeyen kısımların listesi (kısmi kural).
+Pazarlamacıya bir başlangıç verir; ama eksik koşullu kural her zaman daha geniş bir kitledir ve
+uyarı gözden kaçarsa onaylanabilir. Pazarlamacı brief'i sadeleştirip yeniden deneyebilir.
+
+**Not.** Ton, indirim oranı gibi içerik talimatları kitle koşulu değildir; prompt bunların
+"desteklenmiyor" nedeni olmadığını açıkça söyler.

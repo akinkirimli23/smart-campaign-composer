@@ -14,13 +14,30 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Server struct {
-	db  Pinger
-	mux *http.ServeMux
+// Options are the Server's dependencies. Each is an interface so handlers can
+// be tested without a database or an LLM.
+type Options struct {
+	DB       Pinger
+	Segments SegmentGenerator
+	Audience AudienceCounter
+	// Now is the clock used as the "as of" time for audience queries.
+	// Defaults to time.Now; tests pin it.
+	Now func() time.Time
 }
 
-func New(db Pinger) *Server {
-	s := &Server{db: db, mux: http.NewServeMux()}
+type Server struct {
+	db       Pinger
+	segments SegmentGenerator
+	audience AudienceCounter
+	now      func() time.Time
+	mux      *http.ServeMux
+}
+
+func New(o Options) *Server {
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	s := &Server{db: o.DB, segments: o.Segments, audience: o.Audience, now: o.Now, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -33,6 +50,9 @@ func (s *Server) routes() {
 	})
 	// Readiness: dependencies are reachable and we can do useful work.
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+
+	s.mux.HandleFunc("POST /api/segments/generate", s.handleSegmentGenerate)
+	s.mux.HandleFunc("POST /api/segments/count", s.handleSegmentCount)
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

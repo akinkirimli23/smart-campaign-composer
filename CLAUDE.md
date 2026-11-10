@@ -73,9 +73,9 @@ sonrakine geçilir.
 | # | Aşama | Kapsam | Bitti ölçütü | Durum |
 |---|---|---|---|---|
 | 1 | İskelet | compose, şema (`users`, `events`), deterministik seed, `/healthz`, `/readyz` | Compose temiz kurulumda kalkıyor, testler geçiyor, örnek brief SQL ile 381 / 222 / 254 / 58 veriyor | ✅ |
-| 2 | Kitle | Segment kuralı JSON şeması, doğrulayıcı, parametreli SQL derleyici (**zaman parametre olarak verilir**, SQL'de `now()` yok), kanal bazlı kitle sayısı endpoint'i, mock LLM | Örnek brief sabit bir tarihte 381 / 222 / 254 / 58 veriyor; geçersiz şehir, bilinmeyen alan ve SQL enjeksiyonu denemesi testle reddediliyor | ⏳ |
+| 2 | Kitle | Segment kuralı JSON şeması, doğrulayıcı, parametreli SQL derleyici (**zaman parametre olarak verilir**, SQL'de `now()` yok), kanal bazlı kitle sayısı endpoint'i, mock LLM | Örnek brief sabit bir tarihte 381 / 222 / 254 / 58 veriyor; geçersiz şehir, bilinmeyen alan ve SQL enjeksiyonu denemesi testle reddediliyor | ✅ |
 | 3 | İçerik | Akışlı (SSE) SMS / email üretimi, değişkenler doldurulduktan sonra karakter limiti kontrolü, hatalı çıktıda hatayı Claude'a geri verip sınırlı sayıda yeniden deneme | Mock LLM'in bozuk JSON, limiti aşan SMS ve bilinmeyen değişken senaryoları testte doğru ele alınıyor | ⏳ |
-| 4 | Gönderim | `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`'a uyma; hata, gecikme ve 429 döndüren mock provider | Testte aynı kişiye iki kez mesaj gitmiyor ve hız limiti aşılmıyor | ⏳ |
+| 4 | Gönderim | `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`'a uyma; hata, gecikme ve 429 döndüren mock provider | Testte aynı kişiye iki kez mesaj gitmiyor ve hız limiti aşılmıyor; mock provider `docker compose up` ile kalkıyor | ⏳ |
 | 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı; pazarlamacının elle düzenlediği metin onay anında backend'de yeniden doğrulanıyor (SMS 160, konu 80, yalnızca izinli değişkenler); arayüz karakter sayısını canlı gösteriyor | ⏳ |
 | 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi, "Case gereksinimleri" listesinin madde madde kontrolü | Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş; gerçek Claude ile en az bir uçtan uca deneme yapıldı ya da yapılmadığı README'de yazıyor; "Case gereksinimleri" listesindeki her madde işaretli ya da README'de eksik olarak belirtilmiş | ⏳ |
 
@@ -112,7 +112,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | Kullanıcı akışı 4: mesajlar kuyruk üzerinden mock provider'a gönderilir | 4 |
 | Kullanıcı akışı 5: dashboard gönderim durumunu canlı gösterir | 5 |
 | Gerçek kimseye mesaj gitmez: alıcılar sahte kullanıcılar, gönderim mock provider'a | 1 ✅ (seed), 4 |
-| Kitle: Claude'un segment kuralı backend'de doğrulanır, LLM çıktısı doğrudan SQL olarak çalıştırılmaz | 2 |
+| Kitle: Claude'un segment kuralı backend'de doğrulanır, LLM çıktısı doğrudan SQL olarak çalıştırılmaz | 2 ✅ |
 | Kitle: izni olmayan kullanıcıya o kanaldan mesaj gönderilmez | 2 (sayım), 4 (gönderim) |
 | İçerik: SMS en fazla 160 karakter | 3, 5 (elle düzenleme) |
 | İçerik: email konusu en fazla 80 karakter | 3, 5 (elle düzenleme) |
@@ -129,7 +129,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 
 | Gereksinim | Aşama |
 |---|---|
-| Claude'un çıktısı yapılandırılmış JSON, backend'de kontrol ediliyor (segment kuralı) | 2 |
+| Claude'un çıktısı yapılandırılmış JSON, backend'de kontrol ediliyor (segment kuralı) | 2 ✅ |
 | Claude'un çıktısı yapılandırılmış JSON, backend'de kontrol ediliyor (içerik) | 3 |
 | "Çağırmak yeterli değil, güvenilir hale getir": hatalı çıktıda hata geri beslenip sınırlı yeniden deneme | 3 |
 | Testler gerçek API key olmadan, mock bir LLM ile çalışıyor | 2, 3 (her aşamada korunur) |
@@ -167,27 +167,21 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | Kullanıcının diline göre içerik | planda yok (seed'de %10 `en` hazır) |
 | CI pipeline | 6 |
 
-## 12 Kasım için başlangıç önerisi: segment kuralı
+## Segment kuralı (aşama 2, kesinleşti)
 
-Kesinleşmiş değil, tartışılacak taslak:
+Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
 
-```json
-{
-  "match": "all",
-  "conditions": [
-    { "type": "attribute", "field": "city", "op": "in", "values": ["İstanbul"] },
-    { "type": "event", "event": "cart_add", "within_days": 30, "exists": true },
-    { "type": "event", "event": "purchase", "within_days": 30, "exists": false }
-  ],
-  "explanation": "İstanbul'da son 30 günde sepete ekleyip satın almayanlar"
-}
-```
-
-- `attribute` alanları: `city`, `language`, `gender`, `birth_year` (her biri için izinli op listesi).
-- `event` koşulu: `event` ∈ {`cart_add`, `purchase`}, opsiyonel `category`, `within_days` 1–365,
-  `exists` true/false → `EXISTS` / `NOT EXISTS` alt sorgusu.
-- Sınırlar: en fazla N koşul, iç içe grup yok (ya da tek seviye), bilinmeyen alan reddedilir
-  (`DisallowUnknownFields`).
-- Doğrulama hataları insan okunur ve Claude'a geri verilebilir olmalı
-  (ör. `conditions[0].values[0]: "Istanbul" geçerli bir şehir değil; geçerli: İstanbul, Ankara, …`).
-- Kitle sayısı endpoint'i kanal bazında döner: toplam, SMS'e uygun, email'e uygun, ulaşılamaz.
+- `internal/segment`: `Parse` (katı ayrıştırma + doğrulama), `Compile(rule, asOf)` (parametreli
+  SQL), `Describe` (pazarlamacıya gösterilen açıklama, kuraldan türetilir), `JSONSchema`
+  (Claude'a verilen şema, aynı tablolardan üretilir), `Generator` (LLM + hata geri besleme, en
+  fazla 3 deneme).
+- Yeni bir alan / operatör eklemek: `rule.go` tabloları, `validate.go`, `compile.go`,
+  `describe.go`, `schema.go` ve testler. Tablolar tek kaynak; SQL'e giden kolon adı oradan gelir.
+- Claude'un çıktısı ya `rule` ya `unsupported`. Açıklama metni Claude'dan alınmaz; Claude
+  yalnızca `assumptions` (yorumlar) döner.
+- `internal/audience`: kanal bazlı sayım. `SMSReachable` / `EmailReachable` sabitleri "bu kanaldan
+  gönderilebilir" tanımının tek yeri; aşama 4'teki gönderici de bunları kullanmalı.
+- `internal/llm`: `Client` arayüzü, testler için `Scripted`; `llm/mockllm` key yokken kullanılan
+  anahtar kelime eşleştirici.
+- **Açık iş:** gerçek Claude istemcisi henüz bağlı değil (`cmd/api` key olsa da mock kullanır ve
+  uyarı loglar). Aşama 3'ün ilk işi; SDK mı ham HTTP mi kararı kullanıcıya sorulacak.

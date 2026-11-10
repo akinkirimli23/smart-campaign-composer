@@ -14,7 +14,7 @@ type fakePinger struct{ err error }
 func (f fakePinger) Ping(context.Context) error { return f.err }
 
 func TestHealthz(t *testing.T) {
-	srv := New(fakePinger{err: errors.New("down")}) // liveness must not depend on the DB
+	srv := New(Options{DB: fakePinger{err: errors.New("down")}}) // liveness must not depend on the DB
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
@@ -35,7 +35,7 @@ func TestReadyz(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			New(fakePinger{err: tt.pingErr}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			New(Options{DB: fakePinger{err: tt.pingErr}}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
 			}

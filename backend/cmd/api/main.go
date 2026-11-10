@@ -10,9 +10,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/config"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/httpapi"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/mockllm"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
 
 func main() {
@@ -49,7 +53,17 @@ func run() error {
 
 	// NewHTTPServer cancels request contexts on Shutdown, so open SSE streams
 	// do not hold the process for the whole ShutdownTimeout.
-	srv := httpapi.NewHTTPServer(cfg.HTTPAddr, httpapi.New(pool))
+	// TODO(stage 3): wire the Anthropic client when cfg.UseRealLLM() is true.
+	var model llm.Client = mockllm.Client{}
+	if cfg.UseRealLLM() {
+		slog.Warn("ANTHROPIC_API_KEY is set but the Claude client is not wired yet; using the mock LLM")
+	}
+
+	srv := httpapi.NewHTTPServer(cfg.HTTPAddr, httpapi.New(httpapi.Options{
+		DB:       pool,
+		Segments: segment.Generator{LLM: model},
+		Audience: audience.Counter{DB: pool},
+	}))
 
 	errCh := make(chan error, 1)
 	go func() {
