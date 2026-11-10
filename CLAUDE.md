@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **Gereksinimlerde şüphe olursa `case.pdf`'e bak** (repo kökünde, `.gitignore`'da; asla commit edilmez).
+
 Insider One AI Developer case: **Smart Campaign Composer**. Pazarlamacı doğal dille bir brief
 yazar, Claude bundan segment kuralı ve SMS / email içeriği önerir, insan düzenleyip onaylar,
 mesajlar kuyruk üzerinden mock provider'a gönderilir, gönderim canlı izlenir.
@@ -74,8 +76,8 @@ sonrakine geçilir.
 | 2 | Kitle | Segment kuralı JSON şeması, doğrulayıcı, parametreli SQL derleyici (**zaman parametre olarak verilir**, SQL'de `now()` yok), kanal bazlı kitle sayısı endpoint'i, mock LLM | Örnek brief sabit bir tarihte 381 / 222 / 254 / 58 veriyor; geçersiz şehir, bilinmeyen alan ve SQL enjeksiyonu denemesi testle reddediliyor | ⏳ |
 | 3 | İçerik | Akışlı (SSE) SMS / email üretimi, değişkenler doldurulduktan sonra karakter limiti kontrolü, hatalı çıktıda hatayı Claude'a geri verip sınırlı sayıda yeniden deneme | Mock LLM'in bozuk JSON, limiti aşan SMS ve bilinmeyen değişken senaryoları testte doğru ele alınıyor | ⏳ |
 | 4 | Gönderim | `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`'a uyma; hata, gecikme ve 429 döndüren mock provider | Testte aynı kişiye iki kez mesaj gitmiyor ve hız limiti aşılmıyor | ⏳ |
-| 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | *(öneri, onay bekliyor)* Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı | ⏳ |
-| 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi | *(öneri, onay bekliyor)* Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş | ⏳ |
+| 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı; pazarlamacının elle düzenlediği metin onay anında backend'de yeniden doğrulanıyor (SMS 160, konu 80, yalnızca izinli değişkenler); arayüz karakter sayısını canlı gösteriyor | ⏳ |
+| 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi, "Case gereksinimleri" listesinin madde madde kontrolü | Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş; gerçek Claude ile en az bir uçtan uca deneme yapıldı ya da yapılmadığı README'de yazıyor; "Case gereksinimleri" listesindeki her madde işaretli ya da README'de eksik olarak belirtilmiş | ⏳ |
 
 ### Sınırlar
 
@@ -89,14 +91,81 @@ sonrakine geçilir.
 - **Karar kuralı:** DECISIONS'a girecek bir karar verilmeden önce kullanıcıya iki seçenek,
   artısı ve eksisiyle gösterilir; kullanıcı seçince devam edilir.
 
-## İlk oturumda yapılacaklar
+## Yeni oturum başlangıcı
 
-1. Kökteki `Makefile.txt` dosyasının adı `Makefile` olmalı (önceki ortam bu dosyayı yazamadı).
-2. `docker compose up --build` çalıştır, `curl localhost:8080/readyz` ile doğrula. Sorun varsa düzelt.
-3. `make test` çalıştır; seed'in `TestLoadIsIdempotent` testinin atlanmadan geçtiğini kontrol et.
-4. Mevcut kodu (özellikle `internal/seed`, `internal/db`) kullanıcıya anlat; kullanıcı her satırı
-   review görüşmesinde savunabilmeli.
-5. `git init`, ilk commit, GitHub'a push.
+1. `make test` çalıştır (make yoksa `docker compose --profile test run --rm --build test`).
+2. Yukarıdaki durum tablosuna bak; ilk ⏳ aşama sıradakidir.
+3. O aşamanın bitti ölçütlerinden eksik olanlarla devam et.
+
+## Case gereksinimleri
+
+`case.pdf`'ten çıkarılmış kontrol listesi. Sütun: karşılanacağı aşama. ✅ = karşılandı.
+Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'de belirtilir.
+
+### Fonksiyonel
+
+| Gereksinim | Aşama |
+|---|---|
+| Kullanıcı akışı 1: Claude brief'ten segment kuralı üretir, arayüz kaç kişiye gideceğini gösterir | 2, 5 |
+| Kullanıcı akışı 2: SMS ve email içeriği ekrana stream edilerek akar | 3, 5 |
+| Kullanıcı akışı 3: pazarlamacı önizler, gerekirse düzenler ve onaylar | 5 |
+| Kullanıcı akışı 4: mesajlar kuyruk üzerinden mock provider'a gönderilir | 4 |
+| Kullanıcı akışı 5: dashboard gönderim durumunu canlı gösterir | 5 |
+| Gerçek kimseye mesaj gitmez: alıcılar sahte kullanıcılar, gönderim mock provider'a | 1 ✅ (seed), 4 |
+| Kitle: Claude'un segment kuralı backend'de doğrulanır, LLM çıktısı doğrudan SQL olarak çalıştırılmaz | 2 |
+| Kitle: izni olmayan kullanıcıya o kanaldan mesaj gönderilmez | 2 (sayım), 4 (gönderim) |
+| İçerik: SMS en fazla 160 karakter | 3, 5 (elle düzenleme) |
+| İçerik: email konusu en fazla 80 karakter | 3, 5 (elle düzenleme) |
+| İçerik: `{{first_name}}` gibi kişiselleştirme değişkenleri desteklenir | 3, 4 (gönderimde doldurma) |
+| Gönderim: asenkron kuyruk | 4 |
+| Gönderim: kanal başına saniyede en fazla 100 mesaj | 4 |
+| Gönderim: aynı kişiye aynı mesaj iki kez gitmez | 4 |
+| Gönderim: retry stratejisi tasarlanır (ve DECISIONS'ta gerekçelendirilir) | 4 |
+| Takip: canlı gönderim durumu endpoint'i | 5 |
+| Takip: metrics endpoint'i | 5 |
+| Takip: health check endpoint'i | 1 ✅ |
+
+### AI
+
+| Gereksinim | Aşama |
+|---|---|
+| Claude'un çıktısı yapılandırılmış JSON, backend'de kontrol ediliyor (segment kuralı) | 2 |
+| Claude'un çıktısı yapılandırılmış JSON, backend'de kontrol ediliyor (içerik) | 3 |
+| "Çağırmak yeterli değil, güvenilir hale getir": hatalı çıktıda hata geri beslenip sınırlı yeniden deneme | 3 |
+| Testler gerçek API key olmadan, mock bir LLM ile çalışıyor | 2, 3 (her aşamada korunur) |
+
+### Kaynaklar
+
+| Gereksinim | Aşama |
+|---|---|
+| API key `.env`'deki `ANTHROPIC_API_KEY`'den okunuyor | 1 ✅ (config), 2–3 (kullanım) |
+| Repoda `.env.example` var | 1 ✅ |
+| Birkaç bin kullanıcılık seed (ad, email, telefon, şehir, alışveriş geçmişi, kanal izinleri) | 1 ✅ |
+| Mock SMS / email provider gerçek bir servisi taklit ediyor | 4 |
+| Mock provider zaman zaman hata, gecikme ve 429 döndürüyor | 4 |
+| Frontend Vue.js, backend Go | 1 ✅ (Go), 5 (Vue) |
+
+### Teslim edilecekler
+
+| Gereksinim | Aşama |
+|---|---|
+| GitHub repository | 1 ✅ |
+| `docker compose up` ile tek komutla kurulum, seed verisi dahil | 1 ✅ |
+| `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 |
+| `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
+| `README.md`: kurulum ve kısa mimari özeti | 6 |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama, 6 |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | her aşama, 6 |
+| Yetiştirilemeyenler README'de belirtilmiş | 6 |
+
+### Bonus (isteğe bağlı)
+
+| Gereksinim | Aşama |
+|---|---|
+| Zamanlanmış gönderim | planda yok |
+| A/B varyantları | planda yok |
+| Kullanıcının diline göre içerik | planda yok (seed'de %10 `en` hazır) |
+| CI pipeline | 6 |
 
 ## 12 Kasım için başlangıç önerisi: segment kuralı
 
