@@ -56,7 +56,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	s.mux.ServeHTTP(rec, r)
-	slog.Debug("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "dur", time.Since(start))
+
+	level := slog.LevelInfo
+	if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		// Polled every few seconds by the container healthcheck; logging these
+		// at info would drown out real traffic.
+		level = slog.LevelDebug
+	}
+	slog.Log(r.Context(), level, "http",
+		"method", r.Method, "path", r.URL.Path, "status", rec.status,
+		"dur_ms", float64(time.Since(start).Microseconds())/1000)
 }
 
 type statusRecorder struct {
@@ -69,11 +78,17 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// Flush lets streaming handlers (SSE) work through the recorder.
+// Flush lets handlers that type-assert http.Flusher stream through the recorder.
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer, so handlers
+// can use SetWriteDeadline, EnableFullDuplex etc. through the recorder.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

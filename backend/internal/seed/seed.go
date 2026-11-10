@@ -15,6 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
 )
 
 type User struct {
@@ -192,7 +194,7 @@ func Load(ctx context.Context, pool *pgxpool.Pool, count int, randomSeed int64, 
 	var seeded bool
 	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		// Serialise concurrent seeders; the lock is released at commit.
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(774412)`); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, db.SeedLockID); err != nil {
 			return err
 		}
 		var n int64

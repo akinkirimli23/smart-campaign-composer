@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -14,7 +15,9 @@ type Config struct {
 	AnthropicAPIKey string
 	// LLMMode: "mock" always uses the mock LLM, "anthropic" requires a key,
 	// "auto" uses Anthropic when a key is present and falls back to mock otherwise.
-	LLMMode         string
+	LLMMode string
+	// LogLevel comes from LOG_LEVEL (debug, info, warn, error); default info.
+	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
 	SeedUsers       int
 	SeedRandom      int64
@@ -22,11 +25,18 @@ type Config struct {
 
 func Load() (Config, error) {
 	c := Config{
-		DatabaseURL:     getenv("DATABASE_URL", "postgres://scc:scc@localhost:5432/scc?sslmode=disable"),
+		// The default targets the compose Postgres, which is published on host
+		// port 5433 so it does not clash with a locally installed Postgres.
+		DatabaseURL:     getenv("DATABASE_URL", "postgres://scc:scc@localhost:5433/scc?sslmode=disable"),
 		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		LLMMode:         getenv("LLM_MODE", "auto"),
 		ShutdownTimeout: 10 * time.Second,
+	}
+
+	// UnmarshalText accepts debug/info/warn/error in any case.
+	if err := c.LogLevel.UnmarshalText([]byte(getenv("LOG_LEVEL", "info"))); err != nil {
+		return c, fmt.Errorf("LOG_LEVEL: %w", err)
 	}
 
 	var err error

@@ -163,3 +163,29 @@ ayrı bir Postgres şeması oluşturur ve sonunda siler; `TEST_DATABASE_URL` yok
 
 **Neden.** Değerlendirenin makinesinde Go, Postgres veya API key gerekmez. Ayrı şemalar
 testlerin birbirinin verisini görmesini engeller ve paralel çalışmalarına izin verir.
+
+---
+
+## 12. Veritabanı kısıtları: yapısal kurallar CHECK ile, iş değerleri uygulamada
+
+**Karar.** `002_events_amount_check` migration'ı "satın almanın tutarı vardır, sepete eklemenin
+yoktur" kuralını bir `CHECK` kısıtı yaptı. Kategori (`events.category`) ve şehir (`users.city`)
+için `CHECK` konmadı; kapalı kümelerin tek kaynağı Go'daki `seed.Categories` ve `seed.Cities()`.
+
+**Neden.**
+- Tutar kuralı yapısal: olay tipinin anlamından gelir, iş değiştikçe değişmez. Bir kez yazılır,
+  bakım istemez.
+- Kategori listesi iş verisi. Gerçek bir sistemde ürün kataloğundan gelir ve değişir. Listeyi
+  SQL'e de yazmak ikinci bir doğruluk kaynağı yaratır: her yeni kategori hem Go'da hem bir
+  migration'da değişmeli, biri unutulursa ikisi ayrışır.
+- Kapalı kümenin koruduğu risk LLM'in ürettiği segment kuralı (bkz. 7). LLM çıktısı `events`
+  tablosuna yazılmaz, yalnızca onu sorgulayan kurala dönüşür; koruma doğru yerde, doğrulayıcıda.
+  `events`'e bugün yalnızca seed yazıyor ve `TestGenerateInvariants` kategorileri kontrol ediyor.
+
+**Alternatif.** `CHECK (category IN (...))` ya da bir `categories` tablosu ve foreign key.
+Foreign key tek kaynak sorununu çözer, ama doğrulayıcının listeyi veritabanından okumasını
+gerektirir; doğrulayıcının birim testleri veritabanına bağımlı hale gelir.
+
+**Ne zaman değişir.** `events`'e seed dışında bir yazan eklenirse (ör. gerçek olay toplayan bir
+API), kategoriler bir `categories` tablosuna taşınır, foreign key konur ve doğrulayıcı listeyi
+açılışta oradan yükler.

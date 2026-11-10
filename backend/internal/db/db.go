@@ -18,9 +18,17 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// migrationLockID is an arbitrary constant used for pg_advisory_lock so that
-// concurrently starting processes never apply migrations twice.
-const migrationLockID = 774411
+// Postgres advisory lock ids. The values are arbitrary but must be distinct;
+// keeping every id used in the codebase here makes an accidental clash (two
+// features serialising on, or deadlocking over, the same lock) visible.
+const (
+	// migrationLockID stops concurrently starting processes from applying
+	// migrations twice. Session-level: it spans one transaction per migration.
+	migrationLockID int64 = 774411
+	// SeedLockID serialises concurrent seeders (see seed.Load).
+	// Transaction-level: released when the seed transaction ends.
+	SeedLockID int64 = 774412
+)
 
 // Connect opens a pool and waits (bounded) for the database to accept connections.
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/config"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
@@ -17,6 +16,8 @@ import (
 )
 
 func main() {
+	// Default logger until the configured level is known, so a config error is
+	// still logged as JSON.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
 		slog.Error("api exited", "err", err)
@@ -29,6 +30,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -45,11 +47,9 @@ func run() error {
 		return err
 	}
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(pool),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	// NewHTTPServer cancels request contexts on Shutdown, so open SSE streams
+	// do not hold the process for the whole ShutdownTimeout.
+	srv := httpapi.NewHTTPServer(cfg.HTTPAddr, httpapi.New(pool))
 
 	errCh := make(chan error, 1)
 	go func() {
