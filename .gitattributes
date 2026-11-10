@@ -1,0 +1,6 @@
+# Keep LF line endings in the repo and in checkouts, including on Windows,
+# so shell scripts and SQL behave the same inside Linux containers.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
