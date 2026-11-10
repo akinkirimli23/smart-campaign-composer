@@ -65,14 +65,29 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
 
 ## Durum ve plan
 
-| Gün | İş | Durum |
-|---|---|---|
-| 11 Kas | İskelet: compose, şema (`users`, `events`), seed, `/healthz`, `/readyz` | ✅ (11 Kas: compose Windows + Docker 28 üzerinde kalktı, testler geçti, 381/222/254/58 SQL ile doğrulandı) |
-| 12 Kas | Segment kuralı: JSON şeması, doğrulayıcı, SQL derleyici, kitle sayısı endpoint'i, mock LLM | ⏳ |
-| 13 Kas | İçerik: akışlı (SSE) SMS / email üretimi, limit ve değişken doğrulaması, hatalı çıktıda geri besleme ile yeniden deneme | ⏳ |
-| 14 Kas | Gönderim: `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`; mock provider (hata, gecikme, 429) | ⏳ |
-| 15–16 Kas | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano; metrics endpoint'i; gerçek Claude ile deneme | ⏳ |
-| 17 Kas | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz makinede kurulum denemesi. Yeni özellik yok. | ⏳ |
+İş gün bazlı değil, aşama bazlı ilerler. Bir aşamanın "bitti" ölçütlerinin hepsi sağlanınca
+sonrakine geçilir.
+
+| # | Aşama | Kapsam | Bitti ölçütü | Durum |
+|---|---|---|---|---|
+| 1 | İskelet | compose, şema (`users`, `events`), deterministik seed, `/healthz`, `/readyz` | Compose temiz kurulumda kalkıyor, testler geçiyor, örnek brief SQL ile 381 / 222 / 254 / 58 veriyor | ✅ |
+| 2 | Kitle | Segment kuralı JSON şeması, doğrulayıcı, parametreli SQL derleyici (**zaman parametre olarak verilir**, SQL'de `now()` yok), kanal bazlı kitle sayısı endpoint'i, mock LLM | Örnek brief sabit bir tarihte 381 / 222 / 254 / 58 veriyor; geçersiz şehir, bilinmeyen alan ve SQL enjeksiyonu denemesi testle reddediliyor | ⏳ |
+| 3 | İçerik | Akışlı (SSE) SMS / email üretimi, değişkenler doldurulduktan sonra karakter limiti kontrolü, hatalı çıktıda hatayı Claude'a geri verip sınırlı sayıda yeniden deneme | Mock LLM'in bozuk JSON, limiti aşan SMS ve bilinmeyen değişken senaryoları testte doğru ele alınıyor | ⏳ |
+| 4 | Gönderim | `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`'a uyma; hata, gecikme ve 429 döndüren mock provider | Testte aynı kişiye iki kez mesaj gitmiyor ve hız limiti aşılmıyor | ⏳ |
+| 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | *(öneri, onay bekliyor)* Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı | ⏳ |
+| 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi | *(öneri, onay bekliyor)* Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş | ⏳ |
+
+### Sınırlar
+
+- Aşama 1–4 en geç **15 Kasım akşamı** biter.
+- **17 Kasım'da yeni özellik yok**; yalnızca aşama 6.
+- Bir aşama uzarsa kapsamı daraltılır, kesilen kısım README'ye yazılır.
+
+### Çalışma kuralları
+
+- **Aşama sonu:** testler çalıştırılır, commit atılır, push'lanır ve kullanıcıya kısa bir özet verilir.
+- **Karar kuralı:** DECISIONS'a girecek bir karar verilmeden önce kullanıcıya iki seçenek,
+  artısı ve eksisiyle gösterilir; kullanıcı seçince devam edilir.
 
 ## İlk oturumda yapılacaklar
 
