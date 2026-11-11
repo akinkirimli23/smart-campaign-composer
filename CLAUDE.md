@@ -56,7 +56,7 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
 
 ## Kod düzeni
 
-- Go 1.24, standart `net/http` (Go 1.22 route pattern'leri), `pgx/v5`, `log/slog`.
+- Go 1.25 (Anthropic SDK v2 gereği, DECISIONS 16), standart `net/http` (Go 1.22 route pattern'leri), `pgx/v5`, `log/slog`.
   Gereksiz bağımlılık ekleme; ekleyeceksen DECISIONS'a nedenini yaz.
 - `backend/cmd/*` giriş noktaları, `backend/internal/*` paketler.
 - Migration'lar `backend/internal/db/migrations/NNN_ad.sql`, binary'ye gömülü, sıralı.
@@ -181,7 +181,8 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   yalnızca `assumptions` (yorumlar) döner.
 - `internal/audience`: kanal bazlı sayım. `SMSReachable` / `EmailReachable` sabitleri "bu kanaldan
   gönderilebilir" tanımının tek yeri; aşama 4'teki gönderici de bunları kullanmalı.
-- `internal/llm`: `Client` arayüzü, testler için `Scripted`; `llm/mockllm` key yokken kullanılan
-  anahtar kelime eşleştirici.
-- **Açık iş:** gerçek Claude istemcisi henüz bağlı değil (`cmd/api` key olsa da mock kullanır ve
-  uyarı loglar). Aşama 3'ün ilk işi; SDK mı ham HTTP mi kararı kullanıcıya sorulacak.
+- `internal/llm`: `Client` ve `Streamer` arayüzleri, testler için `Scripted`; `llm/mockllm` key
+  yokken kullanılan anahtar kelime eşleştirici; `llm/anthropicllm` gerçek istemci (resmi Go SDK,
+  DECISIONS 16). SDK'yı yalnızca `anthropicllm` import eder. Testleri yerel bir SSE sunucusuna
+  karşı çalışır, key istemez.
+- **Açık iş:** gerçek key ile uçtan uca deneme henüz yapılmadı (aşama 6 ölçütü).

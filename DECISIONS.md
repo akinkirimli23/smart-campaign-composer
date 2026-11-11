@@ -286,3 +286,37 @@ uyarı gözden kaçarsa onaylanabilir. Pazarlamacı brief'i sadeleştirip yenide
 
 **Not.** Ton, indirim oranı gibi içerik talimatları kitle koşulu değildir; prompt bunların
 "desteklenmiyor" nedeni olmadığını açıkça söyler.
+
+---
+
+## 16. Claude istemcisi: resmi Go SDK, `llm.Client` arayüzünün arkasında
+
+**Karar.** Claude'a `anthropic-sdk-go/v2` ile gidilir. SDK'yı yalnızca `internal/llm/anthropicllm`
+import eder; uygulamanın geri kalanı `llm.Client` / `llm.Streamer` arayüzünü görür. Her istek
+akışlı (streaming) gönderilir, şema `output_config.format` (structured outputs) ile verilir.
+Model `ANTHROPIC_MODEL` ile değişir, varsayılan `claude-opus-5-5`.
+
+**Neden.**
+- Aşama 3 akışlı üretim gerektiriyor. SSE ayrıştırıcısını, 429 / 5xx retry'ını ve hata
+  eşlemesini elle yazmak puan getirmeyen bir hata yüzeyi; SDK bunları hazır veriyor ve API
+  değişikliklerini takip ediyor.
+- İstemci arayüzün arkasında kaldığı için testler etkilenmiyor: uygulama testleri `llm.Scripted`
+  ve mock ile, istemcinin kendi testleri Messages API'nin SSE formatını konuşan yerel bir
+  `httptest` sunucusuyla çalışıyor. Hiçbiri API key ya da ağ istemiyor.
+
+**İstemcinin sorumluluğu.** Yalnızca taşıma. Şemaya uyan yanıt geçerli yanıt değildir; ayrıştırma,
+doğrulama ve yeniden deneme çağıranda (`segment.Generator`) kalır. İstemcinin kendi ele aldığı
+durumlar: `refusal` (`ErrRefused`), `max_tokens` (`ErrTruncated`, yarım JSON döndürülmez), metinsiz
+yanıt (`ErrEmpty`). Reddedilen bir yanıt yeniden denemede modele üretildiği haliyle (thinking
+blokları dahil) geri gönderilir; yalnızca metni geri vermek modelin akıl yürütmesini kaybettirir.
+
+**Bedeli.**
+- Yeni bağımlılık (ve dolaylı olarak OpenTelemetry API paketleri).
+- SDK v2 Go 1.25 istiyor; derleme imajı ve `go.mod` 1.24'ten 1.25'e çıktı.
+
+**Bilinçli olarak yapılmayan.** Sunucu taraflı refusal fallback (beta) açık değil: bir pazarlama
+brief'inde ret beklenmiyor ve beta başlığına bağımlılık istemedim. Ret olursa açık bir hata döner.
+Thinking ve effort modelin varsayılanında bırakıldı; böylece aynı istek her güncel modelde çalışır.
+
+**Alternatif.** Ham `net/http`: sıfır bağımlılık, her satır bizim; ama SSE, retry ve hata
+eşlemesini kendimiz yazıp test ederiz.

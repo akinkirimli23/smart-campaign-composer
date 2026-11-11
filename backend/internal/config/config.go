@@ -13,6 +13,8 @@ type Config struct {
 	DatabaseURL     string
 	HTTPAddr        string
 	AnthropicAPIKey string
+	// AnthropicModel is the model id sent to the API; empty means the client's default.
+	AnthropicModel string
 	// LLMMode: "mock" always uses the mock LLM, "anthropic" requires a key,
 	// "auto" uses Anthropic when a key is present and falls back to mock otherwise.
 	LLMMode string
@@ -30,6 +32,7 @@ func Load() (Config, error) {
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://scc:scc@localhost:5433/scc?sslmode=disable"),
 		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicModel:  os.Getenv("ANTHROPIC_MODEL"),
 		LLMMode:         getenv("LLM_MODE", "auto"),
 		ShutdownTimeout: 10 * time.Second,
 	}

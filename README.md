@@ -79,7 +79,7 @@ backend/
   internal/seed    deterministik sahte kullanıcı üretimi
   internal/segment segment kuralı: doğrulama, SQL derleme, açıklama, LLM ile üretim
   internal/audience kanal bazlı kitle sayımı
-  internal/llm     LLM arayüzü; llm/mockllm key yokken kullanılan mock
+  internal/llm     LLM arayüzü; llm/anthropicllm Claude istemcisi, llm/mockllm key yokken kullanılan mock
   internal/httpapi HTTP handler'ları
   internal/testdb  entegrasyon testleri için izole şema
 frontend/          Vue uygulaması (planlanan)
@@ -99,7 +99,7 @@ ai-sessions/       Claude oturum export'ları
 | Docker compose, migration, seed, health | ✅ |
 | Segment kuralı şeması, doğrulama, SQL derleyici, kitle sayısı endpoint'i | ✅ |
 | Mock LLM, hatalı çıktıda geri besleme ile yeniden deneme (segment) | ✅ |
-| Gerçek Claude istemcisi (şu an key olsa da mock kullanılır) | ⏳ |
+| Gerçek Claude istemcisi (resmi Go SDK, akışlı; gerçek key ile henüz denenmedi) | ✅ |
 | Akışlı içerik üretimi, karakter limiti kontrolü | ⏳ |
 | Kuyruk, worker, hız limiti, retry | ⏳ |
 | Mock SMS / email provider | ⏳ |

@@ -15,6 +15,7 @@ import (
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/httpapi"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/anthropicllm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/mockllm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
@@ -51,14 +52,17 @@ func run() error {
 		return err
 	}
 
-	// NewHTTPServer cancels request contexts on Shutdown, so open SSE streams
-	// do not hold the process for the whole ShutdownTimeout.
-	// TODO(stage 3): wire the Anthropic client when cfg.UseRealLLM() is true.
 	var model llm.Client = mockllm.Client{}
 	if cfg.UseRealLLM() {
-		slog.Warn("ANTHROPIC_API_KEY is set but the Claude client is not wired yet; using the mock LLM")
+		client := anthropicllm.New(cfg.AnthropicAPIKey, cfg.AnthropicModel)
+		model = client
+		slog.Info("llm: anthropic", "model", client.Model())
+	} else {
+		slog.Info("llm: mock (no ANTHROPIC_API_KEY, or LLM_MODE=mock)")
 	}
 
+	// NewHTTPServer cancels request contexts on Shutdown, so open SSE streams
+	// do not hold the process for the whole ShutdownTimeout.
 	srv := httpapi.NewHTTPServer(cfg.HTTPAddr, httpapi.New(httpapi.Options{
 		DB:       pool,
 		Segments: segment.Generator{LLM: model},

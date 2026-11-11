@@ -49,6 +49,14 @@ type Client interface {
 	Complete(ctx context.Context, req Request) (Response, error)
 }
 
+// Streamer is a Client that can also deliver the reply while it is generated.
+// onText receives each piece of text in order; the returned Response holds the
+// complete reply, which is the only thing a caller may validate and store.
+type Streamer interface {
+	Client
+	Stream(ctx context.Context, req Request, onText func(delta string)) (Response, error)
+}
+
 // Scripted is a Client for tests: it returns Replies in order and records every
 // request, so a test can assert on what was sent back to the model after a
 // rejected reply.
@@ -68,6 +76,22 @@ func (s *Scripted) Complete(_ context.Context, req Request) (Response, error) {
 		return Response{}, errors.New("llm.Scripted: no reply left")
 	}
 	return Response{Text: s.Replies[n]}, nil
+}
+
+// Stream implements Streamer: the scripted reply arrives in small pieces.
+func (s *Scripted) Stream(ctx context.Context, req Request, onText func(delta string)) (Response, error) {
+	resp, err := s.Complete(ctx, req)
+	if err != nil || onText == nil {
+		return resp, err
+	}
+	const chunk = 7 // runes; small enough to split a {{variable}} across pieces
+	runes := []rune(resp.Text)
+	for len(runes) > 0 {
+		n := min(chunk, len(runes))
+		onText(string(runes[:n]))
+		runes = runes[n:]
+	}
+	return resp, nil
 }
 
 // Requests returns the requests received so far.
