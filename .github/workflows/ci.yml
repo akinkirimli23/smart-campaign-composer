@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (vet, format, tests against Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: scc
+          POSTGRES_PASSWORD: scc
+          POSTGRES_DB: scc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scc -d scc_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: go vet
+        run: go vet ./...
+      # No ANTHROPIC_API_KEY here on purpose: every test runs against a mock LLM.
+      # Without TEST_DATABASE_URL the integration tests would be skipped, not run.
+      - name: go test
+        env:
+          TEST_DATABASE_URL: postgres://scc:scc@localhost:5432/scc_test?sslmode=disable
+        run: go test -race -count=1 ./...
+
+  frontend:
+    name: Frontend (type-check, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  compose:
+    name: docker compose up (the documented install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the stack as the README says
+        run: docker compose up --build -d
+      - name: Wait for the API, the mock provider and the UI
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS localhost:8080/readyz >/dev/null 2>&1               && curl -fsS localhost:8090/healthz >/dev/null 2>&1               && curl -fsS -o /dev/null localhost:3000/ 2>/dev/null; then
+              echo "ready after ${i} tries"; exit 0
+            fi
+            sleep 2
+          done
+          echo "stack did not become ready"; exit 1
+      # Through nginx, as the browser would. The seed is generated relative to
+      # the moment it was loaded, so on a fresh database the example brief
+      # selects the reference audience (381); a small tolerance covers events
+      # that sit right on the 30-day boundary.
+      - name: The example brief selects the reference audience
+        run: |
+          curl -fsS localhost:3000/api/segments/generate -H 'Content-Type: application/json'             -d '{"brief":"Son 30 günde sepetine ürün ekleyip alışveriş yapmayan İstanbul bölgesindeki kullanıcılara %30 indirim hatırlatması gönder."}'             | tee /tmp/segment.json
+          jq -e '.status == "ok" and (.audience.total >= 378 and .audience.total <= 384) and .audience.sms > 0 and .audience.email > 0' /tmp/segment.json
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200

@@ -2,16 +2,17 @@
 
 Pazarlamacının doğal dille yazdığı kampanya isteğini Claude ile hedef kitleye ve SMS / email
 mesajlarına çeviren, insan onayına sunan, kuyruk üzerinden sahte bir sağlayıcıya gönderen ve
-gönderimi canlı izleten sistem.
+gönderimi canlı izleten sistem. Gerçek kimseye mesaj gitmez: alıcılar üretilmiş sahte
+kullanıcılardır, gönderim bu repodaki mock provider'a yapılır.
 
-> **Durum:** geliştirme sürüyor. Aşağıdaki "Durum" tablosu neyin hazır olduğunu gösterir.
+- Kararlar ve gerekçeleri: [DECISIONS.md](DECISIONS.md)
+- Claude ile çalışma kayıtları: [ai-sessions/](ai-sessions/)
 
 ## Kurulum
 
 Gereken tek şey Docker (Compose v2.24+).
 
 ```bash
-cp .env.example .env      # isteğe bağlı: ANTHROPIC_API_KEY ekle; boş kalırsa mock LLM kullanılır
 docker compose up --build
 ```
 
@@ -19,17 +20,35 @@ Bu komut sırayla:
 
 1. Postgres'i başlatır,
 2. `init` servisiyle migration'ları uygular ve 5000 sahte kullanıcıyı yükler (zaten varsa atlar),
-3. API'yi `http://localhost:8080` adresinde açar.
+3. mock SMS / email provider'ı açar (`http://localhost:8090`),
+4. API'yi ve içindeki gönderim worker'ını açar (`http://localhost:8080`),
+5. arayüzü açar: **http://localhost:3000**
+
+API key gerekmez; key yokken her şey mock LLM ile çalışır. Gerçek Claude ile denemek için:
+
+```bash
+cp .env.example .env
+```
+
+ve `.env` içinde `ANTHROPIC_API_KEY` değerini doldur (model `ANTHROPIC_MODEL` ile değişir,
+varsayılan `claude-opus-5-5`).
 
 | Komut | Ne yapar |
 |---|---|
 | `make up` | Tüm sistemi kurar ve başlatır |
-| `make test` | Tüm testleri container içinde, geçici bir Postgres'e karşı çalıştırır |
+| `make test` | Backend testlerini geçici bir Postgres'e karşı, arayüz testlerini vitest ile, container içinde çalıştırır |
 | `make reset` | Veritabanı volume'unu siler; sonraki `make up` sıfırdan seed eder |
 | `make logs` | API loglarını izler |
 
-`make` yoksa (ör. Windows): testler için
-`docker compose --profile test run --rm --build test`.
+`make` yoksa (ör. Windows) testler için:
+
+```bash
+docker compose --profile test run --rm --build test
+```
+
+```bash
+docker compose --profile test run --rm --build web-test
+```
 
 ## Kullanım
 
@@ -43,9 +62,11 @@ Bu komut sırayla:
 4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
    sayıları canlı güncellenir.
 
-API key olmadan her şey mock LLM ile çalışır. Mock yalnızca basit ifadeleri tanır (şehir, dil,
-cinsiyet, yaş, sepet, satın alma); brief'e `#demo-retry` eklenirse içerik adımında ilk deneme
-bilerek reddedilir ve yeniden deneme ekranda görülür.
+Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
+tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır; içerik için brief'teki
+indirim oranını sabit bir metne yerleştirir. Çıktısı gerçek modelinkiyle aynı doğrulamadan
+geçer. Brief'e `#demo-retry` eklenirse içerik adımında ilk deneme bilerek reddedilir ve yeniden
+deneme ekranda görülür.
 
 | Adres | Ne |
 |---|---|
@@ -111,20 +132,42 @@ Bir kampanya bittiğinde `GET /stats` içindeki `accepted`, `GET /api/campaigns/
 ## Mimari
 
 ```
-Vue (planlanan)
-   │  HTTP + SSE
+Tarayıcı (Vue 3 + Pinia)
+   │  HTTP + SSE, tek origin
    ▼
-Go API ──► Claude API / mock LLM
-   │
+nginx ──► statik arayüz
+   │  /api
    ▼
-Postgres  ── users, events (seed)
-          ── campaigns, messages (= kuyruk, planlanan)
-   ▲
-   │  SKIP LOCKED
-Go worker (planlanan) ──► mock SMS / email provider (planlanan)
+Go API ─────────────► Claude API  (key yoksa mock LLM)
+   │  ▲
+   │  └ gönderim worker'ı (aynı süreç) ──► mock SMS / email provider
+   ▼
+Postgres
+   users, events          sahte alıcılar ve davranışları (seed)
+   campaigns              onaylanan kural ve içerik
+   messages               alıcı × kanal; bu tablo kuyruktur
 ```
 
-Kararların gerekçeleri [DECISIONS.md](DECISIONS.md) dosyasında.
+**Bir kampanyanın yolu**
+
+1. **Kitle.** Claude brief'ten yapılandırılmış bir kural (JSON) üretir. Backend kuralı kapalı
+   değer kümelerine karşı doğrular ve parametreli SQL'e kendisi derler; modelin yazdığı hiçbir
+   metin SQL'e girmez. Pazarlamacının okuduğu açıklama modelden değil kuraldan türetilir.
+   Kural formatı brief'i ifade edemiyorsa model "desteklenmiyor" der; eksik koşullu kural
+   üretilmez.
+2. **İçerik.** Claude SMS ve email şablonlarını yazar; metin ekrana akar. Limitler (SMS 160,
+   konu 80) değişkenler en uzun değerleriyle doldurulmuş gibi ölçülür.
+3. **Güvenilirlik.** Her iki adımda da doğrulamadan geçmeyen çıktı, hatalarıyla birlikte modele
+   geri verilir; en fazla üç deneme. Yine olmazsa kullanıcıya hata gösterilir, hiçbir şey
+   çalıştırılmaz.
+4. **Onay.** Pazarlamacı metni düzenleyebilir. Onayda kural ve metinler sunucuda yeniden
+   doğrulanır, kampanya ve alıcıları tek transaction'da kuyruğa girer.
+5. **Gönderim.** Worker satırları `FOR UPDATE SKIP LOCKED` ile kiralar, kanal başına saniyede en
+   fazla 100 mesaj yollar, hatada üstel bekleme ile yeniden dener, 429'da `Retry-After` kadar
+   kanalı durdurur. Veritabanı kısıtı ve idempotency key aynı kişiye iki kez gitmesini önler.
+6. **Takip.** Pano durumu SSE ile canlı alır; `/metrics` aynı satırları sayar.
+
+Testler API key istemez: LLM bir arayüzün arkasındadır ve testlerde sahte bir model kullanılır.
 
 ### Klasörler
 
@@ -132,6 +175,7 @@ Kararların gerekçeleri [DECISIONS.md](DECISIONS.md) dosyasında.
 backend/
   cmd/api          HTTP sunucusu
   cmd/seed         migration + seed (tek seferlik)
+  cmd/mockprovider sahte SMS / email provider
   internal/config  ortam değişkenleri
   internal/db      bağlantı havuzu, gömülü migration'lar
   internal/seed    deterministik sahte kullanıcı üretimi
@@ -142,6 +186,7 @@ backend/
   internal/mockprovider sahte SMS / email provider (cmd/mockprovider)
   internal/content içerik şablonları: doğrulama, limit ölçümü, akışlı üretim
   internal/validation ortak doğrulama hatası biçimi ({path, message} listesi)
+  internal/metrics sayaçlar ve Prometheus metin çıktısı
   internal/llm     LLM arayüzü; llm/anthropicllm Claude istemcisi, llm/mockllm key yokken kullanılan mock
   internal/httpapi HTTP handler'ları
   internal/testdb  entegrasyon testleri için izole şema
@@ -150,6 +195,7 @@ frontend/          Vue 3 + TypeScript + Pinia arayüzü (nginx ile sunulur)
   src/api          API istemcisi ve tipleri
   src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç)
   src/components   adım ekranları
+.github/workflows/ CI
 ai-sessions/       Claude oturum export'ları
 ```
 
@@ -158,21 +204,39 @@ ai-sessions/       Claude oturum export'ları
 - **users**: ad, soyad, email, telefon, şehir, dil (`tr` / `en`), cinsiyet, doğum yılı,
   kayıt tarihi, kanal izinleri (`email_opt_in`, `sms_opt_in`).
 - **events**: `cart_add` ve `purchase` olayları; kategori, tutar, zaman.
+- **campaigns**: brief, onaylanan kural ve içerik (JSON), kitlenin hesaplandığı an.
+- **messages**: kampanya × kullanıcı × kanal; durum (`pending`, `sending`, `sent`, `failed`,
+  `skipped`), deneme sayısı, bir sonraki deneme zamanı. `UNIQUE (campaign_id, user_id, channel)`.
 
-## Durum
+Seed deterministiktir: aynı `SEED_USERS` / `SEED_RANDOM` her makinede aynı veriyi üretir. Olay
+zamanları seed'in yüklendiği ana göredir.
 
-| Alan | Durum |
+## Testler
+
+| Ne | Nerede |
 |---|---|
-| Docker compose, migration, seed, health | ✅ |
-| Segment kuralı şeması, doğrulama, SQL derleyici, kitle sayısı endpoint'i | ✅ |
-| Mock LLM, hatalı çıktıda geri besleme ile yeniden deneme (segment) | ✅ |
-| Gerçek Claude istemcisi (resmi Go SDK, akışlı; gerçek key ile henüz denenmedi) | ✅ |
-| Akışlı (SSE) içerik üretimi, kişiselleştirme sonrası karakter limiti, hatada geri besleme ile yeniden deneme | ✅ |
-| Kuyruk (Postgres), worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After` | ✅ |
-| Mock SMS / email provider (hata, gecikme, 429, kaybolan yanıt) | ✅ |
-| Vue arayüzü: brief → kitle → içerik (canlı akış, düzenleme, sayaç) → onay → canlı pano | ✅ |
-| Canlı gönderim durumu (SSE) ve metrics endpoint'i | ✅ |
-| CI | ⏳ |
+| Kural doğrulama, SQL derleme, enjeksiyon denemeleri | `backend/internal/segment` |
+| Derlenen SQL'in Go'da yazılmış referans hesapla karşılaştırılması; 381 / 222 / 254 / 58 | `backend/internal/audience` |
+| İçerik limitleri, şablonlar, akış çözücü, yeniden deneme (bozuk JSON, uzun SMS, bilinmeyen değişken) | `backend/internal/content` |
+| Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After` | `backend/internal/delivery` |
+| Claude istemcisi (yerel bir SSE sunucusuna karşı, key olmadan) | `backend/internal/llm/anthropicllm` |
+| HTTP uçları, SSE akışları, onayda yeniden doğrulama | `backend/internal/httpapi` |
+| Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, akışın durumu | `frontend/src/**/*.test.ts` |
+
+CI (GitHub Actions) her push'ta üç iş çalıştırır: backend (gofmt, vet, yarış dedektörüyle
+testler, Postgres'e karşı), frontend (tip kontrolü, testler, derleme) ve `docker compose up` ile
+kurulumun kendisi.
+
+## Bilinen eksikler
+
+- **Gerçek Claude ile uçtan uca deneme yapılmadı.** Geliştirme boyunca mock LLM kullanıldı.
+  İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
+  gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
+- Arayüz masaüstü genişliğinde ve koyu temada denendi; dar ekran ve açık tema denenmedi.
+- Sayfa yenilenince akış baştan başlar; devam eden bir kampanyanın panosuna dönülemez.
+- Provider sürekli 429 dönerse mesaj süresiz bekler; toplam bekleme için üst sınır yok
+  (DECISIONS 21).
+- LLM çağrıları için metrik yok, yalnızca log (DECISIONS 23).
 
 ## Segment kuralı neleri ifade edebilir
 
