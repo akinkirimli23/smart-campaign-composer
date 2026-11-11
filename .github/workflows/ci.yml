@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets a run be started by hand from the Actions tab.
+  workflow_dispatch:
 
 # A newer push to the same branch makes the older run pointless.
 concurrency:
