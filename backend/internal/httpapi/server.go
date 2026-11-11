@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/metrics"
 )
 
 // Pinger is the subset of the database pool the health checks need.
@@ -22,6 +24,11 @@ type Options struct {
 	Audience  AudienceCounter
 	Content   ContentGenerator
 	Campaigns CampaignStore
+	// Metrics holds the process counters exposed at /metrics; may be nil.
+	Metrics *metrics.Registry
+	// StatusInterval is how often a campaign's live status stream re-reads
+	// the queue. Defaults to one second.
+	StatusInterval time.Duration
 	// VarLengths supplies the worst-case length of each template variable.
 	VarLengths VarLengthSource
 	// Now is the clock used as the "as of" time for audience queries.
@@ -36,6 +43,8 @@ type Server struct {
 	content    ContentGenerator
 	varLengths VarLengthSource
 	campaigns  CampaignStore
+	metrics    *metrics.Registry
+	statusTick time.Duration
 	now        func() time.Time
 	mux        *http.ServeMux
 }
@@ -44,9 +53,13 @@ func New(o Options) *Server {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	if o.StatusInterval <= 0 {
+		o.StatusInterval = time.Second
+	}
 	s := &Server{
 		db: o.DB, segments: o.Segments, audience: o.Audience,
 		content: o.Content, varLengths: o.VarLengths, campaigns: o.Campaigns,
+		metrics: o.Metrics, statusTick: o.StatusInterval,
 		now: o.Now, mux: http.NewServeMux(),
 	}
 	s.routes()
@@ -67,6 +80,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/content/generate", s.handleContentGenerate)
 	s.mux.HandleFunc("POST /api/campaigns", s.handleCampaignCreate)
 	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignStatus)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/events", s.handleCampaignEvents)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +107,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(rec, r)
 
 	level := slog.LevelInfo
-	if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+	if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 		// Polled every few seconds by the container healthcheck; logging these
 		// at info would drown out real traffic.
 		level = slog.LevelDebug

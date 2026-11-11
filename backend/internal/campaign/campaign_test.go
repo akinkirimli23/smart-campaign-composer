@@ -69,6 +69,15 @@ WHERE (m.channel = 'sms' AND NOT (u.sms_opt_in AND u.phone IS NOT NULL))
 		t.Errorf("status = %+v", st)
 	}
 
+	// The queue-wide totals (what /metrics reports) are the same rows.
+	totals, err := store.Totals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.Campaigns != 1 || totals.Messages["sms"]["pending"] != 222 || totals.Messages["email"]["pending"] != 254 {
+		t.Errorf("totals = %+v", totals)
+	}
+
 	// A second campaign with the same rule is a separate campaign: the
 	// uniqueness is per campaign, not global.
 	again, err := store.Create(ctx, "brief", exampleRule, texts, refNow)

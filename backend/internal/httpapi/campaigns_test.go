@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/campaign"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/metrics"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
 
@@ -36,6 +38,12 @@ func (f *fakeCampaigns) Status(_ context.Context, id int64) (campaign.Status, er
 		return campaign.Status{}, campaign.ErrNotFound
 	}
 	return campaign.Status{ID: 7, Channels: map[string]campaign.Counts{"sms": {Total: 222, Sent: 200, Pending: 22}}}, nil
+}
+
+func (f *fakeCampaigns) Totals(context.Context) (campaign.Totals, error) {
+	return campaign.Totals{Campaigns: 2, Messages: map[string]map[string]int{
+		"sms": {"sent": 200, "pending": 22}, "email": {"sent": 254},
+	}}, nil
 }
 
 func campaignRequest(t *testing.T, store *fakeCampaigns, method, path, body string) (*httptest.ResponseRecorder, map[string]any) {
@@ -130,6 +138,129 @@ func TestCampaignStatus(t *testing.T) {
 	for path, want := range map[string]int{"/api/campaigns/8": 404, "/api/campaigns/abc": 400, "/api/campaigns/0": 400} {
 		if rec, _ := campaignRequest(t, store, http.MethodGet, path, ""); rec.Code != want {
 			t.Errorf("%s: status %d, want %d", path, rec.Code, want)
+		}
+	}
+}
+
+// progressStore reports a different status on every read, like a campaign
+// that is being sent.
+type progressStore struct {
+	fakeCampaigns
+	steps []campaign.Status
+	reads int
+}
+
+func (p *progressStore) Status(_ context.Context, id int64) (campaign.Status, error) {
+	if id != 7 {
+		return campaign.Status{}, campaign.ErrNotFound
+	}
+	st := p.steps[min(p.reads, len(p.steps)-1)]
+	p.reads++
+	return st, nil
+}
+
+func smsStatus(sent, pending int) campaign.Status {
+	return campaign.Status{ID: 7, Done: pending == 0, Channels: map[string]campaign.Counts{
+		"sms": {Total: sent + pending, Sent: sent, Pending: pending},
+	}}
+}
+
+// The live stream sends the status on connect, then only when it changes, and
+// ends with "done" once nothing is pending.
+func TestCampaignEventsStream(t *testing.T) {
+	store := &progressStore{steps: []campaign.Status{
+		smsStatus(0, 10), smsStatus(0, 10), smsStatus(4, 6), smsStatus(4, 6), smsStatus(10, 0),
+	}}
+	srv := New(Options{DB: fakePinger{}, Campaigns: store, StatusInterval: time.Millisecond})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/campaigns/7/events", nil))
+
+	if rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("content type = %q", rec.Header().Get("Content-Type"))
+	}
+	var got []string
+	for _, e := range parseSSE(t, rec.Body.String()) {
+		if e.name == "status" {
+			sms := e.data["channels"].(map[string]any)["sms"].(map[string]any)
+			got = append(got, "sent="+strconv.Itoa(int(sms["sent"].(float64))))
+		} else {
+			got = append(got, e.name)
+		}
+	}
+	if want := "sent=0 sent=4 sent=10 done"; strings.Join(got, " ") != want {
+		t.Errorf("events = %v, want %s", got, want)
+	}
+}
+
+// A finished campaign answers with its final status and closes at once.
+func TestCampaignEventsAlreadyDone(t *testing.T) {
+	store := &progressStore{steps: []campaign.Status{smsStatus(10, 0)}}
+	srv := New(Options{DB: fakePinger{}, Campaigns: store, StatusInterval: time.Hour})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/campaigns/7/events", nil))
+	events := parseSSE(t, rec.Body.String())
+	if len(events) != 2 || events[0].name != "status" || events[1].name != "done" {
+		t.Errorf("events = %+v", events)
+	}
+}
+
+// The stream stops when the client goes away instead of polling forever.
+func TestCampaignEventsStopOnDisconnect(t *testing.T) {
+	store := &progressStore{steps: []campaign.Status{smsStatus(0, 10)}}
+	srv := New(Options{DB: fakePinger{}, Campaigns: store, StatusInterval: time.Millisecond})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/campaigns/7/events", nil).WithContext(ctx))
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not stop after the client disconnected")
+	}
+}
+
+func TestCampaignEventsNotFound(t *testing.T) {
+	rec, body := campaignRequest(t, &fakeCampaigns{}, http.MethodGet, "/api/campaigns/8/events", "")
+	if rec.Code != http.StatusNotFound || body["error"].(map[string]any)["code"] != "not_found" {
+		t.Errorf("status %d, body %v", rec.Code, body)
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	registry := metrics.New()
+	registry.Inc("scc_provider_requests_total", "channel", "sms", "outcome", "ok")
+	registry.Inc("scc_provider_requests_total", "channel", "sms", "outcome", "ok")
+	registry.Inc("scc_provider_requests_total", "channel", "email", "outcome", "rate_limited")
+	srv := New(Options{DB: fakePinger{}, Campaigns: &fakeCampaigns{}, Metrics: registry})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("status %d, content type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"# TYPE scc_campaigns gauge\nscc_campaigns 2\n",
+		"# TYPE scc_messages gauge\n",
+		`scc_messages{channel="sms",status="pending"} 22`,
+		`scc_messages{channel="sms",status="sent"} 200`,
+		`scc_messages{channel="sms",status="failed"} 0`,
+		`scc_messages{channel="email",status="sent"} 254`,
+		"# TYPE scc_provider_requests_total counter\n",
+		`scc_provider_requests_total{channel="email",outcome="rate_limited"} 1`,
+		`scc_provider_requests_total{channel="sms",outcome="ok"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output lacks %q:\n%s", want, body)
+		}
+	}
+	// Every sample line is "name{labels} value" or "name value".
+	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
+		if !strings.HasPrefix(line, "#") && len(strings.Fields(line)) != 2 {
+			t.Errorf("malformed sample line %q", line)
 		}
 	}
 }

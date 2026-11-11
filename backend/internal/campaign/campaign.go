@@ -169,3 +169,41 @@ func (s Store) Status(ctx context.Context, id int64) (Status, error) {
 	}
 	return st, rows.Err()
 }
+
+// Totals is the state of the whole queue, across campaigns.
+type Totals struct {
+	Campaigns int
+	Messages  map[string]map[string]int // channel -> status -> count
+}
+
+// Statuses a message can be in, in lifecycle order.
+var Statuses = []string{"pending", "sending", "sent", "failed", "skipped"}
+
+// Totals counts every message by channel and status. It reads the same rows
+// Status does, so per-campaign numbers add up to these.
+func (s Store) Totals(ctx context.Context) (Totals, error) {
+	t := Totals{Messages: map[string]map[string]int{}}
+	for _, ch := range Channels {
+		t.Messages[ch] = map[string]int{}
+	}
+	if err := s.DB.QueryRow(ctx, `SELECT count(*) FROM campaigns`).Scan(&t.Campaigns); err != nil {
+		return Totals{}, fmt.Errorf("count campaigns: %w", err)
+	}
+	rows, err := s.DB.Query(ctx, `SELECT channel, status, count(*) FROM messages GROUP BY channel, status`)
+	if err != nil {
+		return Totals{}, fmt.Errorf("count messages: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channel, status string
+		var n int
+		if err := rows.Scan(&channel, &status, &n); err != nil {
+			return Totals{}, err
+		}
+		if t.Messages[channel] == nil {
+			t.Messages[channel] = map[string]int{}
+		}
+		t.Messages[channel][status] = n
+	}
+	return t, rows.Err()
+}

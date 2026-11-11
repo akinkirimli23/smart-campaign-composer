@@ -19,8 +19,8 @@ Case'in kapsam notu: her şeyi yapmak yerine çekirdek akışı sağlam yap, yet
 ## Komutlar
 
 ```bash
-docker compose up --build        # Postgres + init (migration + seed) + mock provider (:8090) + api (:8080)
-make test                        # tüm testler container içinde, geçici Postgres'e karşı
+docker compose up --build        # Postgres + init (migration + seed) + mock provider (:8090) + api (:8080) + arayüz (:3000)
+make test                        # backend (geçici Postgres'e karşı) + frontend (vitest) testleri, container içinde
 make reset                       # DB volume'unu sil, sonraki up sıfırdan seed eder
 cd backend && go test ./...      # yerel; DB testleri TEST_DATABASE_URL yoksa atlanır
 ```
@@ -62,6 +62,8 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
 - Migration'lar `backend/internal/db/migrations/NNN_ad.sql`, binary'ye gömülü, sıralı.
   Uygulanmış migration'ı düzenleme, yenisini ekle.
 - DB gerektiren testler `testdb.New(t)` kullanır (her test için ayrı şema).
+- Frontend: Vue 3 (`<script setup>`), TypeScript (strict), Pinia, Vite, vitest. Yönlendirici ve
+  arayüz kütüphanesi yok; tek sayfa, dört adım.
 - Kod yorumları İngilizce, dokümanlar (README, DECISIONS) Türkçe.
 - `.env` asla commit edilmez. `ai-sessions/` içine koymadan önce API key ve kişisel bilgileri temizle.
 
@@ -76,7 +78,7 @@ sonrakine geçilir.
 | 2 | Kitle | Segment kuralı JSON şeması, doğrulayıcı, parametreli SQL derleyici (**zaman parametre olarak verilir**, SQL'de `now()` yok), kanal bazlı kitle sayısı endpoint'i, mock LLM | Örnek brief sabit bir tarihte 381 / 222 / 254 / 58 veriyor; geçersiz şehir, bilinmeyen alan ve SQL enjeksiyonu denemesi testle reddediliyor | ✅ |
 | 3 | İçerik | Akışlı (SSE) SMS / email üretimi, değişkenler doldurulduktan sonra karakter limiti kontrolü, hatalı çıktıda hatayı Claude'a geri verip sınırlı sayıda yeniden deneme | Mock LLM'in bozuk JSON, limiti aşan SMS ve bilinmeyen değişken senaryoları testte doğru ele alınıyor | ✅ |
 | 4 | Gönderim | `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`'a uyma; hata, gecikme ve 429 döndüren mock provider | Testte aynı kişiye iki kez mesaj gitmiyor ve hız limiti aşılmıyor; mock provider `docker compose up` ile kalkıyor | ✅ |
-| 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı; pazarlamacının elle düzenlediği metin onay anında backend'de yeniden doğrulanıyor (SMS 160, konu 80, yalnızca izinli değişkenler); arayüz karakter sayısını canlı gösteriyor | ⏳ |
+| 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı; pazarlamacının elle düzenlediği metin onay anında backend'de yeniden doğrulanıyor (SMS 160, konu 80, yalnızca izinli değişkenler); arayüz karakter sayısını canlı gösteriyor | ✅ |
 | 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi, "Case gereksinimleri" listesinin madde madde kontrolü | Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş; gerçek Claude ile en az bir uçtan uca deneme yapıldı ya da yapılmadığı README'de yazıyor; "Case gereksinimleri" listesindeki her madde işaretli ya da README'de eksik olarak belirtilmiş | ⏳ |
 
 ### Sınırlar
@@ -93,7 +95,8 @@ sonrakine geçilir.
 
 ## Yeni oturum başlangıcı
 
-1. `make test` çalıştır (make yoksa `docker compose --profile test run --rm --build test`).
+1. `make test` çalıştır (make yoksa `docker compose --profile test run --rm --build test` ve
+   `docker compose --profile test run --rm --build web-test`).
 2. Yukarıdaki durum tablosuna bak; ilk ⏳ aşama sıradakidir.
 3. O aşamanın bitti ölçütlerinden eksik olanlarla devam et.
 
@@ -106,23 +109,23 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 
 | Gereksinim | Aşama |
 |---|---|
-| Kullanıcı akışı 1: Claude brief'ten segment kuralı üretir, arayüz kaç kişiye gideceğini gösterir | 2, 5 |
-| Kullanıcı akışı 2: SMS ve email içeriği ekrana stream edilerek akar | 3 ✅ (SSE), 5 |
-| Kullanıcı akışı 3: pazarlamacı önizler, gerekirse düzenler ve onaylar | 5 |
+| Kullanıcı akışı 1: Claude brief'ten segment kuralı üretir, arayüz kaç kişiye gideceğini gösterir | 2 ✅, 5 ✅ |
+| Kullanıcı akışı 2: SMS ve email içeriği ekrana stream edilerek akar | 3 ✅ (SSE), 5 ✅ |
+| Kullanıcı akışı 3: pazarlamacı önizler, gerekirse düzenler ve onaylar | 5 ✅ |
 | Kullanıcı akışı 4: mesajlar kuyruk üzerinden mock provider'a gönderilir | 4 ✅ |
-| Kullanıcı akışı 5: dashboard gönderim durumunu canlı gösterir | 5 |
+| Kullanıcı akışı 5: dashboard gönderim durumunu canlı gösterir | 5 ✅ |
 | Gerçek kimseye mesaj gitmez: alıcılar sahte kullanıcılar, gönderim mock provider'a | 1 ✅ (seed), 4 ✅ |
 | Kitle: Claude'un segment kuralı backend'de doğrulanır, LLM çıktısı doğrudan SQL olarak çalıştırılmaz | 2 ✅ |
 | Kitle: izni olmayan kullanıcıya o kanaldan mesaj gönderilmez | 2 ✅ (sayım), 4 ✅ (gönderim) |
-| İçerik: SMS en fazla 160 karakter | 3 ✅, 4 ✅ (onayda yeniden doğrulama), 5 (arayüz) |
-| İçerik: email konusu en fazla 80 karakter | 3 ✅, 4 ✅ (onayda yeniden doğrulama), 5 (arayüz) |
+| İçerik: SMS en fazla 160 karakter | 3 ✅, 4 ✅ (onayda yeniden doğrulama), 5 ✅ (arayüz) |
+| İçerik: email konusu en fazla 80 karakter | 3 ✅, 4 ✅ (onayda yeniden doğrulama), 5 ✅ (arayüz) |
 | İçerik: `{{first_name}}` gibi kişiselleştirme değişkenleri desteklenir | 3 ✅, 4 ✅ (gönderimde doldurma) |
 | Gönderim: asenkron kuyruk | 4 ✅ |
 | Gönderim: kanal başına saniyede en fazla 100 mesaj | 4 ✅ |
 | Gönderim: aynı kişiye aynı mesaj iki kez gitmez | 4 ✅ |
 | Gönderim: retry stratejisi tasarlanır (ve DECISIONS'ta gerekçelendirilir) | 4 ✅ (DECISIONS 21) |
-| Takip: canlı gönderim durumu endpoint'i | 5 |
-| Takip: metrics endpoint'i | 5 |
+| Takip: canlı gönderim durumu endpoint'i | 5 ✅ |
+| Takip: metrics endpoint'i | 5 ✅ |
 | Takip: health check endpoint'i | 1 ✅ |
 
 ### AI
@@ -143,7 +146,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | Birkaç bin kullanıcılık seed (ad, email, telefon, şehir, alışveriş geçmişi, kanal izinleri) | 1 ✅ |
 | Mock SMS / email provider gerçek bir servisi taklit ediyor | 4 ✅ |
 | Mock provider zaman zaman hata, gecikme ve 429 döndürüyor | 4 ✅ |
-| Frontend Vue.js, backend Go | 1 ✅ (Go), 5 (Vue) |
+| Frontend Vue.js, backend Go | 1 ✅ (Go), 5 ✅ (Vue) |
 
 ### Teslim edilecekler
 
@@ -225,3 +228,20 @@ Kararlar DECISIONS 21–22'de. Kısaca:
   Oranlar `MOCK_*` ortam değişkenleriyle ayarlanır.
 - Segment kuralının kapsamı genişletilmedi (DECISIONS 20); zaman kalırsa aşama 5'ten sonra
   `min_count`, harcama / sipariş metrikleri ve üyelik tarihi.
+
+## Arayüz (aşama 5, kesinleşti)
+
+Kararlar DECISIONS 23–24'te. Kısaca:
+
+- `frontend/src/stores/campaign.ts`: tüm akışın durumu ve eylemleri tek Pinia store'unda
+  (`generateSegment`, `recountSegment`, `generateContent`, `approve`, `reset`). Bileşenler yalnızca
+  bu durumu çizer.
+- `frontend/src/api/client.ts`: JSON istekleri, içerik akışı (`fetch` + `lib/sse.ts`; POST
+  olduğu için `EventSource` kullanılamaz) ve canlı durum (`EventSource`).
+- `frontend/src/lib/template.ts`: canlı sayaç için şablon ölçümü. Backend'deki
+  `internal/content` ile aynı kurallar; birini değiştirirsen diğerini ve iki taraftaki testleri
+  de güncelle. Yetki backend'dedir.
+- Backend: `GET /api/campaigns/{id}/events` (SSE) ve `GET /metrics` (`internal/metrics`).
+- Compose'ta `web` servisi (nginx, `:3000`). Yerel geliştirme: `cd frontend && npm install &&
+  npm run dev` (Vite `/api`'yi `:8080`'e iletir).
+- Tarayıcıda uçtan uca deneme mock LLM ile yapıldı; gerçek Claude key'i ile yapılmadı.

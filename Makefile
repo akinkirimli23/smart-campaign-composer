@@ -11,11 +11,14 @@ down:
 reset:
 	docker compose down -v
 
-# Run all tests (unit + integration) in containers against a throwaway Postgres.
-# No Go toolchain, Postgres or API key needed on the host.
+# Run all tests in containers: backend (unit + integration against a throwaway
+# Postgres) and frontend (type-check at image build, then vitest).
+# No Go, Node, Postgres or API key needed on the host.
 test:
 	docker compose --profile test run --rm --build test; \
-	status=$$?; docker compose --profile test rm -sf postgres-test >/dev/null; exit $$status
+	backend=$$?; docker compose --profile test rm -sf postgres-test >/dev/null; \
+	docker compose --profile test run --rm --build web-test; \
+	frontend=$$?; [ $$backend -eq 0 ] && [ $$frontend -eq 0 ]
 
 # Same tests with the local Go toolchain. Integration tests run only when
 # TEST_DATABASE_URL points at a Postgres instance; otherwise they are skipped.

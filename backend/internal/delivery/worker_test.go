@@ -14,6 +14,7 @@ import (
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/campaign"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/delivery"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/metrics"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/mockprovider"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/seed"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
@@ -290,7 +291,9 @@ func TestGivesUpAfterMaxAttempts(t *testing.T) {
 	provider := &scriptedProvider{fn: func(int, delivery.Outbound) (string, error) {
 		return "", &delivery.SendError{Kind: delivery.Retryable, Status: 503, Message: "down"}
 	}}
-	st := runUntilDone(t, pool, created.ID, 30*time.Second, worker(pool, provider))
+	w := worker(pool, provider)
+	w.Metrics = metrics.New()
+	st := runUntilDone(t, pool, created.ID, 30*time.Second, w)
 
 	n := created.Queued["sms"]
 	if st.Channels["sms"].Failed != n {
@@ -301,6 +304,9 @@ func TestGivesUpAfterMaxAttempts(t *testing.T) {
 	}
 	if got := scalar[int](t, pool, `SELECT count(*) FROM messages WHERE attempts = 5 AND last_error LIKE 'gave up after 5 attempts:%503%'`); got != n {
 		t.Errorf("%d rows record the failure, want %d", got, n)
+	}
+	if got := w.Metrics.Value(delivery.ProviderRequests, "channel", "sms", "outcome", "error"); got != int64(n*5) {
+		t.Errorf("counted %d failed provider requests, want %d", got, n*5)
 	}
 }
 

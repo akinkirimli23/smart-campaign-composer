@@ -31,6 +31,28 @@ Bu komut sırayla:
 `make` yoksa (ör. Windows): testler için
 `docker compose --profile test run --rm --build test`.
 
+## Kullanım
+
+`docker compose up --build` bittikten sonra arayüz **http://localhost:3000** adresindedir.
+
+1. **Brief.** Kampanyayı kendi cümlelerinle yaz ("Örnek brief'i kullan" hazır bir metin koyar).
+2. **Kitle.** Kuraldan türetilen açıklama, modelin yorumları ve kanal bazlı kişi sayıları.
+   İstenirse kural JSON olarak elle düzenlenip yeniden doğrulanır.
+3. **İçerik ve onay.** SMS ve email metinleri ekrana akar. Bittikten sonra düzenlenebilir;
+   sayaçlar değişkenler doldurulmuş halini ölçer. "Onayla ve gönder" sunucuda yeniden doğrular.
+4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
+   sayıları canlı güncellenir.
+
+API key olmadan her şey mock LLM ile çalışır. Mock yalnızca basit ifadeleri tanır (şehir, dil,
+cinsiyet, yaş, sepet, satın alma); brief'e `#demo-retry` eklenirse içerik adımında ilk deneme
+bilerek reddedilir ve yeniden deneme ekranda görülür.
+
+| Adres | Ne |
+|---|---|
+| http://localhost:3000 | Arayüz (nginx; `/api` isteklerini API'ye iletir) |
+| http://localhost:8080 | API ve `/metrics` |
+| http://localhost:8090 | Mock SMS / email provider |
+
 ## Endpoint'ler
 
 | Yol | Açıklama |
@@ -42,6 +64,8 @@ Bu komut sırayla:
 | `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
 | `POST /api/campaigns` | Onay: `{"brief", "rule", "content"}`. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
 | `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` sayıları ve `done` |
+| `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
+| `GET /metrics` | Prometheus metin formatı: `scc_campaigns`, `scc_messages{channel,status}`, `scc_provider_requests_total{channel,outcome}` |
 
 ```bash
 curl -s localhost:8080/api/segments/generate -H 'Content-Type: application/json' \
@@ -121,7 +145,11 @@ backend/
   internal/llm     LLM arayüzü; llm/anthropicllm Claude istemcisi, llm/mockllm key yokken kullanılan mock
   internal/httpapi HTTP handler'ları
   internal/testdb  entegrasyon testleri için izole şema
-frontend/          Vue uygulaması (planlanan)
+frontend/          Vue 3 + TypeScript + Pinia arayüzü (nginx ile sunulur)
+  src/stores       tüm akışın durumu (Pinia)
+  src/api          API istemcisi ve tipleri
+  src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç)
+  src/components   adım ekranları
 ai-sessions/       Claude oturum export'ları
 ```
 
@@ -142,8 +170,8 @@ ai-sessions/       Claude oturum export'ları
 | Akışlı (SSE) içerik üretimi, kişiselleştirme sonrası karakter limiti, hatada geri besleme ile yeniden deneme | ✅ |
 | Kuyruk (Postgres), worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After` | ✅ |
 | Mock SMS / email provider (hata, gecikme, 429, kaybolan yanıt) | ✅ |
-| Vue arayüzü | ⏳ |
-| Metrics endpoint'i | ⏳ |
+| Vue arayüzü: brief → kitle → içerik (canlı akış, düzenleme, sayaç) → onay → canlı pano | ✅ |
+| Canlı gönderim durumu (SSE) ve metrics endpoint'i | ✅ |
 | CI | ⏳ |
 
 ## Yapılmayanlar

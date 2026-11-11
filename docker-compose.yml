@@ -74,6 +74,26 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # The Vue app. nginx serves the bundle and proxies /api to the api service,
+  # so the browser talks to a single origin.
+  web:
+    build:
+      context: ./frontend
+      target: runtime
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Frontend unit tests (vitest); part of `make test`.
+  web-test:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      target: test
+
   # Only started by `make test` (profile "test"); never part of `docker compose up`.
   test:
     profiles: ["test"]

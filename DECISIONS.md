@@ -510,3 +510,62 @@ bir `rendered_body` kolonu eklenir.
 **Alternatif.** Kuyruğa alırken doldurmak: her alıcının metni onayda üretilip satıra yazılır.
 Gönderilen metin denetlenebilir ve worker çok basit olur; ama kuyruğa alma Go'da döngü + toplu
 ekleme gerektirir ve izin değişikliği için yine gönderimde ayrı kontrol gerekir.
+
+---
+
+## 23. Canlı pano SSE ile; metrics Prometheus metin formatında
+
+**Karar.**
+- `GET /api/campaigns/{id}/events` bir SSE akışıdır: bağlanınca `status` olayı gelir, sonra
+  yalnızca sayılar değiştiğinde yeni bir `status`; bekleyen mesaj kalmayınca `done` gelir ve
+  akış kapanır. Backend durumu saniyede bir yeniden okur.
+- `GET /metrics` Prometheus metin formatındadır: `scc_campaigns`, `scc_messages{channel,status}`
+  (her istekte veritabanından okunan gauge'lar) ve `scc_provider_requests_total{channel,outcome}`
+  (sürecin sayacı; `ok`, `error`, `rate_limited`, `rejected`).
+
+**Neden.**
+- İçerik üretimiyle aynı mekanizma: frontend'de tek desen var ve case'in "canlı gönderim durumu"
+  gereksinimi doğrudan karşılanıyor. Bağlantı koparsa tarayıcının `EventSource`'u kendisi yeniden
+  bağlanır ve ilk olay güncel durumdur; kaçan olay diye bir şey yok.
+- Pano, `GET /api/campaigns/{id}` ve `/metrics` aynı satırları sayar (`campaign.Store.Status` /
+  `Totals`); sayıların birbirini tutmaması mümkün değil.
+- Metrics için istemci kütüphanesi eklenmedi: birkaç satırlık metin formatı bir bağımlılığı haklı
+  çıkarmıyor (`internal/metrics`).
+
+**Bedeli / sınırı.**
+- Açık her pano bağlantısı saniyede bir sorgu demek. Çok sayıda izleyici olursa durum, worker'ın
+  yazdığı yerde yayınlanır (Postgres `LISTEN / NOTIFY`) ve sorgu ortadan kalkar.
+- `scc_provider_requests_total` süreç içi bir sayaçtır; süreç yeniden başlayınca sıfırlanır
+  (Prometheus sayaçları için beklenen davranış). Kuyruk sayıları veritabanından geldiği için
+  yeniden başlamadan etkilenmez.
+- LLM çağrıları için metrik yok (deneme sayısı, reddedilen çıktı sayısı); yalnızca loglanıyor.
+- Metrics formatını ben seçtim (JSON yerine Prometheus metni); ayrı bir seçenek turu yapılmadı.
+
+**Alternatif.** Frontend'in saniyede bir `GET /api/campaigns/{id}` çağırması. Backend'de yeni kod
+gerekmez; ama iki farklı veri alma deseni olur ve "canlı endpoint" gereksinimi zayıf karşılanır.
+
+---
+
+## 24. Arayüz ayrı bir container'da, nginx arkasında
+
+**Karar.** Vue uygulaması `frontend/` altında kendi Dockerfile'ı ile derlenir; nginx statik
+dosyaları sunar ve `/api` isteklerini API servisine iletir. Tarayıcı tek bir origin görür
+(`http://localhost:3000`). `/api` için tamponlama kapalıdır (`proxy_buffering off`), yoksa SSE
+olayları akış bitince toplu gelir.
+
+**Neden.**
+- Backend ve frontend bağımsız derlenir; Go binary'si saf API kalır ve derlemesi Node'a
+  bağlanmaz.
+- Aynı origin olduğu için CORS ayarı gerekmez.
+
+**Arayüzdeki doğrulama bir kolaylıktır, yetki değildir.** Canlı karakter sayacı için şablon
+ölçümü TypeScript'te de yazıldı (`frontend/src/lib/template.ts`); backend'deki
+`internal/content` ile aynı kuralları uygular ve aynı test durumlarıyla sınanır. Onay butonu
+buna göre kapanır, ama `POST /api/campaigns` kuralı ve metinleri her zaman yeniden doğrular;
+ikisi çelişirse backend kazanır. Değişkenlerin uzunlukları arayüze backend'den gelir.
+
+**Bedeli.** Bir servis ve bir nginx ayarı daha; ölçüm kuralları iki dilde duruyor ve biri
+değişirse diğeri de güncellenmeli (ortak test durumları bunu yakalamak için var).
+
+**Alternatif.** Derlenmiş arayüzü Go binary'sine gömmek. Tek servis olur ve arada proxy kalmaz;
+ama Go imajının derlemesi Node'a bağlanır ve frontend değişince backend imajı yeniden derlenir.

@@ -21,6 +21,7 @@ import (
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/anthropicllm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/mockllm"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/metrics"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
 
@@ -66,6 +67,8 @@ func run() error {
 		slog.Info("llm: mock (no ANTHROPIC_API_KEY, or LLM_MODE=mock)")
 	}
 
+	registry := metrics.New()
+
 	// NewHTTPServer cancels request contexts on Shutdown, so open SSE streams
 	// do not hold the process for the whole ShutdownTimeout.
 	srv := httpapi.NewHTTPServer(cfg.HTTPAddr, httpapi.New(httpapi.Options{
@@ -75,6 +78,7 @@ func run() error {
 		Content:    content.Generator{LLM: model},
 		VarLengths: &content.DBLengths{DB: pool},
 		Campaigns:  campaign.Store{DB: pool},
+		Metrics:    registry,
 	}))
 
 	// The delivery worker runs in this process. Its rate limiter is in-memory,
@@ -84,6 +88,7 @@ func run() error {
 	if cfg.WorkerEnabled {
 		worker := &delivery.Worker{
 			DB:       pool,
+			Metrics:  registry,
 			Provider: delivery.HTTPProvider{BaseURL: cfg.ProviderURL},
 			Limiters: map[string]delivery.Waiter{
 				campaign.ChannelSMS:   delivery.NewLimiter(cfg.SendRatePerSecond),

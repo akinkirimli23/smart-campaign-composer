@@ -16,6 +16,7 @@ import (
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/metrics"
 )
 
 // Waiter is the rate limiter of one channel.
@@ -57,7 +58,13 @@ type Worker struct {
 	// attempts made so far. Default: DefaultBackoff.
 	Backoff func(attempts int) time.Duration
 	Now     func() time.Time
+	// Metrics counts provider requests by outcome; nil disables it.
+	Metrics *metrics.Registry
 }
+
+// ProviderRequests is the counter of calls to the provider, labelled by
+// channel and outcome (ok, error, rate_limited, rejected).
+const ProviderRequests = "scc_provider_requests_total"
 
 const (
 	defaultRetryAfter = 2 * time.Second // 429 without a usable Retry-After
@@ -278,15 +285,19 @@ func (w *Worker) deliver(ctx context.Context, limiter Waiter, m claimed) {
 	cancel()
 
 	var sendErr *SendError
+	count := func(outcome string) { w.Metrics.Inc(ProviderRequests, "channel", m.channel, "outcome", outcome) }
 	switch {
 	case err == nil:
+		count("ok")
 		w.finish(m, "sent", providerID, "")
 	case ctx.Err() != nil:
 		// We are shutting down and the send was cut short. Give the attempt back.
 		w.retry(m, w.Now(), m.attempts-1, "interrupted by shutdown")
 	case errors.As(err, &sendErr) && sendErr.Kind == Permanent:
+		count("rejected")
 		w.finish(m, "failed", "", err.Error())
 	case errors.As(err, &sendErr) && sendErr.Kind == RateLimited:
+		count("rate_limited")
 		wait := sendErr.RetryAfter
 		if wait <= 0 {
 			wait = defaultRetryAfter
@@ -296,8 +307,10 @@ func (w *Worker) deliver(ctx context.Context, limiter Waiter, m claimed) {
 		limiter.PauseUntil(until) // the provider's limit is per channel, not per message
 		w.retry(m, until, m.attempts-1, err.Error())
 	case m.attempts >= w.MaxAttempts:
+		count("error")
 		w.finish(m, "failed", "", fmt.Sprintf("gave up after %d attempts: %v", m.attempts, err))
 	default:
+		count("error")
 		w.retry(m, w.Now().Add(w.Backoff(m.attempts)), m.attempts, err.Error())
 	}
 }
