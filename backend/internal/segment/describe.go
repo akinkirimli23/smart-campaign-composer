@@ -47,6 +47,9 @@ func describeCondition(c Condition) string {
 		if c.Category != "" {
 			scope += " " + label(categoryLabels, c.Category) + " kategorisinde"
 		}
+		if c.Exists && c.MinCount > 1 {
+			scope += fmt.Sprintf(" en az %d kez", c.MinCount)
+		}
 		switch {
 		case c.Event == "cart_add" && c.Exists:
 			return scope + " sepete ürün ekledi"
@@ -57,6 +60,24 @@ func describeCondition(c Condition) string {
 		default:
 			return scope + " hiç satın alma yapmadı"
 		}
+	case c.Type == TypeSignup:
+		if c.Op == OpWithin {
+			return fmt.Sprintf("Son %d günde üye oldu", c.Days)
+		}
+		return fmt.Sprintf("%d günden daha önce üye oldu", c.Days)
+	case c.Type == TypeMetric:
+		bound := "en az"
+		if c.Op == OpLTE {
+			bound = "en fazla"
+		}
+		text := fmt.Sprintf("Sipariş sayısı: %s %d", bound, c.Value)
+		if c.Metric == MetricTotalSpent {
+			text = fmt.Sprintf("Toplam harcama: %s %d TL", bound, c.Value)
+		}
+		if c.WithinDays > 0 {
+			return text + fmt.Sprintf(" (son %d günde)", c.WithinDays)
+		}
+		return text + " (tüm zamanlar)"
 	case c.Field == FieldAge:
 		return fmt.Sprintf("Yaş: %d–%d (doğum yılına göre)", c.Min, c.Max)
 	default:

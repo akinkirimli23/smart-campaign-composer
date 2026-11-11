@@ -2,6 +2,7 @@ package audience_test
 
 import (
 	"context"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -70,6 +71,27 @@ func TestCountsMatchReferenceEvaluation(t *testing.T) {
 		"lapsed": {Match: segment.MatchAll, Conditions: cond(
 			segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: 90, Exists: true},
 			segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: 30, Exists: false})},
+		"at least 2 purchases in 90 days": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: 90, Exists: true, MinCount: 2})},
+		"at least 3 cart adds in a category": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: "fashion", WithinDays: 180, Exists: true, MinCount: 3})},
+		"signed up recently": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: 90})},
+		"signed up 90 to 365 days ago": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: 365},
+			segment.Condition{Type: segment.TypeSignup, Op: segment.OpOlderThan, Days: 90})},
+		"spent at least 1000": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 1000})},
+		"spent 200 to 800 in 60 days": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 200, WithinDays: 60},
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpLTE, Value: 800, WithinDays: 60})},
+		"never ordered": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpLTE, Value: 0})},
+		"at least 3 orders": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpGTE, Value: 3})},
+		"big spender or new member": {Match: segment.MatchAny, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 3000},
+			segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: 30})},
 		"any": {Match: segment.MatchAny, Conditions: cond(
 			segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"Trabzon"}},
 			segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: "books", WithinDays: 7, Exists: true},
@@ -119,11 +141,44 @@ func matches(r segment.Rule, u seed.User, events []seed.Event, asOf time.Time) b
 		switch {
 		case c.Type == segment.TypeEvent:
 			from := asOf.AddDate(0, 0, -c.WithinDays)
-			found := slices.ContainsFunc(events, func(e seed.Event) bool {
-				return e.Type == c.Event && !e.OccurredAt.Before(from) && !e.OccurredAt.After(asOf) &&
-					(c.Category == "" || e.Category == c.Category)
-			})
-			ok = found == c.Exists
+			n := 0
+			for _, e := range events {
+				if e.Type == c.Event && !e.OccurredAt.Before(from) && !e.OccurredAt.After(asOf) &&
+					(c.Category == "" || e.Category == c.Category) {
+					n++
+				}
+			}
+			ok = (n >= max(c.MinCount, 1)) == c.Exists
+		case c.Type == segment.TypeSignup:
+			cutoff := asOf.AddDate(0, 0, -c.Days)
+			if c.Op == segment.OpWithin {
+				ok = !u.SignupAt.Before(cutoff) && !u.SignupAt.After(asOf)
+			} else {
+				ok = u.SignupAt.Before(cutoff)
+			}
+		case c.Type == segment.TypeMetric:
+			// Amounts are compared in kuruş so float rounding cannot move a user
+			// across a threshold.
+			var kurus, orders int64
+			for _, e := range events {
+				if e.Type != "purchase" || e.OccurredAt.After(asOf) {
+					continue
+				}
+				if c.WithinDays > 0 && e.OccurredAt.Before(asOf.AddDate(0, 0, -c.WithinDays)) {
+					continue
+				}
+				orders++
+				kurus += int64(math.Round(*e.Amount * 100))
+			}
+			have, want := orders, int64(c.Value)
+			if c.Metric == segment.MetricTotalSpent {
+				have, want = kurus, int64(c.Value)*100
+			}
+			if c.Op == segment.OpGTE {
+				ok = have >= want
+			} else {
+				ok = have <= want
+			}
 		case c.Field == segment.FieldAge:
 			age := asOf.Year() - u.BirthYear
 			ok = age >= c.Min && age <= c.Max

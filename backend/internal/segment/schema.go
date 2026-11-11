@@ -42,7 +42,35 @@ func JSONSchema() map[string]any {
 				"type":        "boolean",
 				"description": "true: the user did this in the window. false: the user did not do this at all in the window.",
 			},
-		}, "type", "event", "category", "within_days", "exists"),
+			"min_count": map[string]any{
+				"description": "With exists true: the event happened at least this many times in the window (2-100). null for at least once. Must be null when exists is false.",
+				"anyOf":       []any{map[string]any{"type": "integer"}, map[string]any{"type": "null"}},
+			},
+		}, "type", "event", "category", "within_days", "exists", "min_count"),
+		objectSchema(map[string]any{
+			"type": constant(TypeSignup),
+			"op": map[string]any{
+				"type": "string", "enum": []any{OpWithin, OpOlderThan},
+				"description": "within: signed up during the last `days` days. older_than: signed up more than `days` days ago.",
+			},
+			"days": map[string]any{"type": "integer", "description": "Number of days (1-3650)."},
+		}, "type", "op", "days"),
+		objectSchema(map[string]any{
+			"type": constant(TypeMetric),
+			"metric": map[string]any{
+				"type": "string", "enum": []any{MetricTotalSpent, MetricOrderCount},
+				"description": "total_spent: sum of purchase amounts in TL. order_count: number of purchases.",
+			},
+			"op": map[string]any{
+				"type": "string", "enum": []any{OpGTE, OpLTE},
+				"description": "gte: at least value. lte: at most value. Both include the value itself.",
+			},
+			"value": map[string]any{"type": "integer", "description": "Threshold: whole TL for total_spent, a count for order_count."},
+			"within_days": map[string]any{
+				"description": "Only purchases in the last N days (1-365), or null for all time.",
+				"anyOf":       []any{map[string]any{"type": "integer"}, map[string]any{"type": "null"}},
+			},
+		}, "type", "metric", "op", "value", "within_days"),
 	)
 
 	return objectSchema(map[string]any{

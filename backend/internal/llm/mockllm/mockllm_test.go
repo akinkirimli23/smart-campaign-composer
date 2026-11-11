@@ -72,3 +72,59 @@ func TestOrBetweenCities(t *testing.T) {
 		t.Fatalf("got %+v\nwant %+v", out.Rule, want)
 	}
 }
+
+// The three additions of DECISIONS 25, as the mock reads them.
+func TestCountsMetricsAndSignup(t *testing.T) {
+	tests := []struct {
+		brief string
+		want  []segment.Condition
+	}{
+		{"1000 TL üzeri harcayan İstanbulluları VIP kampanyasına davet et", []segment.Condition{
+			{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+			{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 1000},
+		}},
+		{"500 TL altında harcama yapanlara indirim gönder", []segment.Condition{
+			{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpLTE, Value: 500},
+		}},
+		{"Son 30 günde en az 3 kez sepete ürün ekleyenlere hatırlatma gönder", []segment.Condition{
+			{Type: segment.TypeEvent, Event: "cart_add", WithinDays: 30, Exists: true, MinCount: 3},
+		}},
+		{"Son 90 günde en az 2 kez alışveriş yapan kadınlara teşekkür et", []segment.Condition{
+			{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}},
+			{Type: segment.TypeEvent, Event: "purchase", WithinDays: 90, Exists: true, MinCount: 2},
+		}},
+		{"Son 7 günde kayıt olanlara hoş geldin mesajı gönder", []segment.Condition{
+			{Type: segment.TypeSignup, Op: segment.OpWithin, Days: 7},
+		}},
+		{"En az 5 sipariş vermiş Ankaralılara özel teklif", []segment.Condition{
+			{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"Ankara"}},
+			{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpGTE, Value: 5},
+		}},
+	}
+	for _, tt := range tests {
+		out := generate(t, tt.brief)
+		if out.Rule == nil || !reflect.DeepEqual(out.Rule.Conditions, tt.want) {
+			t.Errorf("brief %q:\n got %+v\nwant %+v", tt.brief, out.Rule, tt.want)
+		}
+	}
+
+	// The inclusive boundary of "üzeri" is an interpretation; it is surfaced.
+	out := generate(t, "1000 TL üzeri harcayanlara gönder")
+	if len(out.Assumptions) != 1 || out.Assumptions[0].ConditionIndex != 0 || out.Assumptions[0].Phrase != "1000 TL üzeri" {
+		t.Errorf("assumptions = %+v", out.Assumptions)
+	}
+}
+
+// Requests for data that does not exist are still refused.
+func TestStillUnsupported(t *testing.T) {
+	for _, brief := range []string{
+		"Son 30 günde en az 3 kez ürün görüntüleyenlere indirim gönder",
+		"Gold üyelere özel erken erişim duyurusu yap",
+		"Doğum günü bu hafta olanlara hediye çeki gönder",
+		"iOS kullanan İstanbullulara uygulama duyurusu yap",
+	} {
+		if out := generate(t, brief); out.Unsupported == nil || out.Rule != nil {
+			t.Errorf("brief %q: want unsupported, got %+v", brief, out.Rule)
+		}
+	}
+}

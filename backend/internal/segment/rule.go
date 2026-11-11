@@ -20,6 +20,10 @@ const (
 	MaxWithinDays = 365
 	MinAge        = 0
 	MaxAge        = 120
+	MaxMinCount   = 100     // "at least N times"
+	MaxSignupDays = 3650    // ten years
+	MaxSpent      = 1000000 // TL
+	MaxOrders     = 1000
 )
 
 type Match string
@@ -32,10 +36,24 @@ const (
 const (
 	TypeAttribute = "attribute"
 	TypeEvent     = "event"
+	TypeSignup    = "signup"
+	TypeMetric    = "metric"
 
 	OpIn      = "in"
 	OpNotIn   = "not_in"
 	OpBetween = "between"
+
+	// Signup: joined within the last Days days, or longer ago than that.
+	OpWithin    = "within"
+	OpOlderThan = "older_than"
+
+	// Metric comparisons. Both are inclusive: "at least" and "at most".
+	OpGTE = "gte"
+	OpLTE = "lte"
+
+	// Metrics are computed from purchase events (DECISIONS 25).
+	MetricTotalSpent = "total_spent" // sum of purchase amounts, TL
+	MetricOrderCount = "order_count" // number of purchases
 
 	// FieldAge is the only attribute that is a range rather than a closed set.
 	// It is derived from birth_year so the LLM never does date arithmetic.
@@ -48,9 +66,9 @@ type Rule struct {
 	Conditions []Condition `json:"conditions"`
 }
 
-// Condition is either an attribute condition or an event condition, told apart
-// by Type. Only the fields of that variant are meaningful; Parse rejects JSON
-// that sets a field belonging to another variant.
+// Condition is one of four variants (attribute, event, signup, metric), told
+// apart by Type. Only the fields of that variant are meaningful; Parse rejects
+// JSON that sets a field belonging to another variant.
 type Condition struct {
 	Type string
 
@@ -66,6 +84,17 @@ type Condition struct {
 	Category   string // empty: any category
 	WithinDays int
 	Exists     bool
+	// MinCount: with Exists, the event happened at least this many times in
+	// the window. 0 and 1 both mean "at least once".
+	MinCount int
+
+	// Signup variant: Op (within / older_than) and Days.
+	Days int
+
+	// Metric variant: Metric, Op (gte / lte), Value, and WithinDays where 0
+	// means "all time".
+	Metric string
+	Value  int
 }
 
 // setField is an attribute whose values come from a closed set.
@@ -86,7 +115,12 @@ var (
 	setFieldOrder  = []string{"city", "language", "gender"}
 	attributeNames = []string{"city", "language", "gender", FieldAge}
 	eventTypes     = []string{"cart_add", "purchase"}
+	conditionTypes = []string{TypeAttribute, TypeEvent, TypeSignup, TypeMetric}
+	metricNames    = []string{MetricTotalSpent, MetricOrderCount}
 )
+
+// maxMetricValue is the largest threshold that makes sense per metric.
+var maxMetricValue = map[string]int{MetricTotalSpent: MaxSpent, MetricOrderCount: MaxOrders}
 
 func categories() []string { return seed.Categories }
 
@@ -99,13 +133,36 @@ func (c Condition) MarshalJSON() ([]byte, error) {
 		if c.Category != "" {
 			category = &c.Category
 		}
+		var minCount *int
+		if c.MinCount > 1 {
+			minCount = &c.MinCount
+		}
 		return json.Marshal(struct {
 			Type       string  `json:"type"`
 			Event      string  `json:"event"`
 			Category   *string `json:"category"`
 			WithinDays int     `json:"within_days"`
 			Exists     bool    `json:"exists"`
-		}{c.Type, c.Event, category, c.WithinDays, c.Exists})
+			MinCount   *int    `json:"min_count"`
+		}{c.Type, c.Event, category, c.WithinDays, c.Exists, minCount})
+	case c.Type == TypeSignup:
+		return json.Marshal(struct {
+			Type string `json:"type"`
+			Op   string `json:"op"`
+			Days int    `json:"days"`
+		}{c.Type, c.Op, c.Days})
+	case c.Type == TypeMetric:
+		var within *int
+		if c.WithinDays > 0 {
+			within = &c.WithinDays
+		}
+		return json.Marshal(struct {
+			Type       string `json:"type"`
+			Metric     string `json:"metric"`
+			Op         string `json:"op"`
+			Value      int    `json:"value"`
+			WithinDays *int   `json:"within_days"`
+		}{c.Type, c.Metric, c.Op, c.Value, within})
 	case c.Field == FieldAge:
 		return json.Marshal(struct {
 			Type  string `json:"type"`

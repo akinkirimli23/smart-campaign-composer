@@ -300,3 +300,192 @@ func TestClosedSetsAreCovered(t *testing.T) {
 		t.Error("schema must not be recursive: structured outputs reject it")
 	}
 }
+
+// --- DECISIONS 25: event counts, signup date, purchase metrics ----------------
+
+const extendedJSON = `{"match":"all","conditions":[
+  {"type":"event","event":"cart_add","category":"electronics","within_days":30,"exists":true,"min_count":3},
+  {"type":"signup","op":"within","days":90},
+  {"type":"metric","metric":"total_spent","op":"gte","value":1000,"within_days":null},
+  {"type":"metric","metric":"order_count","op":"lte","value":5,"within_days":60}]}`
+
+func TestExtendedConditionsRoundTrip(t *testing.T) {
+	rule, err := Parse([]byte(extendedJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Condition{
+		{Type: TypeEvent, Event: "cart_add", Category: "electronics", WithinDays: 30, Exists: true, MinCount: 3},
+		{Type: TypeSignup, Op: OpWithin, Days: 90},
+		{Type: TypeMetric, Metric: MetricTotalSpent, Op: OpGTE, Value: 1000},
+		{Type: TypeMetric, Metric: MetricOrderCount, Op: OpLTE, Value: 5, WithinDays: 60},
+	}
+	if !reflect.DeepEqual(rule.Conditions, want) {
+		t.Fatalf("got %+v\nwant %+v", rule.Conditions, want)
+	}
+	// What the backend sends to the browser parses back to the same rule.
+	out, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Parse(out)
+	if err != nil || !reflect.DeepEqual(again, rule) {
+		t.Fatalf("round trip: %v\n%s", err, out)
+	}
+	// Optional fields left out mean the same as null.
+	short, err := Parse([]byte(`{"match":"all","conditions":[
+	  {"type":"event","event":"purchase","within_days":7,"exists":true},
+	  {"type":"metric","metric":"total_spent","op":"gte","value":50}]}`))
+	if err != nil || short.Conditions[0].MinCount != 0 || short.Conditions[1].WithinDays != 0 {
+		t.Fatalf("got %+v, %v", short, err)
+	}
+}
+
+func TestExtendedConditionsRejected(t *testing.T) {
+	cond := func(c string) string { return `{"match":"all","conditions":[` + c + `]}` }
+	tests := []struct {
+		name, json, path, want string
+	}{
+		{"min_count zero", cond(`{"type":"event","event":"purchase","within_days":30,"exists":true,"min_count":0}`), "conditions[0].min_count", "1 ile 100"},
+		{"min_count too large", cond(`{"type":"event","event":"purchase","within_days":30,"exists":true,"min_count":101}`), "conditions[0].min_count", "1 ile 100"},
+		{"min_count with exists false", cond(`{"type":"event","event":"purchase","within_days":30,"exists":false,"min_count":3}`), "conditions[0].min_count", "exists: false ile kullanılamaz"},
+		{"min_count as text", cond(`{"type":"event","event":"purchase","within_days":30,"exists":true,"min_count":"3"}`), "conditions[0].min_count", "tam sayı olmalı"},
+		{"same event twice with different counts", cond(`{"type":"event","event":"purchase","within_days":30,"exists":true,"min_count":2},{"type":"event","event":"purchase","within_days":30,"exists":true,"min_count":5}`), "conditions[1]", "tek koşulda birleştirin"},
+
+		{"signup unknown op", cond(`{"type":"signup","op":"before","days":7}`), "conditions[0].op", "within, older_than"},
+		{"signup zero days", cond(`{"type":"signup","op":"within","days":0}`), "conditions[0].days", "1 ile 3650"},
+		{"signup with a date", cond(`{"type":"signup","op":"within","days":7,"since":"2026-01-01"}`), "conditions[0].since", "bilinmeyen alan"},
+		{"signup field of another variant", cond(`{"type":"signup","op":"within","days":7,"within_days":7}`), "conditions[0].within_days", "bilinmeyen alan"},
+		{"signup same bound twice", cond(`{"type":"signup","op":"within","days":7},{"type":"signup","op":"within","days":30}`), "conditions[1]", "aynı sınır"},
+		{"signup empty range", cond(`{"type":"signup","op":"within","days":7},{"type":"signup","op":"older_than","days":30}`), "conditions[1]", "çelişiyor"},
+
+		{"unknown metric", cond(`{"type":"metric","metric":"lifetime_value","op":"gte","value":10}`), "conditions[0].metric", "total_spent, order_count"},
+		{"metric as sql", cond(`{"type":"metric","metric":"sum(amount)); DROP TABLE users; --","op":"gte","value":10}`), "conditions[0].metric", "geçerli bir metrik değil"},
+		{"metric unknown op", cond(`{"type":"metric","metric":"total_spent","op":">","value":10}`), "conditions[0].op", "gte"},
+		{"metric negative", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":-1}`), "conditions[0].value", "0 ile 1000000"},
+		{"metric too large", cond(`{"type":"metric","metric":"order_count","op":"gte","value":1001}`), "conditions[0].value", "0 ile 1000"},
+		{"metric decimal", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":99.5}`), "conditions[0].value", "tam sayı olmalı"},
+		{"metric that selects everyone", cond(`{"type":"metric","metric":"order_count","op":"gte","value":0}`), "conditions[0].value", "herkesi seçer"},
+		{"metric window out of range", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":10,"within_days":400}`), "conditions[0].within_days", "1 ile 365"},
+		{"metric window zero", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":10,"within_days":0}`), "conditions[0].within_days", "1 ile 365"},
+		{"metric with category", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":10,"category":"books"}`), "conditions[0].category", "bilinmeyen alan"},
+		{"metric same bound twice", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":10},{"type":"metric","metric":"total_spent","op":"gte","value":20}`), "conditions[1]", "aynı sınır"},
+		{"metric empty range", cond(`{"type":"metric","metric":"total_spent","op":"gte","value":1000},{"type":"metric","metric":"total_spent","op":"lte","value":500}`), "conditions[1]", "çelişiyor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.json))
+			verr, ok := err.(ValidationError)
+			if !ok {
+				t.Fatalf("want a validation error, got %v", err)
+			}
+			for _, e := range verr {
+				if e.Path == tt.path && strings.Contains(e.Message, tt.want) {
+					return
+				}
+			}
+			t.Fatalf("no error at %q containing %q:\n%v", tt.path, tt.want, err)
+		})
+	}
+}
+
+// Bounds that form a range, and the same metric over different periods, are
+// meaningful and accepted.
+func TestExtendedConditionsAccepted(t *testing.T) {
+	for name, conditions := range map[string]string{
+		"signup range":            `{"type":"signup","op":"within","days":90},{"type":"signup","op":"older_than","days":30}`,
+		"spend range":             `{"type":"metric","metric":"total_spent","op":"gte","value":500},{"type":"metric","metric":"total_spent","op":"lte","value":1000}`,
+		"same metric two periods": `{"type":"metric","metric":"total_spent","op":"gte","value":500},{"type":"metric","metric":"total_spent","op":"lte","value":100,"within_days":30}`,
+		"never ordered":           `{"type":"metric","metric":"order_count","op":"lte","value":0}`,
+		"count and absence":       `{"type":"event","event":"cart_add","within_days":30,"exists":true,"min_count":3},{"type":"event","event":"purchase","within_days":30,"exists":false}`,
+	} {
+		if _, err := Parse([]byte(`{"match":"all","conditions":[` + conditions + `]}`)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestCompileExtendedConditions(t *testing.T) {
+	rule, err := Parse([]byte(extendedJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := Compile(rule, asOf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSQL := "((SELECT count(*) FROM events e WHERE e.user_id = u.id AND e.event_type = $1 AND e.occurred_at >= $2 AND e.occurred_at <= $3 AND e.category = $4) >= $5::bigint" +
+		" AND (u.signup_at >= $6 AND u.signup_at <= $7)" +
+		" AND (SELECT COALESCE(sum(e.amount), 0) FROM events e WHERE e.user_id = u.id AND e.event_type = $8 AND e.occurred_at <= $9) >= $10::bigint" +
+		" AND (SELECT count(*) FROM events e WHERE e.user_id = u.id AND e.event_type = $11 AND e.occurred_at <= $12 AND e.occurred_at >= $13) <= $14::bigint)"
+	if q.Where != wantSQL {
+		t.Fatalf("SQL:\n got %s\nwant %s", q.Where, wantSQL)
+	}
+	wantArgs := []any{
+		"cart_add", asOf.AddDate(0, 0, -30), asOf, "electronics", 3,
+		asOf.AddDate(0, 0, -90), asOf,
+		"purchase", asOf, 1000,
+		"purchase", asOf, asOf.AddDate(0, 0, -60), 5,
+	}
+	if !reflect.DeepEqual(q.Args, wantArgs) {
+		t.Fatalf("args:\n got %v\nwant %v", q.Args, wantArgs)
+	}
+	// Thresholds, names and the clock are parameters, never SQL text.
+	for _, leaked := range []string{"1000", "electronics", "purchase", "cart_add", "total_spent", "2026", "now()", "'"} {
+		if strings.Contains(q.Where, leaked) {
+			t.Errorf("SQL contains %q: %s", leaked, q.Where)
+		}
+	}
+
+	older, err := Compile(Rule{Match: MatchAll, Conditions: []Condition{{Type: TypeSignup, Op: OpOlderThan, Days: 365}}}, asOf)
+	if err != nil || older.Where != "(u.signup_at < $1)" || !reflect.DeepEqual(older.Args, []any{asOf.AddDate(0, 0, -365)}) {
+		t.Fatalf("older_than: %q %v %v", older.Where, older.Args, err)
+	}
+}
+
+// A rule built in Go with out-of-range values does not reach SQL either.
+func TestCompileRejectsInvalidExtendedConditions(t *testing.T) {
+	for _, c := range []Condition{
+		{Type: TypeEvent, Event: "purchase", WithinDays: 30, Exists: true, MinCount: -1},
+		{Type: TypeSignup, Op: "since", Days: 7},
+		{Type: TypeMetric, Metric: "amount", Op: OpGTE, Value: 10},
+		{Type: TypeMetric, Metric: MetricTotalSpent, Op: OpGTE, Value: 10, WithinDays: -5},
+	} {
+		if _, err := Compile(Rule{Match: MatchAll, Conditions: []Condition{c}}, asOf); err == nil {
+			t.Errorf("compiled an invalid condition: %+v", c)
+		}
+	}
+}
+
+func TestDescribeExtendedConditions(t *testing.T) {
+	rule, err := Parse([]byte(extendedJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"Son 30 günde elektronik kategorisinde en az 3 kez sepete ürün ekledi",
+		"Son 90 günde üye oldu",
+		"Toplam harcama: en az 1000 TL (tüm zamanlar)",
+		"Sipariş sayısı: en fazla 5 (son 60 günde)",
+	}
+	if got := Describe(rule).Conditions; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+	older := Describe(Rule{Match: MatchAll, Conditions: []Condition{{Type: TypeSignup, Op: OpOlderThan, Days: 365}}})
+	if older.Conditions[0] != "365 günden daha önce üye oldu" {
+		t.Errorf("got %q", older.Conditions[0])
+	}
+}
+
+// The schema offers the model every variant the parser accepts.
+func TestSchemaListsEveryConditionType(t *testing.T) {
+	raw, err := json.Marshal(JSONSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range append(append([]string{}, conditionTypes...), "min_count", MetricTotalSpent, MetricOrderCount, OpWithin, OpOlderThan, OpGTE, OpLTE) {
+		if !strings.Contains(string(raw), `"`+want+`"`) {
+			t.Errorf("schema does not mention %q", want)
+		}
+	}
+}

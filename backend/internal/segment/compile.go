@@ -42,11 +42,40 @@ func Compile(r Rule, asOf time.Time) (Query, error) {
 			if c.Category != "" {
 				sub += " AND e.category = " + arg(c.Category)
 			}
-			if c.Exists {
+			switch {
+			case c.Exists && c.MinCount > 1:
+				counted := strings.Replace(sub, "SELECT 1", "SELECT count(*)", 1)
+				parts = append(parts, "("+counted+") >= "+arg(c.MinCount)+"::bigint")
+			case c.Exists:
 				parts = append(parts, "EXISTS ("+sub+")")
-			} else {
+			default:
 				parts = append(parts, "NOT EXISTS ("+sub+")")
 			}
+		case c.Type == TypeSignup:
+			cutoff := asOf.AddDate(0, 0, -c.Days)
+			if c.Op == OpWithin {
+				parts = append(parts, "(u.signup_at >= "+arg(cutoff)+" AND u.signup_at <= "+arg(asOf)+")")
+			} else {
+				parts = append(parts, "u.signup_at < "+arg(cutoff))
+			}
+		case c.Type == TypeMetric:
+			// Both metrics are aggregates over purchase events up to asOf; a user
+			// without purchases has spent 0 in 0 orders.
+			aggregate := "count(*)"
+			if c.Metric == MetricTotalSpent {
+				aggregate = "COALESCE(sum(e.amount), 0)"
+			}
+			sub := "SELECT " + aggregate + " FROM events e WHERE e.user_id = u.id" +
+				" AND e.event_type = " + arg("purchase") +
+				" AND e.occurred_at <= " + arg(asOf)
+			if c.WithinDays > 0 {
+				sub += " AND e.occurred_at >= " + arg(asOf.AddDate(0, 0, -c.WithinDays))
+			}
+			cmp := " >= "
+			if c.Op == OpLTE {
+				cmp = " <= "
+			}
+			parts = append(parts, "("+sub+")"+cmp+arg(c.Value)+"::bigint")
 		case c.Field == FieldAge:
 			// Age is approximated from the birth year: asOf year minus birth year.
 			parts = append(parts, "u.birth_year BETWEEN "+arg(asOf.Year()-c.Max)+" AND "+arg(asOf.Year()-c.Min))

@@ -88,7 +88,7 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 	}
 	rawType, present := obj["type"]
 	if !present {
-		col.add(joinPath(path, "type"), "zorunlu alan eksik; izinli değerler: %s, %s", TypeAttribute, TypeEvent)
+		col.add(joinPath(path, "type"), "zorunlu alan eksik; izinli değerler: %s", strings.Join(conditionTypes, ", "))
 		return Condition{}, false
 	}
 	typ, ok := str(col, joinPath(path, "type"), rawType)
@@ -124,7 +124,7 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 		}
 		c.Op, _ = str(col, joinPath(path, "op"), obj["op"])
 	case TypeEvent:
-		checkKeys(col, path, obj, []string{"type", "event", "within_days", "exists"}, []string{"category"})
+		checkKeys(col, path, obj, []string{"type", "event", "within_days", "exists"}, []string{"category", "min_count"})
 		c.Event, _ = str(col, joinPath(path, "event"), obj["event"])
 		c.WithinDays, _ = integer(col, joinPath(path, "within_days"), obj["within_days"])
 		c.Exists, _ = boolean(col, joinPath(path, "exists"), obj["exists"])
@@ -135,8 +135,35 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 				col.add(joinPath(path, "category"), "boş olamaz; tüm kategoriler için alanı kaldırın")
 			}
 		}
+		// min_count is optional; null means "at least once", like leaving it out.
+		if raw, present := obj["min_count"]; present && !isNull(raw) {
+			if n, ok := integer(col, joinPath(path, "min_count"), raw); ok {
+				if n < 1 {
+					col.add(joinPath(path, "min_count"), "%d geçersiz; 1 ile %d arasında olmalı", n, MaxMinCount)
+				}
+				c.MinCount = n
+			}
+		}
+	case TypeSignup:
+		checkKeys(col, path, obj, []string{"type", "op", "days"}, nil)
+		c.Op, _ = str(col, joinPath(path, "op"), obj["op"])
+		c.Days, _ = integer(col, joinPath(path, "days"), obj["days"])
+	case TypeMetric:
+		checkKeys(col, path, obj, []string{"type", "metric", "op", "value"}, []string{"within_days"})
+		c.Metric, _ = str(col, joinPath(path, "metric"), obj["metric"])
+		c.Op, _ = str(col, joinPath(path, "op"), obj["op"])
+		c.Value, _ = integer(col, joinPath(path, "value"), obj["value"])
+		// within_days is optional; null means "all time", like leaving it out.
+		if raw, present := obj["within_days"]; present && !isNull(raw) {
+			if n, ok := integer(col, joinPath(path, "within_days"), raw); ok {
+				if n < MinWithinDays {
+					col.add(joinPath(path, "within_days"), "%d geçersiz; %d ile %d arasında olmalı (tüm zamanlar için alanı kaldırın)", n, MinWithinDays, MaxWithinDays)
+				}
+				c.WithinDays = n
+			}
+		}
 	default:
-		col.add(joinPath(path, "type"), "%q bilinmeyen bir koşul tipi; izinli değerler: %s, %s", typ, TypeAttribute, TypeEvent)
+		col.add(joinPath(path, "type"), "%q bilinmeyen bir koşul tipi; izinli değerler: %s", typ, strings.Join(conditionTypes, ", "))
 		return Condition{}, false
 	}
 	return c, len(col.errs) == before

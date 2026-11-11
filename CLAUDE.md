@@ -178,6 +178,9 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   SQL), `Describe` (pazarlamacıya gösterilen açıklama, kuraldan türetilir), `JSONSchema`
   (Claude'a verilen şema, aynı tablolardan üretilir), `Generator` (LLM + hata geri besleme, en
   fazla 3 deneme).
+- Koşul tipleri: `attribute` (şehir, dil, cinsiyet, yaş), `event` (sepet / satın alma, isteğe
+  bağlı `min_count`), `signup` (üyelik tarihi), `metric` (`total_spent`, `order_count`). Son üçü
+  DECISIONS 25 ile eklendi.
 - Yeni bir alan / operatör eklemek: `rule.go` tabloları, `validate.go`, `compile.go`,
   `describe.go`, `schema.go` ve testler. Tablolar tek kaynak; SQL'e giden kolon adı oradan gelir.
 - Claude'un çıktısı ya `rule` ya `unsupported`. Açıklama metni Claude'dan alınmaz; Claude
@@ -226,8 +229,8 @@ Kararlar DECISIONS 21–22'de. Kısaca:
   gönderen süreç tek olmalı.
 - `internal/mockprovider` + `cmd/mockprovider`: compose'ta `mock-provider` servisi, `:8090`.
   Oranlar `MOCK_*` ortam değişkenleriyle ayarlanır.
-- Segment kuralının kapsamı genişletilmedi (DECISIONS 20); zaman kalırsa aşama 5'ten sonra
-  `min_count`, harcama / sipariş metrikleri ve üyelik tarihi.
+- Segment kuralına `min_count`, harcama / sipariş metrikleri ve üyelik tarihi aşama 5'ten sonra
+  eklendi (DECISIONS 25). "Herkese gönder" ve diğer eksikler README "Sonraya bırakılanlar"da.
 
 ## Arayüz (aşama 5, kesinleşti)
 

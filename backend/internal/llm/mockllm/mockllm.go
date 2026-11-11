@@ -104,7 +104,12 @@ var (
 
 	// Requirements the rule format cannot express; the mock answers "unsupported"
 	// for these so that path can be demoed without a real model.
-	unsupportedHints = []string{"harca", "tutar", "tl uzeri", "dogum gun", "en cok", "sadik"}
+	unsupportedHints = []string{"dogum gun", "en cok", "sadik", "goruntule", "gold", "silver", "bronze", "ios", "android"}
+
+	timesRe  = regexp.MustCompile(`en az (\d+) (kez|kere|defa)`)
+	spentRe  = regexp.MustCompile(`(\d+)\s*(tl|lira)\S*\s+(uzeri|ustu|fazla|ve uzeri|alti|altinda|az)`)
+	ordersRe = regexp.MustCompile(`en az (\d+) siparis|(\d+)\S*\s+fazla siparis`)
+	signupRe = regexp.MustCompile(`kayit ol|uye ol|yeni uye`)
 
 	categoryHints = []struct{ hint, category string }{
 		{"elektronik", "electronics"}, {"moda", "fashion"}, {"giyim", "fashion"},
@@ -121,7 +126,7 @@ func segmentResult(brief string) map[string]any {
 		if strings.Contains(text, hint) {
 			return map[string]any{
 				"kind":    "unsupported",
-				"reason":  "Kural formatı harcama tutarı, sıralama ya da tarih bazlı özel koşulları ifade edemiyor.",
+				"reason":  "Kural formatı sıralama, doğum günü, sadakat seviyesi, cihaz ya da ürün görüntüleme koşullarını ifade edemiyor.",
 				"phrases": []string{original(brief, text, hint)},
 			}
 		}
@@ -188,9 +193,36 @@ func segmentResult(brief string) map[string]any {
 		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
 	}
 
+	if signupRe.MatchString(text) {
+		conditions = append(conditions, segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: days})
+	}
+	if m := spentRe.FindStringSubmatch(text); m != nil {
+		value, _ := strconv.Atoi(m[1])
+		op, bound := segment.OpGTE, "en az"
+		if strings.HasPrefix(m[3], "alt") || m[3] == "az" {
+			op, bound = segment.OpLTE, "en fazla"
+		}
+		conditions = append(conditions, segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: op, Value: value})
+		assumptions = append(assumptions, segment.Assumption{
+			ConditionIndex: len(conditions) - 1, Phrase: original(brief, text, m[0]),
+			Interpretation: fmt.Sprintf("Tüm zamanlardaki toplam harcama %s %d TL olarak yorumlandı; %d TL'nin kendisi dahil.", bound, value, value),
+		})
+	}
+	if m := ordersRe.FindStringSubmatch(text); m != nil {
+		value, _ := strconv.Atoi(m[1] + m[2])
+		if m[2] != "" {
+			value++ // "3'ten fazla" means at least 4
+		}
+		conditions = append(conditions, segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpGTE, Value: value})
+	}
+	minCount := 0
+	if m := timesRe.FindStringSubmatch(text); m != nil {
+		minCount, _ = strconv.Atoi(m[1])
+	}
+
 	hasCart := strings.Contains(text, "sepet")
 	if hasCart {
-		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: category, WithinDays: days, Exists: true})
+		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: category, WithinDays: days, Exists: true, MinCount: minCount})
 	}
 	if phrase, ok := firstMatch(text, notPurchased); ok {
 		phrase = original(brief, text, phrase)
@@ -205,13 +237,17 @@ func segmentResult(brief string) map[string]any {
 		if hasCart {
 			cat = "" // the category hint already went to the cart condition
 		}
-		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "purchase", Category: cat, WithinDays: days, Exists: true})
+		count := minCount
+		if hasCart {
+			count = 0 // "en az N kez" already went to the cart condition
+		}
+		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "purchase", Category: cat, WithinDays: days, Exists: true, MinCount: count})
 	}
 
 	if len(conditions) == 0 {
 		return map[string]any{
 			"kind":    "unsupported",
-			"reason":  "Brief'te tanınan bir kitle koşulu bulunamadı (mock LLM yalnızca şehir, dil, cinsiyet, yaş, sepet ve satın alma ifadelerini tanır).",
+			"reason":  "Brief'te tanınan bir kitle koşulu bulunamadı (mock LLM yalnızca şehir, dil, cinsiyet, yaş, üyelik tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır).",
 			"phrases": []string{},
 		}
 	}

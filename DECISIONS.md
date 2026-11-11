@@ -414,7 +414,8 @@ isteyebilir. Aşama 4'ten önce bunların ne kadarının karşılandığı gözd
   yeniden değerlendirdik ve koruduk.
 - Aşama 5'ten sonra zaman kalırsa, verisi hazır olan üç şey eklenir: olay sayısı (`min_count`),
   harcama / sipariş metrikleri (satın alma olaylarının `amount` alanından), üyelik tarihi
-  (`signup_at`).
+  (`signup_at`). **Güncelleme:** üçü de eklendi, bkz. 25. karar. Aşağıdaki tablo o tarihteki
+  durumu gösterir.
 
 | İstek | Durum |
 |---|---|
@@ -569,3 +570,49 @@ değişirse diğeri de güncellenmeli (ortak test durumları bunu yakalamak içi
 
 **Alternatif.** Derlenmiş arayüzü Go binary'sine gömmek. Tek servis olur ve arada proxy kalmaz;
 ama Go imajının derlemesi Node'a bağlanır ve frontend değişince backend imajı yeniden derlenir.
+
+---
+
+## 25. Segment kuralına olay sayısı, üyelik tarihi ve satın alma metrikleri eklendi
+
+**Bağlam.** 20. karar bu üçünü "zaman kalırsa" diye ertelemişti. Aşama 5 bittikten sonra farklı
+brief'lerle denendi; "1000 TL üzeri harcayan", "en az 3 kez" ve "son 7 günde kayıt olan" gibi
+olağan istekler "desteklenmiyor" yanıtı alıyordu. Üçünün de verisi seed'de hazırdı.
+
+**Karar.** Düz liste formatı (13. karar) korunarak üç ekleme yapıldı:
+
+```json
+{ "type": "event", "event": "cart_add", "category": null, "within_days": 30, "exists": true, "min_count": 3 }
+{ "type": "signup", "op": "within", "days": 7 }
+{ "type": "metric", "metric": "total_spent", "op": "gte", "value": 1000, "within_days": null }
+```
+
+- **`min_count`** (olay koşulunda, opsiyonel): olay pencerede en az N kez oldu (1–100). Yalnızca
+  `exists: true` ile.
+- **`signup`**: `within` (son N günde üye oldu) ya da `older_than` (N günden önce üye oldu).
+  İkisi birlikte bir aralık verir ("30–90 gün önce üye olanlar").
+- **`metric`**: `total_spent` (TL) ya da `order_count`, `gte` (en az) / `lte` (en fazla), tüm
+  zamanlar ya da son N gün. `gte` ve `lte` birlikte bir aralık verir.
+
+Her biri için doğrulama, derleme, açıklama, şema ve mock LLM güncellendi. Derlenen SQL, bu
+koşullar için de Go'da yazılmış referans hesapla karşılaştırılarak test ediliyor.
+
+**Neden bu üçü.**
+- Veri zaten var (`events.amount`, `users.signup_at`); seed değişmedi, 381 / 222 / 254 / 58
+  referans sayıları ve onlara bağlı testler olduğu gibi kaldı.
+- Format değişmedi, yalnızca beyaz liste büyüdü: yeni koşullar da sabit SQL kalıplarına derlenir
+  ve her değer parametredir (metrik adı ve eşik dahil).
+- "Şemaya uyan her kural anlamlı" ilkesi korundu: `en az 0` (herkesi seçer), aynı sınırın iki
+  kez verilmesi ve birbirini dışlayan sınırlar (`en az 1000` + `en fazla 500`) doğrulama hatası.
+
+**Bilinçli sınırlar.**
+- Karşılaştırmalar kapsayıcıdır. "1000 TL üzeri" `en az 1000` olur; sınır değerin dahil olduğu
+  pazarlamacıya yorum olarak gösterilir. Kesin "büyüktür" yok.
+- "En fazla N kez" olay koşulunda yok (`exists: false` + `min_count` reddedilir); sipariş için
+  `order_count lte` kullanılır.
+- Metrikler kategoriye göre ayrılamaz ("elektronikte 1000 TL üzeri").
+- Metrikler her sorguda olay tablosundan hesaplanır. Seed boyutunda sorun değil; büyük veride
+  kullanıcı başına özet tablo gerekir (DECISIONS 4'teki ödünleşim).
+
+**Hâlâ yok** (README "Sonraya bırakılanlar"): tüm kullanıcılara gönderim, iç içe VE / VEYA
+grupları, ülke, sadakat seviyesi, cihaz, ürün görüntüleme, uygulama / email açma.

@@ -50,8 +50,12 @@ func (r Rule) validate(skip map[int]bool) []FieldError {
 			}
 		case TypeEvent:
 			validateEvent(&col, path, c)
+		case TypeSignup:
+			validateSignup(&col, path, c)
+		case TypeMetric:
+			validateMetric(&col, path, c)
 		default:
-			col.add(path+".type", "%q bilinmeyen bir koşul tipi; izinli değerler: %s, %s", c.Type, TypeAttribute, TypeEvent)
+			col.add(path+".type", "%q bilinmeyen bir koşul tipi; izinli değerler: %s", c.Type, strings.Join(conditionTypes, ", "))
 		}
 	}
 
@@ -122,6 +126,43 @@ func validateEvent(col *collector, path string, c Condition) {
 	if c.WithinDays < MinWithinDays || c.WithinDays > MaxWithinDays {
 		col.add(path+".within_days", "%d geçersiz; %d ile %d arasında olmalı", c.WithinDays, MinWithinDays, MaxWithinDays)
 	}
+	switch {
+	case c.MinCount < 0 || c.MinCount > MaxMinCount:
+		col.add(path+".min_count", "%d geçersiz; 1 ile %d arasında olmalı", c.MinCount, MaxMinCount)
+	case c.MinCount > 1 && !c.Exists:
+		// "did not do it at least 3 times" has no single obvious meaning.
+		col.add(path+".min_count", "exists: false ile kullanılamaz; \"en fazla N kez\" bu formatta ifade edilemez")
+	}
+}
+
+func validateSignup(col *collector, path string, c Condition) {
+	if c.Op != OpWithin && c.Op != OpOlderThan {
+		col.add(path+".op", "%q geçersiz; izinli operatörler: %s, %s", c.Op, OpWithin, OpOlderThan)
+	}
+	if c.Days < 1 || c.Days > MaxSignupDays {
+		col.add(path+".days", "%d geçersiz; 1 ile %d arasında olmalı", c.Days, MaxSignupDays)
+	}
+}
+
+func validateMetric(col *collector, path string, c Condition) {
+	limit, known := maxMetricValue[c.Metric]
+	if !known {
+		col.add(path+".metric", "%q geçerli bir metrik değil; geçerli değerler: %s", c.Metric, strings.Join(metricNames, ", "))
+	}
+	if c.Op != OpGTE && c.Op != OpLTE {
+		col.add(path+".op", "%q geçersiz; izinli operatörler: %s (en az), %s (en fazla)", c.Op, OpGTE, OpLTE)
+	}
+	switch {
+	case !known:
+	case c.Value < 0 || c.Value > limit:
+		col.add(path+".value", "%d geçersiz; 0 ile %d arasında olmalı", c.Value, limit)
+	case c.Value == 0 && c.Op == OpGTE:
+		// Everyone has spent at least 0; the condition would silently do nothing.
+		col.add(path+".value", "\"en az 0\" herkesi seçer, koşul hiçbir şeyi filtrelemiyor; koşulu kaldırın")
+	}
+	if c.WithinDays != 0 && (c.WithinDays < MinWithinDays || c.WithinDays > MaxWithinDays) {
+		col.add(path+".within_days", "%d geçersiz; %d ile %d arasında olmalı (tüm zamanlar için alanı kaldırın)", c.WithinDays, MinWithinDays, MaxWithinDays)
+	}
 }
 
 // validateTogether rejects condition combinations that are individually valid
@@ -138,12 +179,18 @@ func (r Rule) validateTogether(col *collector) {
 			}
 			continue
 		}
+		if c.Type == TypeSignup || c.Type == TypeMetric {
+			r.validateRange(col, path, i, c)
+			continue
+		}
 		for j, other := range r.Conditions[:i] {
 			if other.Type != TypeEvent || other.Event != c.Event {
 				continue
 			}
 			if other.Category == c.Category && other.WithinDays == c.WithinDays {
-				if other.Exists == c.Exists {
+				if other.Exists == c.Exists && other.MinCount != c.MinCount {
+					col.add(path, "conditions[%d] ile aynı olay ve dönem; tek koşulda birleştirin", j)
+				} else if other.Exists == c.Exists {
 					col.add(path, "conditions[%d] ile aynı koşul", j)
 				} else if r.Match == MatchAll {
 					col.add(path, "conditions[%d] ile çelişiyor; ikisi birlikte kimseyi seçmez", j)
@@ -161,6 +208,43 @@ func (r Rule) validateTogether(col *collector) {
 					col.add(path, "conditions[%d] ile çelişiyor; ikisi birlikte kimseyi seçmez", j)
 				}
 			}
+		}
+	}
+}
+
+// validateRange checks a signup or metric condition against the earlier ones
+// on the same quantity. Two bounds on it are fine when they form a range
+// ("joined 30 to 90 days ago", "spent between 500 and 1000"); the same bound
+// twice, or bounds that exclude each other, are not.
+func (r Rule) validateRange(col *collector, path string, i int, c Condition) {
+	for j, other := range r.Conditions[:i] {
+		if other.Type != c.Type || other.Metric != c.Metric || (c.Type == TypeMetric && other.WithinDays != c.WithinDays) {
+			continue
+		}
+		if other.Op == c.Op {
+			col.add(path, "conditions[%d] ile aynı sınır iki kez verilmiş; tek koşulda birleştirin", j)
+			continue
+		}
+		if r.Match != MatchAll {
+			continue
+		}
+		empty := false
+		if c.Type == TypeSignup {
+			within, older := c, other
+			if c.Op == OpOlderThan {
+				within, older = other, c
+			}
+			// Joined within the last W days and more than O days ago: needs O < W.
+			empty = older.Days >= within.Days
+		} else {
+			atLeast, atMost := c, other
+			if c.Op == OpLTE {
+				atLeast, atMost = other, c
+			}
+			empty = atLeast.Value > atMost.Value
+		}
+		if empty {
+			col.add(path, "conditions[%d] ile çelişiyor; ikisi birlikte kimseyi seçmez", j)
 		}
 	}
 }

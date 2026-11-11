@@ -174,13 +174,30 @@ ai-sessions/       Claude oturum export'ları
 | Canlı gönderim durumu (SSE) ve metrics endpoint'i | ✅ |
 | CI | ⏳ |
 
-## Yapılmayanlar
+## Segment kuralı neleri ifade edebilir
+
+| İstek | Örnek |
+|---|---|
+| Şehir, dil, cinsiyet (dahil / hariç), yaş aralığı | "Ankara ve İzmir'deki 25-34 yaş kadınlar" |
+| Sepete ekleme / satın alma: yaptı ya da yapmadı, son N günde, isteğe bağlı kategori | "Son 7 günde elektronikte sepete ekleyenler", "60 gündür alışveriş yapmayanlar" |
+| Olay sayısı | "Son 30 günde en az 3 kez sepete ekleyenler" |
+| Üyelik tarihi | "Son 7 günde kayıt olanlar", "1 yıldan eski üyeler" |
+| Toplam harcama, sipariş sayısı (tüm zamanlar ya da son N gün) | "1000 TL üzeri harcayanlar", "en az 5 sipariş verenler" |
+| Koşulların hepsi (VE) ya da herhangi biri (VEYA), tek seviye | |
+
+Formatın ifade edemediği bir istekte kural üretilmez; arayüz neyin desteklenmediğini gösterir.
+Eksik koşullu bir kural daha geniş bir kitle demek olurdu.
+
+## Sonraya bırakılanlar
+
+Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
 
 | Konu | Not |
 |---|---|
-| Segment kuralında üyelik tarihi, olay sayısı ("en az 3 kez"), toplam harcama, sipariş sayısı | Veri var, kural formatında yok. Böyle bir brief "desteklenmiyor" yanıtı alır; yanlış kitle üretilmez (DECISIONS 20) |
+| Tüm kullanıcılara gönderim ("herkese gönder") | Koşulsuz kural bilerek yasak: modelin koşulları unutup herkese gönderim yapmasını önler. Açık bir "tüm kullanıcılar" seçeneği sonradan eklenebilir |
 | Segment kuralında iç içe VE / VEYA grupları | Bilinçli olarak yok (DECISIONS 13) |
+| Kesin "büyüktür", "en fazla N kez", kategori bazında harcama | Karşılaştırmalar kapsayıcı; ayrıntılar DECISIONS 25 |
 | Ülke, sadakat seviyesi, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
 | Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
 | Gönderilen metnin saklanması | Şablon ve kullanıcıdan yeniden üretilebilir; satırda tutulmuyor (DECISIONS 22) |
-| Kullanıcının diline göre içerik (bonus) | Yapılmadı. Kampanya başına tek içerik seti var; `en` kullanıcılar da aynı metni alır (DECISIONS 17) |
+| Kullanıcının diline göre içerik (bonus) | Kampanya başına tek içerik seti var; `en` kullanıcılar da aynı metni alır (DECISIONS 17) |
