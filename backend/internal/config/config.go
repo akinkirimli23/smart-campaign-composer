@@ -21,8 +21,14 @@ type Config struct {
 	// LogLevel comes from LOG_LEVEL (debug, info, warn, error); default info.
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
-	SeedUsers       int
-	SeedRandom      int64
+	// ProviderURL is the base URL of the SMS / email provider (the mock, in this project).
+	ProviderURL string
+	// SendRatePerSecond is the per-channel send limit (case requirement: 100).
+	SendRatePerSecond int
+	// WorkerEnabled runs the delivery worker inside the API process.
+	WorkerEnabled bool
+	SeedUsers     int
+	SeedRandom    int64
 }
 
 func Load() (Config, error) {
@@ -34,6 +40,8 @@ func Load() (Config, error) {
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicModel:  os.Getenv("ANTHROPIC_MODEL"),
 		LLMMode:         getenv("LLM_MODE", "auto"),
+		ProviderURL:     getenv("PROVIDER_URL", "http://localhost:8090"),
+		WorkerEnabled:   getenv("WORKER_ENABLED", "true") != "false",
 		ShutdownTimeout: 10 * time.Second,
 	}
 
@@ -43,6 +51,12 @@ func Load() (Config, error) {
 	}
 
 	var err error
+	if c.SendRatePerSecond, err = getint("SEND_RATE_PER_SECOND", 100); err != nil {
+		return c, err
+	}
+	if c.SendRatePerSecond < 1 {
+		return c, fmt.Errorf("SEND_RATE_PER_SECOND must be at least 1")
+	}
 	if c.SeedUsers, err = getint("SEED_USERS", 5000); err != nil {
 		return c, err
 	}

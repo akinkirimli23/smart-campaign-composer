@@ -17,10 +17,11 @@ type Pinger interface {
 // Options are the Server's dependencies. Each is an interface so handlers can
 // be tested without a database or an LLM.
 type Options struct {
-	DB       Pinger
-	Segments SegmentGenerator
-	Audience AudienceCounter
-	Content  ContentGenerator
+	DB        Pinger
+	Segments  SegmentGenerator
+	Audience  AudienceCounter
+	Content   ContentGenerator
+	Campaigns CampaignStore
 	// VarLengths supplies the worst-case length of each template variable.
 	VarLengths VarLengthSource
 	// Now is the clock used as the "as of" time for audience queries.
@@ -34,6 +35,7 @@ type Server struct {
 	audience   AudienceCounter
 	content    ContentGenerator
 	varLengths VarLengthSource
+	campaigns  CampaignStore
 	now        func() time.Time
 	mux        *http.ServeMux
 }
@@ -44,7 +46,7 @@ func New(o Options) *Server {
 	}
 	s := &Server{
 		db: o.DB, segments: o.Segments, audience: o.Audience,
-		content: o.Content, varLengths: o.VarLengths,
+		content: o.Content, varLengths: o.VarLengths, campaigns: o.Campaigns,
 		now: o.Now, mux: http.NewServeMux(),
 	}
 	s.routes()
@@ -63,6 +65,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/segments/generate", s.handleSegmentGenerate)
 	s.mux.HandleFunc("POST /api/segments/count", s.handleSegmentCount)
 	s.mux.HandleFunc("POST /api/content/generate", s.handleContentGenerate)
+	s.mux.HandleFunc("POST /api/campaigns", s.handleCampaignCreate)
+	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignStatus)
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

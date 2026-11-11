@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/campaign"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/config"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/delivery"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/httpapi"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/anthropicllm"
@@ -72,7 +74,30 @@ func run() error {
 		Audience:   audience.Counter{DB: pool},
 		Content:    content.Generator{LLM: model},
 		VarLengths: &content.DBLengths{DB: pool},
+		Campaigns:  campaign.Store{DB: pool},
 	}))
+
+	// The delivery worker runs in this process. Its rate limiter is in-memory,
+	// so exactly one process may send (DECISIONS 3); WORKER_ENABLED=false turns
+	// it off for additional API replicas.
+	workerDone := make(chan struct{})
+	if cfg.WorkerEnabled {
+		worker := &delivery.Worker{
+			DB:       pool,
+			Provider: delivery.HTTPProvider{BaseURL: cfg.ProviderURL},
+			Limiters: map[string]delivery.Waiter{
+				campaign.ChannelSMS:   delivery.NewLimiter(cfg.SendRatePerSecond),
+				campaign.ChannelEmail: delivery.NewLimiter(cfg.SendRatePerSecond),
+			},
+		}
+		slog.Info("delivery worker started", "provider", cfg.ProviderURL, "rate_per_second", cfg.SendRatePerSecond)
+		go func() {
+			defer close(workerDone)
+			worker.Run(ctx)
+		}()
+	} else {
+		close(workerDone)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -91,5 +116,12 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	err = srv.Shutdown(shutdownCtx)
+	stop() // also reached when the server failed on its own: stop the worker too
+	select {
+	case <-workerDone: // in-flight sends were recorded
+	case <-shutdownCtx.Done():
+		slog.Warn("delivery worker did not stop in time; leased messages will be retried")
+	}
+	return err
 }

@@ -398,3 +398,115 @@ karakterler mesajı UCS-2'ye çevirir ve tek parça sınırı 70 karaktere düş
 Gerçek bir provider'a geçerken `content.checkField` içine eklenir.
 
 **Alternatif.** Seçilen kitlenin en uzun değeri (yukarıda).
+
+---
+
+## 20. Segment kuralının kapsamı şimdilik genişletilmiyor; kısmi kural yine yok
+
+**Bağlam.** Örnek brief tek bir durum. Gerçek bir pazarlamacı üyelik tarihi, sadakat seviyesi,
+cihaz, ürün görüntüleme, "en az 3 kez", toplam harcama, sipariş sayısı ve iç içe VE / VEYA da
+isteyebilir. Aşama 4'ten önce bunların ne kadarının karşılandığı gözden geçirildi.
+
+**Karar.**
+- Kural formatı aşama 2'deki haliyle kalır (DECISIONS 13). Karşılanmayan her istek
+  `unsupported` yanıtına düşer (DECISIONS 15); yanlış ya da eksik koşullu bir kitle üretilmez.
+- "Yapabildiği kısım için kural + uyarı listesi" (kısmi kural) yine yapılmıyor: 15. kararı
+  yeniden değerlendirdik ve koruduk.
+- Aşama 5'ten sonra zaman kalırsa, verisi hazır olan üç şey eklenir: olay sayısı (`min_count`),
+  harcama / sipariş metrikleri (satın alma olaylarının `amount` alanından), üyelik tarihi
+  (`signup_at`).
+
+| İstek | Durum |
+|---|---|
+| Şehir, dil, cinsiyet, yaş aralığı | Var |
+| Sepete ekleme / satın alma, yaptı / yapmadı, kategori, son N gün | Var |
+| "60 gündür alışveriş yapmayan" | Var (satın alma, 60 gün, yapmadı) |
+| VE / VEYA, tek seviye | Var |
+| Üyelik tarihi, olay sayısı, toplam harcama, sipariş sayısı | Yok; veri var, format yok |
+| İç içe gruplar | Yok; bilinçli (DECISIONS 13) |
+| Ülke, sadakat seviyesi, cihaz; ürün görüntüleme, uygulama / email açma | Yok; seed'de veri yok |
+
+**Neden.**
+- Aşama 4 ve 5, 15 Kasım sınırına bağlı; case "çekirdek akışı sağlam yap" diyor.
+- Verisi olmayan alanlar seed'i değiştirmeyi gerektirir. Seed deterministik olduğu için bu,
+  381 / 222 / 254 / 58 referans sayılarını ve onlara bağlı testleri kaydırır.
+- Kapsam dar olsa da hata modu güvenli: desteklenmeyen istek görünür bir "desteklenmiyor"
+  yanıtıdır, sessizce genişlemiş bir kitle değil.
+
+**Bilinen sınır.** Claude bir koşulu hem atlar hem `unsupported` demezse bunu hiçbir doğrulayıcı
+yakalayamaz. Savunma, prompt'taki açık yasak ve pazarlamacının kuraldan türetilen açıklamada
+(DECISIONS 14) eksik koşulu görebilmesi.
+
+**Alternatif.** Kısmi kural: `rule` + `unsupported: [...]` birlikte döner, arayüz uyarı gösterir,
+karar pazarlamacıya kalır. Pazarlamacıya bir başlangıç verir; ama eksik koşullu kural her zaman
+daha geniş kitledir ve uyarı gözden kaçarsa onaylanır.
+
+---
+
+## 21. Retry durumu veritabanında; üstel backoff, 429'da kanal duraklar
+
+**Karar.** Her mesajın deneme sayısı ve bir sonraki deneme zamanı kendi satırında durur
+(`attempts`, `next_attempt_at`). Worker zamanı gelen satırları `FOR UPDATE SKIP LOCKED` ile
+kiralar (`status = 'sending'`, `locked_until`); HTTP çağrısı sırasında transaction açık tutulmaz.
+
+| Sonuç | Davranış |
+|---|---|
+| 2xx | `sent` |
+| Ağ hatası, zaman aşımı, 5xx | Üstel backoff + jitter (1s, 2s, 4s, 8s; adımın yarısı ile tamamı arası) ile yeniden denenir; toplam 5 gönderimden sonra `failed` |
+| 429 | Kanalın hız sınırlayıcısı `Retry-After` kadar durur (en fazla 1 dk; başlık yoksa 2 sn); mesaj deneme hakkı harcamaz |
+| Diğer 4xx | Hemen `failed`; aynı istek yine reddedilir |
+| Onaydan sonra izin ya da adres kalktıysa | `skipped`; provider çağrılmaz |
+
+Her denemede aynı idempotency key gider (`campaign-<id>-user-<id>-<kanal>`).
+
+**Neden.**
+- **Çökmeye dayanıklı.** Süreç ölürse bekleyen retry kaybolmaz; kirası dolan satırı başka bir
+  worker alır. Deneme sayısı sıfırlanmaz.
+- **Bekleyen mesaj worker'ı meşgul etmez.** Backoff'taki mesaj bir satırdır, uyuyan bir
+  goroutine değil.
+- **Zaman aşımı "gitmedi" demek değildir.** Provider mesajı kabul edip yanıtı kaybedebilir (mock
+  provider bunu bilerek yapar). Bu yüzden aynı kişiye iki kez gitmeme garantisi iki katmanlı:
+  veritabanında `UNIQUE (campaign_id, user_id, channel)` bir kişi için tek satır olmasını,
+  idempotency key o satırın kaç kez denenirse denensin bir kez teslim edilmesini sağlar.
+- **429 mesajın değil kanalın sorunudur.** Tek mesajı bekletip diğerlerini göndermeye devam
+  etmek provider'ı daha da zorlar; bu yüzden kanalın tamamı durur.
+- **Eski sonuç yeni durumu ezmez.** Sonuç yazan sorgu `status = 'sending' AND attempts = N`
+  koşulu taşır; kirası dolup başkasına geçmiş bir satırın gecikmiş sonucu yok sayılır.
+
+**Bedeli / sınırı.**
+- Worker API süreci içinde çalışır (`WORKER_ENABLED`). Hız sınırlayıcı süreç içinde olduğu için
+  (DECISIONS 3) gönderen süreç tek olmalı; ikinci bir API kopyası `WORKER_ENABLED=false` ile
+  açılır. Kuyruk tarafı (`SKIP LOCKED`) birden çok worker'a hazır ve testte iki worker ile
+  doğrulanıyor.
+- Provider sürekli 429 dönerse mesaj süresiz `pending` kalır; bir üst sınır (ör. toplam bekleme
+  süresi) yok.
+- 429 geldiği anda yolda olan istekler (kanal başına en fazla 32) geri çağrılamaz.
+
+**Alternatif.** Retry'ı worker içinde tutmak (mesajı elde bekletip yeniden denemek). Daha az kod
+ve daha basit şema; ama bekleme sırasında worker bloklu kalır ve çökmede deneme sayısı kaybolur.
+
+---
+
+## 22. Şablonlar gönderim anında doldurulur; alıcılar onayda dondurulur
+
+**Karar.** Onayda (`POST /api/campaigns`) kampanya ve kitlesi tek transaction'da yazılır: kural
+ve içerik `campaigns` satırına, alıcılar kanal başına tek `INSERT … SELECT` ile `messages`
+tablosuna. Metin o anda üretilmez; worker mesajı gönderirken kullanıcıyı okur, şablonu doldurur
+ve izni yeniden kontrol eder.
+
+**Neden.**
+- **Kuyruğa alma atomik ve tek sorgu.** Ya kitlenin tamamı kuyruğa girer ya hiçbiri. Kitle
+  koşulu, sayımı yapan derleyiciden ve aynı `SMSReachable` / `EmailReachable` tanımlarından
+  gelir; pazarlamacının gördüğü sayı ile kuyruğa giren sayı aynıdır (testte 222 / 254).
+- **İzin gönderim anında geçerli olmalı.** Onay ile gönderim arasında izni ya da adresi kalkan
+  kişi atlanır (`skipped`).
+- **Limit yine korunur.** Doldurulmuş metin gönderimden önce bir kez daha ölçülür; onaydan sonra
+  eklenen daha uzun bir isim 160 / 80 sınırını aşarsa mesaj gönderilmez, `failed` olur.
+
+**Bedeli.** Gönderilen metnin kendisi saklanmaz; şablon ve kullanıcıdan yeniden üretilebilir, ama
+kullanıcı sonradan adını değiştirirse birebir aynısı olmaz. Denetim kaydı gerekirse `messages`'a
+bir `rendered_body` kolonu eklenir.
+
+**Alternatif.** Kuyruğa alırken doldurmak: her alıcının metni onayda üretilip satıra yazılır.
+Gönderilen metin denetlenebilir ve worker çok basit olur; ama kuyruğa alma Go'da döngü + toplu
+ekleme gerektirir ve izin değişikliği için yine gönderimde ayrı kontrol gerekir.

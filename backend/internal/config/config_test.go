@@ -9,7 +9,7 @@ import (
 // clearEnv blanks every variable Load reads; getenv treats "" as unset.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"DATABASE_URL", "HTTP_ADDR", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "LLM_MODE", "LOG_LEVEL", "SEED_USERS", "SEED_RANDOM"} {
+	for _, k := range []string{"DATABASE_URL", "HTTP_ADDR", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "LLM_MODE", "LOG_LEVEL", "PROVIDER_URL", "SEND_RATE_PER_SECOND", "WORKER_ENABLED", "SEED_USERS", "SEED_RANDOM"} {
 		t.Setenv(k, "")
 	}
 }
