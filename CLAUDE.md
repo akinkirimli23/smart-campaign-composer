@@ -14,7 +14,8 @@ Case'in kapsam notu: her şeyi yapmak yerine çekirdek akışı sağlam yap, yet
 
 - `DECISIONS.md`: alınmış kararlar ve gerekçeleri. Bir kararı değiştirirsen orayı güncelle,
   eski kaydı silme, nedenini yaz.
-- `README.md`: kurulum ve "Durum" tablosu. Bir parça bitince tabloyu güncelle.
+- `README.md`: kurulum, mimari özeti, testler, "Bilinen eksikler" ve "Sonraya bırakılanlar".
+  Yeni bir eksik ya da ertelenen iş çıkarsa oraya yaz.
 
 ## Komutlar
 
@@ -156,10 +157,10 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, seed verisi dahil | 1 ✅ |
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
-| `README.md`: kurulum ve kısa mimari özeti | 6 |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama, 6 |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | her aşama, 6 |
-| Yetiştirilemeyenler README'de belirtilmiş | 6 |
+| `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (25 kayıt) |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | 1–2. oturumlar ✅; aşama 3–6 oturumunun export'u **eksik** |
+| Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
 
@@ -168,7 +169,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | Zamanlanmış gönderim | planda yok |
 | A/B varyantları | planda yok |
 | Kullanıcının diline göre içerik | yapılmadı (DECISIONS 17); zaman kalırsa aşama 5'ten sonra |
-| CI pipeline | 6 |
+| CI pipeline | 6 (yazıldı ve push'landı; sonucu GitHub'da doğrulanmadı) |
 
 ## Segment kuralı (aşama 2, kesinleşti)
 
@@ -191,7 +192,7 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   yokken kullanılan anahtar kelime eşleştirici; `llm/anthropicllm` gerçek istemci (resmi Go SDK,
   DECISIONS 16). SDK'yı yalnızca `anthropicllm` import eder. Testleri yerel bir SSE sunucusuna
   karşı çalışır, key istemez.
-- **Açık iş:** gerçek key ile uçtan uca deneme henüz yapılmadı (aşama 6 ölçütü).
+- **Açık iş:** gerçek key ile uçtan uca deneme yapılmadı; README "Bilinen eksikler"de yazıyor.
 
 ## İçerik (aşama 3, kesinleşti)
 
@@ -248,3 +249,21 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Compose'ta `web` servisi (nginx, `:3000`). Yerel geliştirme: `cd frontend && npm install &&
   npm run dev` (Vite `/api`'yi `:8080`'e iletir).
 - Tarayıcıda uçtan uca deneme mock LLM ile yapıldı; gerçek Claude key'i ile yapılmadı.
+
+## Teslim (aşama 6, sürüyor)
+
+Bitti ölçütlerinin durumu:
+
+| Ölçüt | Durum |
+|---|---|
+| Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
+| CI yeşil | ⏳ `.github/workflows/ci.yml` push'landı; repo özel olduğu için sonucu buradan görülemedi. Aynı adımlar yerelde geçti (yarış dedektörü dahil) |
+| `ai-sessions/` temiz | ⏳ İlk iki export tarandı. Aşama 3–6'nın export'u kullanıcıdan bekleniyor; gelince taranacak |
+| Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ Yapılmadı; README "Bilinen eksikler"de yazıyor. Key gelirse denenir ve README güncellenir |
+| Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
+
+Kalan işler bittiğinde yukarıdaki durum tablosunda aşama 6 ✅ yapılır.
+
+- CI üç iş çalıştırır: backend (gofmt, vet, `-race` ile testler, Postgres servisine karşı),
+  frontend (`npm ci`, test, build), compose (README'deki kurulum + örnek brief'in kitle sayısı).
+- Teslimden önce kontrol: repo değerlendirenlerin erişebileceği şekilde paylaşıldı mı.
