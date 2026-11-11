@@ -5,9 +5,81 @@ export interface FieldError {
   message: string
 }
 
+export type SetField = 'city' | 'language' | 'gender'
+
+/** City, language or gender is (not) one of a closed set of values. */
+export interface SetCondition {
+  type: 'attribute'
+  field: SetField
+  op: 'in' | 'not_in'
+  values: string[]
+}
+
+export interface AgeCondition {
+  type: 'attribute'
+  field: 'age'
+  op: 'between'
+  min: number
+  max: number
+}
+
+/** Did (not) add to cart / purchase within the last N days. */
+export interface EventCondition {
+  type: 'event'
+  event: string
+  category: string | null
+  within_days: number
+  exists: boolean
+  /** At least this many times; null means at least once. */
+  min_count: number | null
+}
+
+export interface SignupCondition {
+  type: 'signup'
+  op: 'within' | 'older_than'
+  days: number
+}
+
+export interface MetricCondition {
+  type: 'metric'
+  metric: string
+  op: 'gte' | 'lte'
+  value: number
+  /** Only purchases in the last N days; null means all time. */
+  within_days: number | null
+}
+
+export type Condition = SetCondition | AgeCondition | EventCondition | SignupCondition | MetricCondition
+
 export interface Rule {
   match: 'all' | 'any'
-  conditions: Record<string, unknown>[]
+  conditions: Condition[]
+}
+
+export interface Option {
+  value: string
+  label: string
+}
+
+/** Allowed values and bounds of a rule, from GET /api/segments/options. */
+export interface RuleOptions {
+  cities: Option[]
+  languages: Option[]
+  genders: Option[]
+  categories: Option[]
+  events: Option[]
+  metrics: Option[]
+  limits: {
+    max_conditions: number
+    min_within_days: number
+    max_within_days: number
+    min_age: number
+    max_age: number
+    max_min_count: number
+    max_signup_days: number
+    max_spent: number
+    max_orders: number
+  }
 }
 
 export interface Audience {

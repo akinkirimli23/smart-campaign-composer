@@ -158,7 +158,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (25 kayıt) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (26 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | 1–2. oturumlar ✅; aşama 3–6 oturumunun export'u **eksik** |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
@@ -238,13 +238,17 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 Kararlar DECISIONS 23–24'te. Kısaca:
 
 - `frontend/src/stores/campaign.ts`: tüm akışın durumu ve eylemleri tek Pinia store'unda
-  (`generateSegment`, `recountSegment`, `generateContent`, `approve`, `reset`). Bileşenler yalnızca
+  (`generateSegment`, `applyRule`, `generateContent`, `approve`, `reset`). Bileşenler yalnızca
   bu durumu çizer.
 - `frontend/src/api/client.ts`: JSON istekleri, içerik akışı (`fetch` + `lib/sse.ts`; POST
   olduğu için `EventSource` kullanılamaz) ve canlı durum (`EventSource`).
 - `frontend/src/lib/template.ts`: canlı sayaç için şablon ölçümü. Backend'deki
   `internal/content` ile aynı kurallar; birini değiştirirsen diğerini ve iki taraftaki testleri
   de güncelle. Yetki backend'dedir.
+- Kitle kuralı formla düzenlenir (`components/RuleEditor.vue`, mantığı `lib/rule.ts`; DECISIONS
+  26). Seçenekler `GET /api/segments/options`'tan gelir; arayüze değer listesi gömme. Geçerlilik
+  kararı backend'de: taslak `applyRule` ile gider, hatalar satırın altında gösterilir. JSON
+  görünümü yalnızca `?debug` ile.
 - Backend: `GET /api/campaigns/{id}/events` (SSE) ve `GET /metrics` (`internal/metrics`).
 - Compose'ta `web` servisi (nginx, `:3000`). Yerel geliştirme: `cd frontend && npm install &&
   npm run dev` (Vite `/api`'yi `:8080`'e iletir).

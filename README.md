@@ -56,7 +56,8 @@ docker compose --profile test run --rm --build web-test
 
 1. **Brief.** Kampanyayı kendi cümlelerinle yaz ("Örnek brief'i kullan" hazır bir metin koyar).
 2. **Kitle.** Kuraldan türetilen açıklama, modelin yorumları ve kanal bazlı kişi sayıları.
-   İstenirse kural JSON olarak elle düzenlenip yeniden doğrulanır.
+   "Koşulları düzenle" bir form açar: koşullar listeden seçilerek değiştirilir, eklenir ya da
+   kaldırılır; uygulandığında kural yeniden doğrulanır ve sayılar güncellenir.
 3. **İçerik ve onay.** SMS ve email metinleri ekrana akar. Bittikten sonra düzenlenebilir;
    sayaçlar değişkenler doldurulmuş halini ölçer. "Onayla ve gönder" sunucuda yeniden doğrular.
 4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
@@ -73,6 +74,7 @@ deneme ekranda görülür.
 | http://localhost:3000 | Arayüz (nginx; `/api` isteklerini API'ye iletir) |
 | http://localhost:8080 | API ve `/metrics` |
 | http://localhost:8090 | Mock SMS / email provider |
+| http://localhost:3000/?debug | Arayüz, kitle adımında kuralın JSON hali de görünür (geliştirici görünümü) |
 
 ## Endpoint'ler
 
@@ -82,6 +84,7 @@ deneme ekranda görülür.
 | `GET /readyz` | Readiness: veritabanına ulaşılabiliyor mu (değilse 503) |
 | `POST /api/segments/generate` | `{"brief": "..."}` → LLM'in önerdiği kural, kuraldan türetilen açıklama, LLM'in yorumları ve kanal bazlı kitle sayısı. Format brief'i ifade edemiyorsa `status: "unsupported"` |
 | `POST /api/segments/count` | `{"rule": {...}}` → elle düzenlenmiş bir kuralı aynı doğrulayıcıdan geçirir ve yeniden sayar; geçersizse 422 ve `{path, message}` listesi |
+| `GET /api/segments/options` | Kural düzenleyicisi için izinli değerler (şehirler, kategoriler, olaylar, metrikler) ve sınırlar; doğrulayıcının kendi tablolarından |
 | `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
 | `POST /api/campaigns` | Onay: `{"brief", "rule", "content"}`. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
 | `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` sayıları ve `done` |
@@ -193,7 +196,7 @@ backend/
 frontend/          Vue 3 + TypeScript + Pinia arayüzü (nginx ile sunulur)
   src/stores       tüm akışın durumu (Pinia)
   src/api          API istemcisi ve tipleri
-  src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç)
+  src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç), kural düzenleyicisinin mantığı
   src/components   adım ekranları
 .github/workflows/ CI
 ai-sessions/       Claude oturum export'ları
@@ -221,7 +224,7 @@ zamanları seed'in yüklendiği ana göredir.
 | Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After` | `backend/internal/delivery` |
 | Claude istemcisi (yerel bir SSE sunucusuna karşı, key olmadan) | `backend/internal/llm/anthropicllm` |
 | HTTP uçları, SSE akışları, onayda yeniden doğrulama | `backend/internal/httpapi` |
-| Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, akışın durumu | `frontend/src/**/*.test.ts` |
+| Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, kural düzenleyicisinin mantığı, akışın durumu | `frontend/src/**/*.test.ts` |
 
 CI (GitHub Actions) her push'ta üç iş çalıştırır: backend (gofmt, vet, yarış dedektörüyle
 testler, Postgres'e karşı), frontend (tip kontrolü, testler, derleme) ve `docker compose up` ile
@@ -233,6 +236,8 @@ kurulumun kendisi.
   İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
   gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
 - Arayüz masaüstü genişliğinde ve koyu temada denendi; dar ekran ve açık tema denenmedi.
+- Ekran bileşenleri için otomatik test yok; mantık ve durum birim testleriyle, ekranlar tarayıcıda
+  elle denendi.
 - Sayfa yenilenince akış baştan başlar; devam eden bir kampanyanın panosuna dönülemez.
 - Provider sürekli 429 dönerse mesaj süresiz bekler; toplam bekleme için üst sınır yok
   (DECISIONS 21).

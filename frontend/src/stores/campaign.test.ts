@@ -6,6 +6,7 @@ import type { CampaignStatus, ContentEvent, ContentResult, SegmentResponse } fro
 const fake = vi.hoisted(() => ({
   generateSegment: vi.fn(),
   countSegment: vi.fn(),
+  segmentOptions: vi.fn(),
   createCampaign: vi.fn(),
   streamContent: vi.fn(),
   watchCampaign: vi.fn(),
@@ -92,6 +93,43 @@ describe('audience', () => {
     await store.recountSegment('{"match":"all","conditions":[]}')
     expect(store.segment).toEqual(segment)
     expect(store.segmentError?.details[0]?.path).toBe('conditions[0].values[0]')
+  })
+})
+
+describe('rule editor', () => {
+  const edited = { match: 'all', conditions: [{ type: 'signup', op: 'within', days: 7 }] }
+
+  it('replaces the audience when the backend accepts the edited rule', async () => {
+    const store = useCampaignStore()
+    fake.generateSegment.mockResolvedValue(segment)
+    await store.generateSegment()
+    const recounted: SegmentResponse = { ...segment, audience: { total: 20, sms: 9, email: 15, unreachable: 3 }, assumptions: undefined }
+    fake.countSegment.mockResolvedValue(recounted)
+
+    expect(await store.applyRule(edited)).toBe(true)
+    expect(fake.countSegment).toHaveBeenCalledWith(edited)
+    expect(store.segment?.audience?.total).toBe(20)
+    expect(store.segmentError).toBeNull()
+  })
+
+  it('keeps the previous rule and reports the errors when the backend refuses', async () => {
+    const store = useCampaignStore()
+    fake.generateSegment.mockResolvedValue(segment)
+    await store.generateSegment()
+    fake.countSegment.mockRejectedValue(new ApiError(422, 'rule_invalid', 'Kitle kuralı geçersiz', [{ path: 'conditions[0].days', message: '0 geçersiz' }]))
+
+    expect(await store.applyRule(edited)).toBe(false)
+    expect(store.segment).toEqual(segment)
+    expect(store.segmentError?.details).toEqual([{ path: 'conditions[0].days', message: '0 geçersiz' }])
+  })
+
+  it('loads the options once', async () => {
+    const store = useCampaignStore()
+    fake.segmentOptions.mockResolvedValue({ cities: [] })
+    await store.loadRuleOptions()
+    await store.loadRuleOptions()
+    expect(fake.segmentOptions).toHaveBeenCalledTimes(1)
+    expect(store.ruleOptions).toEqual({ cities: [] })
   })
 })
 

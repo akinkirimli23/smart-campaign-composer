@@ -11,6 +11,7 @@ import type {
   ContentResult,
   FieldError,
   Lengths,
+  RuleOptions,
   SegmentResponse,
 } from '../api/types'
 
@@ -60,7 +61,39 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
-  /** Re-validates and re-counts a rule the marketer edited by hand. */
+  // Allowed values and bounds for the rule editor; loaded once.
+  const ruleOptions = ref<RuleOptions | null>(null)
+
+  async function loadRuleOptions() {
+    if (ruleOptions.value) return
+    try {
+      ruleOptions.value = await api.segmentOptions()
+    } catch (err) {
+      segmentError.value = describe(err)
+    }
+  }
+
+  /**
+   * Validates and counts a rule the marketer edited. Returns whether the
+   * backend accepted it; on refusal the previous rule and counts stay.
+   */
+  async function applyRule(rule: unknown): Promise<boolean> {
+    segmentLoading.value = true
+    segmentError.value = null
+    try {
+      // The edited rule has no model assumptions any more; the backend's
+      // response carries only what it derived from the rule itself.
+      segment.value = await api.countSegment(rule)
+      return true
+    } catch (err) {
+      segmentError.value = describe(err)
+      return false
+    } finally {
+      segmentLoading.value = false
+    }
+  }
+
+  /** The same, from raw JSON (the developer view, ?debug). */
   async function recountSegment(ruleJSON: string) {
     let rule: unknown
     try {
@@ -69,17 +102,7 @@ export const useCampaignStore = defineStore('campaign', () => {
       segmentError.value = { message: 'Kural geçerli JSON değil', details: [] }
       return
     }
-    segmentLoading.value = true
-    segmentError.value = null
-    try {
-      // The edited rule has no model assumptions any more; the backend's
-      // response carries only what it derived from the rule itself.
-      segment.value = await api.countSegment(rule)
-    } catch (err) {
-      segmentError.value = describe(err)
-    } finally {
-      segmentLoading.value = false
-    }
+    await applyRule(rule)
   }
 
   // --- content ----------------------------------------------------------------
@@ -252,6 +275,7 @@ export const useCampaignStore = defineStore('campaign', () => {
   return {
     step, brief,
     segment, segmentLoading, segmentError, generateSegment, recountSegment,
+    ruleOptions, loadRuleOptions, applyRule,
     content, streaming, attempt, rejections, contentMeta, contentError, generateContent,
     measured, limits, contentValid,
     approving, approveError, campaign, status, done, statusError, approve,

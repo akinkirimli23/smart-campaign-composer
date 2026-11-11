@@ -136,3 +136,55 @@ func TestCountEndpoint(t *testing.T) {
 		t.Errorf("missing rule: status %d", rec.Code)
 	}
 }
+
+// Every value the editor offers is accepted by the validator, and nothing the
+// validator accepts is missing from the editor.
+func TestSegmentOptionsMatchTheValidator(t *testing.T) {
+	srv := New(Options{DB: fakePinger{}})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/segments/options", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var opts segment.Options
+	if err := json.Unmarshal(rec.Body.Bytes(), &opts); err != nil {
+		t.Fatal(err)
+	}
+	if len(opts.Cities) != 15 || len(opts.Categories) != 6 || len(opts.Languages) != 2 || len(opts.Genders) != 2 ||
+		len(opts.Events) != 2 || len(opts.Metrics) != 2 {
+		t.Fatalf("unexpected option counts: %+v", opts)
+	}
+	if opts.Limits.MaxWithinDays != 365 || opts.Limits.MaxConditions != 10 || opts.Limits.MaxSpent != 1000000 {
+		t.Errorf("limits = %+v", opts.Limits)
+	}
+	labels := map[string]string{}
+	for _, group := range [][]segment.Option{opts.Languages, opts.Genders, opts.Categories, opts.Events, opts.Metrics} {
+		for _, o := range group {
+			labels[o.Value] = o.Label
+		}
+	}
+	for value, want := range map[string]string{"en": "İngilizce", "female": "Kadın", "electronics": "Elektronik", "home": "Ev",
+		"cart_add": "Sepete ürün ekleme", "total_spent": "Toplam harcama (TL)"} {
+		if labels[value] != want {
+			t.Errorf("label of %q = %q, want %q", value, labels[value], want)
+		}
+	}
+
+	// One rule that uses a value from every list, at the extremes of the limits.
+	for _, city := range opts.Cities[:14] { // all 15 would be "filters nothing"
+		rule := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+			{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{city.Value}},
+			{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{opts.Languages[0].Value}},
+			{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpNotIn, Values: []string{opts.Genders[1].Value}},
+			{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: opts.Limits.MinAge, Max: opts.Limits.MaxAge},
+			{Type: segment.TypeEvent, Event: opts.Events[0].Value, Category: opts.Categories[5].Value,
+				WithinDays: opts.Limits.MaxWithinDays, Exists: true, MinCount: opts.Limits.MaxMinCount},
+			{Type: segment.TypeSignup, Op: segment.OpOlderThan, Days: opts.Limits.MaxSignupDays},
+			{Type: segment.TypeMetric, Metric: opts.Metrics[0].Value, Op: segment.OpLTE, Value: opts.Limits.MaxSpent},
+			{Type: segment.TypeMetric, Metric: opts.Metrics[1].Value, Op: segment.OpGTE, Value: opts.Limits.MaxOrders, WithinDays: opts.Limits.MinWithinDays},
+		}}
+		if err := rule.Validate(); err != nil {
+			t.Fatalf("a rule built from the options was rejected (%s): %v", city.Value, err)
+		}
+	}
+}

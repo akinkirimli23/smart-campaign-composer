@@ -616,3 +616,51 @@ koşullar için de Go'da yazılmış referans hesapla karşılaştırılarak tes
 
 **Hâlâ yok** (README "Sonraya bırakılanlar"): tüm kullanıcılara gönderim, iç içe VE / VEYA
 grupları, ülke, sadakat seviyesi, cihaz, ürün görüntüleme, uygulama / email açma.
+
+---
+
+## 26. Kitle kuralı formla düzenlenir; JSON yalnızca geliştirici görünümünde
+
+**Bağlam.** Aşama 5'te kuralı elle değiştirmenin yolu bir JSON metin kutusuydu. Kuralın
+düzenlenebildiğini göstermek için ucuz bir yoldu, ama teknik olmayan bir pazarlamacı için
+kullanılabilir değildi.
+
+**Karar.**
+- Kitle ekranında "Koşulları düzenle" bir form açar: her koşul bir satırdır; şehir, dil,
+  cinsiyet, kategori, olay ve metrik listeden seçilir, gün / tutar / sayı için sayı kutusu
+  vardır; koşul eklenir ve kaldırılır; "hepsini / en az birini" seçilir.
+- "Uygula ve yeniden say" taslağı backend'e yollar. Kural aynı doğrulayıcıdan geçer; kabul
+  edilirse açıklama ve kişi sayıları güncellenir, reddedilirse hatalar ilgili satırın altında
+  görünür ve önceki kural yerinde kalır.
+- Seçenek listeleri ve sınırlar `GET /api/segments/options` ile backend'den gelir
+  (`segment.RuleOptions`, doğrulayıcının kullandığı tablolardan üretilir).
+- JSON görünümü silinmedi; adres `?debug` ile açılırsa görünür.
+
+**Brief varken form neden var.** İkisi farklı işler görür ve aynı kuralı üretir:
+- Brief başlamak içindir: tek cümleden taslak çıkar; pazarlamacının veri modelini bilmesi
+  gerekmez. Aynı cümleden içerik adımı ton ve teklifi de alır; form bunları taşıyamaz.
+- Form düzeltmek içindir: "30 gün"ü "45" yapmak için brief'i yeniden yazıp modele sormak yavaş
+  ve belirsizdir (model her seferinde aynı kuralı üretmeyebilir).
+- Case'in tarifi de bu: "gerisini Claude'un önerdiği ve son kararı insanın verdiği bir araç".
+  Düzeltme ne kadar kolaysa insan kararı o kadar gerçektir.
+
+**Neden bu tasarım.**
+- Liste değerleri arayüze gömülmedi. Backend'e yeni bir şehir ya da kategori eklenirse form onu
+  kendiliğinden gösterir; formun sunduğu her değerin doğrulayıcıdan geçtiği testle sınanıyor.
+- Arayüz geçerlilik kararı vermez. Tek tek alanlar listeden geldiği için geçersiz olamaz; ama
+  kombinasyonlar (çelişen koşullar, aynı sınırın iki kez verilmesi) yalnızca backend'de
+  yakalanır. Bu yüzden değişiklik "uygula" ile gider ve hatalar oradan gelir; tarayıcının kendi
+  doğrulama baloncukları kapalıdır ki her sorun aynı yerden, aynı dille bildirilsin.
+- Taslak bir kopyadır: backend kabul edene kadar ekrandaki kural ve sayılar değişmez.
+
+**Bedeli / sınırı.**
+- Elle düzenlenen kuralda modelin "Yorum" satırları kaybolur; yorumlar modelin kendi kuralına
+  aitti ve değişen kural için geçerli olmayabilir.
+- İçerik brief'ten üretildiği için, kural formla çok değiştirilirse metin kitleye uymayabilir
+  (ör. brief "sepete ekleyenler" derken kural "yeni üyeler"e çevrilirse). Uyarı gösterilmiyor;
+  pazarlamacı metni içerik adımında görür ve düzenler.
+- Form için bileşen testi yok; mantığı (`lib/rule.ts`) ve store birim testleriyle, ekranın
+  kendisi tarayıcıda elle denendi.
+
+**Alternatif.** Düzenlemeyi tamamen kaldırmak; kitle beğenilmezse brief değiştirilip yeniden
+üretilir. En az iş ve en sade ekran; ama küçük bir değişiklik için modele yeniden sormak gerekir.

@@ -6,6 +6,7 @@ import type {
   ContentEvent,
   FieldError,
   Rule,
+  RuleOptions,
   SegmentResponse,
 } from './types'
 
@@ -48,7 +49,21 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T
 }
 
+async function getJSON<T>(path: string): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(path)
+  } catch {
+    throw new ApiError(0, 'network', 'Sunucuya ulaşılamadı')
+  }
+  if (!response.ok) throw await toApiError(response)
+  return (await response.json()) as T
+}
+
 export const api = {
+  /** Allowed values and bounds for the rule editor. */
+  segmentOptions: () => getJSON<RuleOptions>('/api/segments/options'),
+
   generateSegment: (brief: string) => postJSON<SegmentResponse>('/api/segments/generate', { brief }),
 
   /** Validates an edited rule and counts its audience. */

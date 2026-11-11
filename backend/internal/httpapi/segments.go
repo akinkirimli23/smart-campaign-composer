@@ -84,6 +84,13 @@ func (s *Server) handleSegmentGenerate(w http.ResponseWriter, r *http.Request) {
 	s.writeSegment(w, r, *out.Rule, out.Assumptions, out.Attempts)
 }
 
+// GET /api/segments/options: the allowed values and bounds of a rule, for the
+// rule editor. The lists are the validator's own, so the form cannot offer a
+// value the backend would reject.
+func (s *Server) handleSegmentOptions(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, segment.RuleOptions())
+}
+
 // POST /api/segments/count {"rule": {...}}
 // Used when the marketer edits the proposed rule: the edited rule goes through
 // the same validator as the model's output.
