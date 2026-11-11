@@ -7,11 +7,6 @@ on:
   # Lets a run be started by hand from the Actions tab.
   workflow_dispatch:
 
-# A newer push to the same branch makes the older run pointless.
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
