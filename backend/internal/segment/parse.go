@@ -6,42 +6,16 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/validation"
 )
 
-// FieldError points at one problem in a rule. Path uses the JSON location
-// (e.g. "conditions[0].values[0]") so both a human and the LLM can find it.
-type FieldError struct {
-	Path    string `json:"path"`
-	Message string `json:"message"`
-}
-
-func (e FieldError) String() string {
-	if e.Path == "" {
-		return e.Message
-	}
-	return e.Path + ": " + e.Message
-}
-
-// ValidationError lists every problem found, not just the first, so one retry
-// can fix them all.
-type ValidationError []FieldError
-
-func (e ValidationError) Error() string {
-	lines := make([]string, len(e))
-	for i, fe := range e {
-		lines[i] = fe.String()
-	}
-	return strings.Join(lines, "\n")
-}
-
-// WithPrefix returns the errors with prefix prepended to every path.
-func (e ValidationError) WithPrefix(prefix string) ValidationError {
-	out := make(ValidationError, len(e))
-	for i, fe := range e {
-		out[i] = FieldError{Path: joinPath(prefix, fe.Path), Message: fe.Message}
-	}
-	return out
-}
+// FieldError and ValidationError are the shared validation error types; the
+// aliases keep this package's API in one place.
+type (
+	FieldError      = validation.FieldError
+	ValidationError = validation.Errors
+)
 
 type collector struct{ errs []FieldError }
 
@@ -49,18 +23,7 @@ func (c *collector) add(path, format string, args ...any) {
 	c.errs = append(c.errs, FieldError{Path: path, Message: fmt.Sprintf(format, args...)})
 }
 
-func joinPath(prefix, path string) string {
-	switch {
-	case prefix == "":
-		return path
-	case path == "":
-		return prefix
-	case strings.HasPrefix(path, "["):
-		return prefix + path
-	default:
-		return prefix + "." + path
-	}
-}
+func joinPath(prefix, path string) string { return validation.JoinPath(prefix, path) }
 
 // Parse decodes and validates a rule. It is strict: unknown keys, keys that
 // belong to another condition variant, wrong types and out-of-set values are

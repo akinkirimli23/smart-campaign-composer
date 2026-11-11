@@ -13,22 +13,88 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/seed"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
 
-type Client struct{}
+// Client is the offline LLM. ChunkDelay slows streamed replies down so the
+// UI visibly streams; zero (the default) means no delay.
+type Client struct {
+	ChunkDelay time.Duration
+}
+
+// DemoRetryMarker in a brief makes the first content reply invalid (an
+// unknown variable in an over-long SMS), so the validate-and-retry loop can be
+// shown without a real model.
+const DemoRetryMarker = "#demo-retry"
 
 func (Client) Complete(_ context.Context, req llm.Request) (llm.Response, error) {
 	switch req.Task {
+	case content.TaskGenerate:
+		brief := content.BriefFromRequest(req)
+		firstAttempt := len(req.Messages) == 1
+		out, err := json.Marshal(contentResult(brief, firstAttempt && strings.Contains(brief, DemoRetryMarker)))
+		return llm.Response{Text: string(out)}, err
 	case segment.TaskGenerate:
 		out, err := json.Marshal(map[string]any{"result": segmentResult(segment.BriefFromRequest(req))})
 		return llm.Response{Text: string(out)}, err
 	default:
 		return llm.Response{}, fmt.Errorf("mockllm: unknown task %q", req.Task)
 	}
+}
+
+// Stream implements llm.Streamer by delivering the reply a few runes at a time.
+func (c Client) Stream(ctx context.Context, req llm.Request, onText func(delta string)) (llm.Response, error) {
+	resp, err := c.Complete(ctx, req)
+	if err != nil || onText == nil {
+		return resp, err
+	}
+	const chunk = 6
+	runes := []rune(resp.Text)
+	for len(runes) > 0 {
+		if c.ChunkDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return llm.Response{}, ctx.Err()
+			case <-time.After(c.ChunkDelay):
+			}
+		}
+		n := min(chunk, len(runes))
+		onText(string(runes[:n]))
+		runes = runes[n:]
+	}
+	return resp, nil
+}
+
+var discountRe = regexp.MustCompile(`%\s?(\d{1,2})|(\d{1,2})\s?%`)
+
+// contentResult writes fixed campaign copy around the discount found in the
+// brief. broken returns copy the validator must reject.
+func contentResult(brief string, broken bool) content.Content {
+	offer := "özel fırsatlar"
+	if m := discountRe.FindStringSubmatch(brief); m != nil {
+		offer = "%" + m[1] + m[2] + " indirim"
+	}
+	about := "seçtiğin ürünler"
+	if strings.Contains(segment.Fold(brief), "sepet") {
+		about = "sepetindeki ürünler"
+	}
+	c := content.Content{
+		SMS: fmt.Sprintf("Merhaba {{first_name}}, %s seni bekliyor! Sana özel %s için hemen uygulamaya göz at.", about, offer),
+		Email: content.Email{
+			Subject: fmt.Sprintf("{{first_name}}, %s seni bekliyor: %s", about, offer),
+			Body: fmt.Sprintf("Merhaba {{first_name}},\n\n%s hâlâ seni bekliyor. Sana özel %s ile alışverişini tamamlayabilirsin.\n\nFırsatı kaçırmamak için uygulamaya göz at.\n\nİyi alışverişler!",
+				strings.ToUpper(about[:1])+about[1:], offer),
+		},
+	}
+	if broken {
+		c.SMS = fmt.Sprintf("Merhaba {{first_name}} {{surname}}, %s seni bekliyor! Sana özel %s fırsatını kaçırmamak için hemen uygulamamızı aç, sepetine git ve alışverişini bugün tamamla. Stoklar tükenmeden acele et!", about, offer)
+	}
+	return c
 }
 
 var (

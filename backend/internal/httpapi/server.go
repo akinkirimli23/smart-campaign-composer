@@ -20,24 +20,33 @@ type Options struct {
 	DB       Pinger
 	Segments SegmentGenerator
 	Audience AudienceCounter
+	Content  ContentGenerator
+	// VarLengths supplies the worst-case length of each template variable.
+	VarLengths VarLengthSource
 	// Now is the clock used as the "as of" time for audience queries.
 	// Defaults to time.Now; tests pin it.
 	Now func() time.Time
 }
 
 type Server struct {
-	db       Pinger
-	segments SegmentGenerator
-	audience AudienceCounter
-	now      func() time.Time
-	mux      *http.ServeMux
+	db         Pinger
+	segments   SegmentGenerator
+	audience   AudienceCounter
+	content    ContentGenerator
+	varLengths VarLengthSource
+	now        func() time.Time
+	mux        *http.ServeMux
 }
 
 func New(o Options) *Server {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &Server{db: o.DB, segments: o.Segments, audience: o.Audience, now: o.Now, mux: http.NewServeMux()}
+	s := &Server{
+		db: o.DB, segments: o.Segments, audience: o.Audience,
+		content: o.Content, varLengths: o.VarLengths,
+		now: o.Now, mux: http.NewServeMux(),
+	}
 	s.routes()
 	return s
 }
@@ -53,6 +62,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("POST /api/segments/generate", s.handleSegmentGenerate)
 	s.mux.HandleFunc("POST /api/segments/count", s.handleSegmentCount)
+	s.mux.HandleFunc("POST /api/content/generate", s.handleContentGenerate)
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {

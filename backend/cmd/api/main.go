@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/config"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/db"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/httpapi"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
@@ -52,7 +54,8 @@ func run() error {
 		return err
 	}
 
-	var model llm.Client = mockllm.Client{}
+	// The mock streams with a small delay so the UI visibly fills in.
+	var model llm.Client = mockllm.Client{ChunkDelay: 25 * time.Millisecond}
 	if cfg.UseRealLLM() {
 		client := anthropicllm.New(cfg.AnthropicAPIKey, cfg.AnthropicModel)
 		model = client
@@ -64,9 +67,11 @@ func run() error {
 	// NewHTTPServer cancels request contexts on Shutdown, so open SSE streams
 	// do not hold the process for the whole ShutdownTimeout.
 	srv := httpapi.NewHTTPServer(cfg.HTTPAddr, httpapi.New(httpapi.Options{
-		DB:       pool,
-		Segments: segment.Generator{LLM: model},
-		Audience: audience.Counter{DB: pool},
+		DB:         pool,
+		Segments:   segment.Generator{LLM: model},
+		Audience:   audience.Counter{DB: pool},
+		Content:    content.Generator{LLM: model},
+		VarLengths: &content.DBLengths{DB: pool},
 	}))
 
 	errCh := make(chan error, 1)

@@ -39,6 +39,7 @@ Bu komut sırayla:
 | `GET /readyz` | Readiness: veritabanına ulaşılabiliyor mu (değilse 503) |
 | `POST /api/segments/generate` | `{"brief": "..."}` → LLM'in önerdiği kural, kuraldan türetilen açıklama, LLM'in yorumları ve kanal bazlı kitle sayısı. Format brief'i ifade edemiyorsa `status: "unsupported"` |
 | `POST /api/segments/count` | `{"rule": {...}}` → elle düzenlenmiş bir kuralı aynı doğrulayıcıdan geçirir ve yeniden sayar; geçersizse 422 ve `{path, message}` listesi |
+| `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
 
 ```bash
 curl -s localhost:8080/api/segments/generate -H 'Content-Type: application/json' \
@@ -49,6 +50,20 @@ curl -s localhost:8080/api/segments/generate -H 'Content-Type: application/json'
 Kitle sayısı sorgu anına göre hesaplanır; seed verisi ise yüklendiği ana göre üretilir. Seed
 eskidikçe (olaylar 30 günlük pencereden çıktıkça) sayılar düşer; `make reset` ve yeniden
 `make up` veriyi tazeler.
+
+İçerik akışını denemek için (`-N` tamponlamayı kapatır):
+
+```bash
+curl -sN localhost:8080/api/content/generate -H 'Content-Type: application/json' \
+  -d '{"brief":"Sepetine ürün ekleyip almayanlara %30 indirim hatırlatması gönder. #demo-retry"}'
+```
+
+Brief'teki `#demo-retry` yalnızca mock LLM'e özeldir: ilk yanıtı bilerek geçersiz üretir
+(bilinmeyen değişken), böylece "reddet, hatayı geri ver, yeniden dene" döngüsü API key olmadan
+izlenebilir.
+
+Limitler değişkenler doldurulduktan sonra ölçülür: `{{first_name}}`, `{{last_name}}` ve
+`{{city}}` veritabanındaki en uzun değerleriyle sayılır (DECISIONS 19).
 
 ## Mimari
 
@@ -79,6 +94,8 @@ backend/
   internal/seed    deterministik sahte kullanıcı üretimi
   internal/segment segment kuralı: doğrulama, SQL derleme, açıklama, LLM ile üretim
   internal/audience kanal bazlı kitle sayımı
+  internal/content içerik şablonları: doğrulama, limit ölçümü, akışlı üretim
+  internal/validation ortak doğrulama hatası biçimi ({path, message} listesi)
   internal/llm     LLM arayüzü; llm/anthropicllm Claude istemcisi, llm/mockllm key yokken kullanılan mock
   internal/httpapi HTTP handler'ları
   internal/testdb  entegrasyon testleri için izole şema
@@ -100,9 +117,15 @@ ai-sessions/       Claude oturum export'ları
 | Segment kuralı şeması, doğrulama, SQL derleyici, kitle sayısı endpoint'i | ✅ |
 | Mock LLM, hatalı çıktıda geri besleme ile yeniden deneme (segment) | ✅ |
 | Gerçek Claude istemcisi (resmi Go SDK, akışlı; gerçek key ile henüz denenmedi) | ✅ |
-| Akışlı içerik üretimi, karakter limiti kontrolü | ⏳ |
+| Akışlı (SSE) içerik üretimi, kişiselleştirme sonrası karakter limiti, hatada geri besleme ile yeniden deneme | ✅ |
 | Kuyruk, worker, hız limiti, retry | ⏳ |
 | Mock SMS / email provider | ⏳ |
 | Vue arayüzü | ⏳ |
 | Metrics endpoint'i | ⏳ |
 | CI | ⏳ |
+
+## Yapılmayanlar
+
+| Konu | Not |
+|---|---|
+| Kullanıcının diline göre içerik (bonus) | Yapılmadı. Kampanya başına tek içerik seti var; `en` kullanıcılar da aynı metni alır (DECISIONS 17) |

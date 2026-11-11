@@ -320,3 +320,81 @@ Thinking ve effort modelin varsayılanında bırakıldı; böylece aynı istek h
 
 **Alternatif.** Ham `net/http`: sıfır bağımlılık, her satır bizim; ama SSE, retry ve hata
 eşlemesini kendimiz yazıp test ederiz.
+
+---
+
+## 17. İçerik tek dilde; dile göre içerik bonusu yapılmadı
+
+**Karar.** Kampanya başına tek bir içerik seti üretilir (`sms`, `email.subject`, `email.body`).
+Seed'deki `language = en` kullanıcılar da aynı metni alır. Bonus README'de "yapılmadı" olarak
+durur; aşama 5'ten sonra zaman kalırsa bakılır.
+
+**Neden.** Dil başına varyant her aşamaya iş ekler: üretim süresi ve çıktı iki katına çıkar,
+pazarlamacı iki metni onaylar, test matrisi büyür, gönderici şablon seçmek zorunda kalır. Bonus
+puanı çekirdek akışın dört aşamasına (15 Kasım sınırı) değmez.
+
+**Sonradan eklemeyi ucuz tutan şey.** `content.Content.Validate` tek bir içerik seti üzerinde
+çalışır; dil eklenirse şema bu setlerin listesi olur, doğrulayıcı yeniden yazılmaz.
+
+**Bilinçli olarak yapılmayan.** Aşama 4'teki `messages` tablosuna şimdiden `language` kolonu
+eklenmeyecek. Kullanılmayan kolon test edilemez; mesajın dili `users.language`'dan zaten
+türetilebilir; kolonu sonradan eklemek tek satırlık bir migration. Pahalı olan migration değil,
+şablon seçimi ve onay ekranı.
+
+**Alternatif.** Şemayı baştan `variants: [{language, sms, email}]` olarak kurmak. Bonus
+karşılanır ve aşama 4–5 tek seferde doğru şekille kurulur; bedeli yukarıdaki ek iş.
+
+---
+
+## 18. İçerik akışı: backend alan bazlı olaylar yollar
+
+**Karar.** `POST /api/content/generate` bir SSE akışı döner. Claude'un çıktısı JSON'dur; backend
+bu JSON'u akarken çözer (`content.fieldStream`) ve alan alan olay yollar:
+
+| Olay | Anlamı |
+|---|---|
+| `attempt` | Yeni bir deneme başladı; ekrandaki metin temizlenir |
+| `delta` | Bir alanın (`sms`, `email.subject`, `email.body`) devamı; henüz doğrulanmadı |
+| `rejected` | Denemenin çıktısı doğrulamadan geçemedi (hata listesiyle) |
+| `result` | Doğrulanmış içerik, ölçülen uzunluklar, limitler; akış biter |
+| `error` | Üretim başarısız (`llm_output_invalid` ya da `llm_unavailable`); akış biter |
+
+**Neden.**
+- Arayüz yarım JSON ayrıştırmaz. Kaçış karakterlerini (`\n`, `\"`, `\uXXXX`, surrogate çiftleri)
+  ve parçalar arasında bölünen karakterleri çözmek tek yerde, Go'da yazılıp test edilir.
+- Yeniden deneme görünür olur: pazarlamacı neden beklediğini ve neyin reddedildiğini görür.
+- Akan metin önizlemedir, sonuç değildir. Yalnızca `result` olayı doğrulanmış içerik taşır;
+  reddedilen bir metin hiçbir zaman `result` olarak gitmez.
+
+**Sınırı.** Çözücü geçerlilik kararı vermez; bozuk girdide çıkarabildiğini yollar, kararı
+`content.Parse` verir. Doğruluğu `encoding/json` ile karşılaştırılarak test edilir (her parça
+boyutu için).
+
+**Alternatif.** Modelin ham metnini iletmek. Backend'de en az kod; ama aynı çözücü
+TypeScript'te yazılır ya da ekranda ham JSON akar.
+
+---
+
+## 19. Karakter limiti: en kötü durum, tüm kullanıcıların en uzun değeriyle
+
+**Karar.** SMS (160) ve email konusu (80) limiti, şablondaki her değişken alabileceği en uzun
+değerle doldurulmuş gibi ölçülür. En uzun değer `users` tablosunun tamamından alınır
+(`content.DBLengths`, bir dakika önbellekte), kampanyanın kitlesinden değil. Sayım rune ile.
+İzinli değişkenler kapalı küme: `{{first_name}}`, `{{last_name}}`, `{{city}}`.
+
+**Neden.**
+- Hangi kitle seçilirse seçilsin güvenli üst sınır. İçerik üretimi segment kuralından bağımsız
+  kalır; pazarlamacı kuralı sonradan düzenlerse içerik geçersizleşmez.
+- Kitleye göre ölçmek birkaç karakter kazandırır, ama onay ile gönderim arasında kitleye giren
+  uzun isimli bir kullanıcı limiti aşabilir ve gönderimde ayrıca kontrol gerekir.
+- Limit aşımı hatası ölçülen sayıyı ve ne kadar kısaltılacağını söyler ("165 karakter, limit
+  160; en az 5 karakter kısaltın; {{first_name}} 10 karakter sayılır"). Aynı metin Claude'a
+  geri verilir; model tahmin etmek yerine hedefe göre kısaltır.
+
+**Bedeli.** Kitlede o kadar uzun değer yoksa birkaç karakter kullanılmadan kalır.
+
+**Bilinen sadeleştirme.** Limit case'teki gibi karakter sayısıdır. Gerçek SMS'te Türkçe
+karakterler mesajı UCS-2'ye çevirir ve tek parça sınırı 70 karaktere düşer; bu hesap yapılmıyor.
+Gerçek bir provider'a geçerken `content.checkField` içine eklenir.
+
+**Alternatif.** Seçilen kitlenin en uzun değeri (yukarıda).
