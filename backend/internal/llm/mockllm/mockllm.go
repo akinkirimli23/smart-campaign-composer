@@ -127,6 +127,17 @@ func segmentResult(brief string) map[string]any {
 		}
 	}
 
+	// "A veya B" between two cities is one condition (city in A, B). Any other
+	// "or" joins different conditions, which this matcher would silently turn
+	// into "and", i.e. a different audience. Refuse instead.
+	if phrase, ok := orBetweenConditions(text); ok {
+		return map[string]any{
+			"kind":    "unsupported",
+			"reason":  "Mock LLM \"veya\" ile bağlanan farklı koşulları ayırt edemiyor; koşulları \"ve\" ile bağlayın ya da gerçek modeli kullanın.",
+			"phrases": []string{original(brief, text, phrase)},
+		}
+	}
+
 	days := 30
 	if m := windowRe.FindStringSubmatch(text); m != nil {
 		n, _ := strconv.Atoi(m[1])
@@ -212,6 +223,34 @@ func segmentResult(brief string) map[string]any {
 		"rule":        segment.Rule{Match: segment.MatchAll, Conditions: conditions},
 		"assumptions": assumptions,
 	}
+}
+
+// orBetweenConditions finds an "or" that does not simply join two city names.
+func orBetweenConditions(text string) (string, bool) {
+	isCity := func(word string) bool {
+		for _, city := range seed.Cities() {
+			if strings.HasPrefix(word, segment.Fold(city)) {
+				return true
+			}
+		}
+		return false
+	}
+	words := strings.Fields(text)
+	for i, w := range words {
+		phrase, next := "", i+1
+		switch {
+		case w == "veya":
+			phrase = "veya"
+		case w == "ya" && i+1 < len(words) && words[i+1] == "da":
+			phrase, next = "ya da", i+2
+		default:
+			continue
+		}
+		if i == 0 || next >= len(words) || !isCity(words[i-1]) || !isCity(words[next]) {
+			return phrase, true
+		}
+	}
+	return "", false
 }
 
 func firstMatch(text string, phrases []string) (string, bool) {

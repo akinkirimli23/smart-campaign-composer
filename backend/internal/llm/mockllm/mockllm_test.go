@@ -51,9 +51,24 @@ func TestUnsupportedBriefs(t *testing.T) {
 	for _, brief := range []string{
 		"En çok harcayan 100 müşteriye teşekkür mesajı gönder",
 		"Herkese merhaba de",
+		// "or" between different conditions must not quietly become "and".
+		"İstanbul veya Ankara'da olup sepete ekleyen ya da son 30 günde satın alanlara gönder",
+		"Kadınlara veya son 7 günde sepete ekleyenlere gönder",
 	} {
 		if out := generate(t, brief); out.Unsupported == nil || out.Rule != nil {
 			t.Errorf("brief %q: want unsupported, got %+v", brief, out)
 		}
+	}
+}
+
+// "or" between two cities is a single condition and stays supported.
+func TestOrBetweenCities(t *testing.T) {
+	out := generate(t, "İstanbul veya Ankara'daki kadınlara, ayrıca İzmir ya da Bursa'dakilere gönder")
+	want := []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul", "Ankara", "İzmir", "Bursa"}},
+		{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}},
+	}
+	if out.Rule == nil || !reflect.DeepEqual(out.Rule.Conditions, want) {
+		t.Fatalf("got %+v\nwant %+v", out.Rule, want)
 	}
 }
