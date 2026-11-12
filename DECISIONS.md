@@ -916,3 +916,21 @@ Türkçe metin gönderelim?
   - Backend'deki "o dilde metin yoksa varsayılan dile düş" davranışı duruyor, ama artık bir
     seçenek değil güvenlik ağı: zamanlanmış kampanyada sonradan dilini değiştiren alıcı ve
     API'yi doğrudan çağıranlar için. `POST /api/campaigns` eksik dili hâlâ reddetmez.
+
+**Güncelleme 3 (12 Kasım): "… metnini yaz" ayrı bir adım olarak kalıyor.** Onay bütün dillere
+bağlanınca şu soru soruldu: bu buton gerekli mi, diğer diller ana dille aynı anda ya da
+kendiliğinden yazılamaz mı? Üç seçenek konuşuldu ve mevcut hali korundu.
+
+- **Karar.** Sıra değişmedi: önce ana dil yazılır ve pazarlamacı onu son haline getirir; diğer
+  diller ancak o butona basıldığında, ana metnin o anki halinden yazılır; sonra onay.
+- **Neden aynı anda yazılmıyor.** Diğer diller brief'ten değil ana metinden uyarlanır. İkisi
+  birlikte yazılsaydı pazarlamacının ana metinde yaptığı düzeltme (örneğin indirim cümlesini
+  değiştirmesi) diğer dillere yansımaz, onları yeniden yazdırmak gerekirdi: iki çağrı yerine
+  üç. Ana metin beğenilmeyip yeniden üretildiğinde de diğer diller boşa yazılmış olurdu. Sırayla
+  yazmak, çeviri çağrısını metnin kesinleştiği ana erteler ve bir kez yapar.
+- **Neden onayda arka planda yazılmıyor.** Pazarlamacının görmediği bir metin gönderilmiş
+  olurdu.
+- **Seçilmeyen.** (B) Ana metin biter bitmez diğer dilleri kendiliğinden yazmak: tıklama
+  kalmaz ama her yeniden üretim ve düzeltmede bir çağrı boşa gider. (C) Ayrı buton yerine
+  alttaki ana butonun önce "… metnini yaz", sonra "Onayla ve gönder" olması: çağrı sayısı ve
+  sıra aynı, yalnızca butonun yeri değişir; mevcut düzen yeterli bulundu.
