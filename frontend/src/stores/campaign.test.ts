@@ -609,35 +609,40 @@ describe('content per language', () => {
     })
   })
 
-  it('does not send while a language of the audience has no text, unless the marketer says so', async () => {
+  it('does not send while a language of the audience has no text', async () => {
     const store = await bilingualAtContent()
     fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
     fake.watchCampaign.mockReturnValue(() => {})
 
-    // Forgetting the other languages cannot send the campaign by accident.
+    // Forgetting the other languages cannot send the campaign: nobody gets
+    // a text in a language they do not read.
     expect(store.languagesResolved).toBe(false)
     await store.approve()
     expect(fake.createCampaign).not.toHaveBeenCalled()
     expect(store.step).toBe('content')
 
-    // One box, however many languages are missing: a deliberate choice.
-    store.mainLanguageOnly = true
-    expect(store.languagesResolved).toBe(true)
-    await store.approve()
-    expect(fake.createCampaign.mock.calls[0]?.[2]).toEqual({ default: 'tr', variants: { tr: result.content } })
-  })
-
-  it('opens approval once every language has a text, and asks again after a regeneration', async () => {
-    const store = await bilingualAtContent()
     scriptLocalize(localized)
     await store.localize()
     expect(store.languagesResolved).toBe(true)
-    expect(store.mainLanguageOnly).toBe(false)
+    await store.approve()
+    expect(fake.createCampaign).toHaveBeenCalledTimes(1)
 
-    store.mainLanguageOnly = true
-    await store.generateContent() // new main text: the earlier choice does not carry over
-    expect(store.mainLanguageOnly).toBe(false)
-    expect(store.languagesResolved).toBe(false)
+    // Generating the main text again closes approval until they are written again.
+    const again = await bilingualAtContent()
+    scriptLocalize(localized)
+    await again.localize()
+    await again.generateContent()
+    expect(again.languagesResolved).toBe(false)
+  })
+
+  it('a campaign for one language narrows its audience instead', async () => {
+    const store = await bilingualAtContent()
+    // The marketer goes back and adds "language: Turkish" to the rule.
+    fake.countSegment.mockResolvedValue({ ...bilingual, languages: [bilingual.languages![0]!] })
+    await store.applyRule(bilingual.rule)
+    await store.generateContent()
+    expect(store.missingLanguages).toEqual([])
+    expect(store.languagesResolved).toBe(true)
   })
 
   it('blocks approval while any language is over a limit, not only the visible one', async () => {

@@ -847,8 +847,8 @@ sayısının ve maliyetin de artacağı gerekçesiyle reddedildi.
   uzar. O noktada diller birkaç gruba bölünür.
 - Ana metin çeviriden sonra değiştirilirse diğer diller eskir. Arayüz bunu fark edip uyarır
   ("yeniden yaz"), ama zorlamaz; backend bu ilişkiyi bilmez.
-- Diğer diller yazdırılmadan da gönderilebilir; o alıcılar ana dildeki metni alır. Bu artık
-  yalnızca bilinçli bir seçimle olur (aşağıdaki güncelleme).
+- İlk halinde diğer diller yazdırılmadan da gönderilebiliyor, o alıcılar ana dildeki metni
+  alıyordu. Arayüzden bu artık mümkün değil (aşağıdaki iki güncelleme).
 - Doğrulama limiti ve değişkenleri kontrol eder, anlamı değil: pazarlamacı okuyamadığı bir
   dildeki metni onaylıyor olabilir.
 - Mock LLM çeviri yapmaz; her dil için brief'ten sabit metnini yazar. Ana metne elle yapılan
@@ -889,3 +889,30 @@ unutan pazarlamacı yalnızca bir uyarı görüyor, onay butonu açık kalıyord
 - **Sınırı.** Kural arayüzdedir. `POST /api/campaigns` eksik dille gelen bir kampanyayı
   reddetmez, varsayılan dile düşer; API'yi doğrudan çağıran biri tek dilde gönderebilir. Dil
   sayısı çok artarsa tek çağrı yine dil gruplarına bölünmelidir (yukarıdaki sınır).
+
+**Güncelleme 2 (12 Kasım): "Yalnızca Türkçe gönder" kutusu kaldırıldı.** Bir önceki güncelleme
+onayı kapatmış ama tek bir kutuyla "eksik dilin okurları da ana dildeki metni alsın" demeye izin
+vermişti. Kutu ekranda görülünce sorgulandı: dili İngilizce olan birine neden seçenek olarak
+Türkçe metin gönderelim?
+
+- **Karar.** Kutu yok. Onay yalnızca kitlenin bütün dilleri için metin varken açılır. Kampanya
+  tek bir dilin okurlarına gidecekse bu kitle adımında söylenir: kurala "Dil: Türkçe" koşulu
+  eklenir, kitlede başka dil kalmaz ve içerik ekranı başka dil istemez. Uyarı metni bunu söyler.
+- **Neden.**
+  - Okuyamadığı dilde mesaj alan müşteri için o mesaj değersizdir; bunu tek tıkla yaptıran bir
+    seçenek sunmak bonusun amacıyla çelişir. Kutu, bonustan önceki davranışı (herkes Türkçe
+    alır) korumak için konmuştu; korunacak bir davranış değilmiş.
+  - Pazarlamacının gerçekte isteyebileceği şey "herkese Türkçe gitsin" değil, "yalnızca Türkçe
+    okuyanlara gitsin"dir. Bu bir kitle kararıdır ve kitleyi değiştirmenin tek yeri kitle
+    adımı olarak kalır: sayılar, kural ve gönderilen kitle birbirini tutar.
+  - Kural basitleşir: herkes kendi dilinde alır, arayüzde istisnası yok.
+- **Seçilmeyen.** Kutuyu "yalnızca Türkçe okuyanlara gönder" yapmak (işaretlenince diğer dilin
+  okurları kitleden çıkar). Tek tıkla çözerdi; ama kitleyi içerik ekranından değiştiren ikinci
+  bir yol açar, kitle adımında gösterilen sayılarla gönderilen kitle ayrışırdı.
+- **Bedeli / sınırı.**
+  - Tek dilde göndermek için kitle adımına dönmek gerekir; dönüşte ana metin yeniden üretilir.
+  - Diğer dillerin yazımı başarısız olursa (model üç denemede limitlere uyamazsa) onay kapalı
+    kalır; yeniden denenir ya da kitle daraltılır.
+  - Backend'deki "o dilde metin yoksa varsayılan dile düş" davranışı duruyor, ama artık bir
+    seçenek değil güvenlik ağı: zamanlanmış kampanyada sonradan dilini değiştiren alıcı ve
+    API'yi doğrudan çağıranlar için. `POST /api/campaigns` eksik dili hâlâ reddetmez.

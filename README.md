@@ -66,8 +66,8 @@ docker compose --profile test run --rm --build web-test
    Kitle birden fazla dil okuyorsa (seed'de Türkçe ve İngilizce) metin önce en çok kişinin
    okuduğu dilde yazılır. "İngilizce metnini yaz" diğer dilleri, o anki metinden, tek istekte
    ekler; diller sekmelerde ayrı ayrı düzenlenir ve her alıcı yalnızca kendi dilindeki metni
-   alır. Kitlenin bir dili için metin yokken onay kapalıdır; tek dilde göndermek için "Yalnızca
-   Türkçe gönder" kutusu işaretlenir ve o dilin okurları ana dildeki metni alır.
+   alır. Kitlenin bir dili için metin yokken onay kapalıdır; kampanya tek bir dilin okurlarına
+   gidecekse kitle adımında kurala dil koşulu eklenir.
 4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
    sayıları canlı güncellenir. Zamanlanmış kampanya başlayacağı saati gösterir; kampanya
    bitene kadar iptal edilebilir.

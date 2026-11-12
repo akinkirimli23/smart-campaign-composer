@@ -257,7 +257,6 @@ export const useCampaignStore = defineStore('campaign', () => {
     localizeRejections.value = []
     localizeError.value = null
     localizedFrom.value = null
-    mainLanguageOnly.value = false
   }
 
   function hasText(language: string): boolean {
@@ -270,11 +269,10 @@ export const useCampaignStore = defineStore('campaign', () => {
   /** Audience languages that have no text of their own yet. */
   const missingLanguages = computed(() => languages.value.map((l) => l.language).filter((code) => !hasText(code)))
 
-  // Sending a campaign that lacks a language of its audience is a decision,
-  // not an oversight: approval stays closed until every language has a text
-  // or the marketer ticks this one box (DECISIONS 30).
-  const mainLanguageOnly = ref(false)
-  const languagesResolved = computed(() => missingLanguages.value.length === 0 || mainLanguageOnly.value)
+  // Approval stays closed until every language of the audience has a text
+  // (DECISIONS 30). There is no "send the main language to everyone" switch:
+  // a campaign meant for one language narrows its audience by language.
+  const languagesResolved = computed(() => missingLanguages.value.length === 0)
 
   /** The main text was edited after the other languages were written from it. */
   const translationsStale = computed(
@@ -570,7 +568,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     content, streaming, attempt, rejections, contentMeta, contentError, generateContent,
     languages, languageLabel, contentLanguage, activeLanguage, activeContent, hasText,
     variants, localizing, localizeAttempt, localizeRejections, localizeError, localize,
-    missingLanguages, translationsStale, invalidLanguages, mainLanguageOnly, languagesResolved,
+    missingLanguages, translationsStale, invalidLanguages, languagesResolved,
     measured, limits, contentValid,
     sendMode, scheduledFor, scheduleProblem, scheduleSuggestion,
     approving, approveError, campaign, status, done, statusError, approve,

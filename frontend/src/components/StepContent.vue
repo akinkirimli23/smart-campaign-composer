@@ -133,14 +133,11 @@ const otherApproveErrors = computed<FieldError[]>(() =>
         <span class="spinner" aria-hidden="true" />
         {{ store.localizeAttempt > 1 ? `${store.localizeAttempt}. deneme: ` : '' }}{{ mainLabel }} metinden diğer diller yazılıyor…
       </p>
-      <div v-else-if="store.missingLanguages.length" class="alert info">
+      <p v-else-if="store.missingLanguages.length" class="alert info">
         Kitlede {{ missing }} okuyan {{ missingReaders }} kişi var. Önce {{ mainLabel }} metni son haline getir, sonra “{{ missing }} metnini yaz”
         ile onlara kendi dillerinde metin yazdır. Onay, bütün dillerin metni olunca açılır.
-        <label class="choice only-main">
-          <input v-model="store.mainLanguageOnly" type="checkbox" />
-          Yalnızca {{ mainLabel }} gönder: {{ missing }} okuyan {{ missingReaders }} kişi de {{ mainLabel }} metni alsın
-        </label>
-      </div>
+        Kampanya yalnızca {{ mainLabel }} okuyanlara gidecekse “Geri” ile kitleye dön ve “Dil: {{ mainLabel }}” koşulunu ekle.
+      </p>
       <p v-else-if="store.translationsStale" class="alert warn">
         {{ mainLabel }} metin değişti; {{ written }} metin önceki halinden yazılmıştı. Yeniden yazdırabilir ya da elle güncelleyebilirsin.
       </p>
@@ -290,8 +287,7 @@ const otherApproveErrors = computed<FieldError[]>(() =>
     <p v-if="audience && store.contentMeta" class="hint">
       Onaylarsan {{ audience.sms }} SMS ve {{ audience.email }} email kuyruğa alınır.
       <template v-if="multilingual && !store.missingLanguages.length">Her alıcı kendi dilindeki metni alır.</template>
-      <template v-else-if="store.mainLanguageOnly">{{ missing }} okuyan {{ missingReaders }} kişi {{ mainLabel }} metni alır.</template>
-      <template v-else-if="multilingual">Onaylamak için önce {{ missing }} metnini yazdır ya da yalnızca {{ mainLabel }} göndermeyi seç.</template>
+      <template v-else-if="multilingual">Onaylamak için önce {{ missing }} metnini yazdır.</template>
       Gönderim test sağlayıcısına yapılır; gerçek kimseye mesaj gitmez.
     </p>
   </section>

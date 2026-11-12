@@ -279,8 +279,9 @@ Kararlar DECISIONS 23–24'te. Kısaca:
   `store.activeLanguage` düzenlenen dil; `store.localize()` diğer dilleri tek istekte yazdırır.
   `contentValid` görünen dile değil bütün dillere bakar. `approve` her zaman
   `{default, variants}` gönderir. Ana metin sonradan değişirse `translationsStale`. Kitlenin bir
-  dili için metin yokken onay kapalıdır (`languagesResolved`); açmanın yolu dilleri yazdırmak ya
-  da tek kutu `mainLanguageOnly`. Bu kural arayüzde; backend varsayılan dile düşer.
+  dili için metin yokken onay kapalıdır (`languagesResolved`); açmanın tek yolu dilleri
+  yazdırmak. "Ana dili herkese gönder" seçeneği bilerek yok: tek dilli kampanya kitleye dil
+  koşulu ekler. Bu kural arayüzde; backend'in varsayılan dile düşmesi yalnızca güvenlik ağı.
 - Brief'ten okunan gönderim zamanı (`segment.schedule`) store'da `scheduleSuggestion` olur ve
   "Zamanla" alanını önceden doldurur; pazarlamacı değiştirebilir. Öneri tek başına hiçbir şeyi
   zamanlamaz.
