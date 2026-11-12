@@ -16,6 +16,9 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+    # Like the services that depend on it: without this, after a Docker or
+    # machine restart the API comes back but the database does not.
+    restart: unless-stopped
 
   # One-shot: applies migrations and loads the fake users (skipped if present).
   init:

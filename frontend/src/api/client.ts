@@ -31,6 +31,11 @@ async function toApiError(response: Response): Promise<ApiError> {
   } catch {
     // not JSON; fall through
   }
+  // No JSON body: the answer came from the proxy, not from the API. 502-504
+  // there mean the API is down or still starting.
+  if (response.status >= 502 && response.status <= 504) {
+    return new ApiError(response.status, 'unavailable', 'Sunucuya şu an ulaşılamıyor. Birkaç saniye sonra yeniden dene.')
+  }
   return new ApiError(response.status, 'unknown', `Sunucu ${response.status} yanıtı verdi`)
 }
 
