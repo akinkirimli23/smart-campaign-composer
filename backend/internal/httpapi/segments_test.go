@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/mockllm"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
@@ -28,6 +29,10 @@ func (f *fakeCounter) Count(_ context.Context, rule segment.Rule, asOf time.Time
 	f.calls++
 	f.rule, f.asOf = rule, asOf
 	return audience.Counts{Total: 381, SMS: 222, Email: 254, Unreachable: 58}, nil
+}
+
+func (f *fakeCounter) Languages(context.Context, segment.Rule, time.Time) ([]audience.LanguageCount, error) {
+	return []audience.LanguageCount{{Language: "tr", Reachable: 291}, {Language: "en", Reachable: 32}}, nil
 }
 
 func post(t *testing.T, model llm.Client, counter *fakeCounter, path, body string) (*httptest.ResponseRecorder, map[string]any) {
@@ -224,5 +229,41 @@ func TestGenerateSuggestsASchedule(t *testing.T) {
 	_, body = post(t, mockllm.Client{}, counter, "/api/segments/generate", `{"brief":"İstanbul'daki kullanıcılara kampanya gönder"}`)
 	if _, present := body["schedule"]; present {
 		t.Errorf("unexpected schedule: %v", body["schedule"])
+	}
+}
+
+// The audience comes with the languages its reachable part reads, largest
+// first: the content step writes the first and localises into the rest.
+func TestSegmentResponseListsLanguages(t *testing.T) {
+	for _, tt := range []struct{ path, body string }{
+		{"/api/segments/generate", `{"brief":"İstanbul'daki kullanıcılara kampanya gönder"}`},
+		{"/api/segments/count", `{"rule":{"match":"all","conditions":[{"type":"attribute","field":"city","op":"in","values":["İstanbul"]}]}}`},
+	} {
+		rec, body := post(t, mockllm.Client{}, &fakeCounter{}, tt.path, tt.body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", tt.path, rec.Code, rec.Body)
+		}
+		languages, _ := body["languages"].([]any)
+		if len(languages) != 2 {
+			t.Fatalf("%s: languages = %v", tt.path, body["languages"])
+		}
+		first := languages[0].(map[string]any)
+		if first["language"] != "tr" || first["label"] != "Türkçe" || first["reachable"] != float64(291) {
+			t.Errorf("%s: first language = %v", tt.path, first)
+		}
+	}
+}
+
+// Content can be written in every language a user can have: the segment
+// rule's language values and the content languages are the same set.
+func TestContentLanguagesCoverTheUserLanguages(t *testing.T) {
+	options := segment.RuleOptions().Languages
+	if len(options) != len(content.Languages) {
+		t.Fatalf("%d user languages, %d content languages", len(options), len(content.Languages))
+	}
+	for _, o := range options {
+		if _, ok := content.LanguageByCode(o.Value); !ok {
+			t.Errorf("no content language for the user language %q", o.Value)
+		}
 	}
 }

@@ -71,6 +71,9 @@ async function cancel() {
     <button v-if="store.standalone" class="ghost back" type="button" @click="store.showCampaigns()">← Kampanyalar</button>
     <h2>Gönderim <span v-if="store.campaign" class="muted">· kampanya #{{ store.campaign.id }}</span></h2>
     <p v-if="store.status?.brief" class="brief-quote">{{ store.status.brief }}</p>
+    <p v-if="store.status?.languages && store.status.languages.length > 1" class="hint tight">
+      Metin dilleri: {{ store.status.languages.map((code) => code.toUpperCase()).join(' · ') }}. Her alıcı kendi dilindeki metni alır.
+    </p>
 
     <p v-if="store.statusError" class="alert error" role="alert">{{ store.statusError }}</p>
 

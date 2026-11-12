@@ -52,13 +52,13 @@ type Created struct {
 //
 // The recipients are frozen here, as of asOf, also for a campaign that is sent
 // later (DECISIONS 27). Texts are not: the worker fills the templates at send
-// time (DECISIONS 22). rule and c must already be validated; Compile validates
-// the rule again.
+// time (DECISIONS 22) and picks each recipient's language then (DECISIONS 30).
+// rule and c must already be validated; Compile validates the rule again.
 //
 // sendAt is when delivery may start; the zero value, or a time before asOf,
 // means at once. Scheduling needs no scheduler: the queue already holds every
 // message back until its next_attempt_at.
-func (s Store) Create(ctx context.Context, brief string, rule segment.Rule, c content.Content, asOf, sendAt time.Time) (Created, error) {
+func (s Store) Create(ctx context.Context, brief string, rule segment.Rule, c content.Localized, asOf, sendAt time.Time) (Created, error) {
 	if sendAt.Before(asOf) {
 		sendAt = asOf
 	}
@@ -70,7 +70,7 @@ func (s Store) Create(ctx context.Context, brief string, rule segment.Rule, c co
 	if err != nil {
 		return Created{}, err
 	}
-	contentJSON, err := json.Marshal(c)
+	contentJSON, err := content.MarshalLocalized(c)
 	if err != nil {
 		return Created{}, err
 	}
@@ -133,22 +133,30 @@ type Status struct {
 	// SendAt is when delivery starts (or started).
 	SendAt time.Time `json:"send_at"`
 	// CancelledAt is set once the campaign was cancelled.
-	CancelledAt *time.Time        `json:"cancelled_at,omitempty"`
-	Channels    map[string]Counts `json:"channels"`
+	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
+	// Languages the campaign has texts in, the default first.
+	Languages []string          `json:"languages"`
+	Channels  map[string]Counts `json:"channels"`
 	// Done: no message is waiting or in flight.
 	Done bool `json:"done"`
 }
 
 func (s Store) Status(ctx context.Context, id int64) (Status, error) {
 	st := Status{ID: id, Channels: map[string]Counts{}}
-	err := s.DB.QueryRow(ctx, `SELECT brief, created_at, send_at, cancelled_at FROM campaigns WHERE id = $1`, id).
-		Scan(&st.Brief, &st.CreatedAt, &st.SendAt, &st.CancelledAt)
+	var rawContent []byte
+	err := s.DB.QueryRow(ctx, `SELECT brief, created_at, send_at, cancelled_at, content FROM campaigns WHERE id = $1`, id).
+		Scan(&st.Brief, &st.CreatedAt, &st.SendAt, &st.CancelledAt, &rawContent)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Status{}, ErrNotFound
 	}
 	if err != nil {
 		return Status{}, fmt.Errorf("load campaign: %w", err)
 	}
+	texts, err := content.UnmarshalLocalized(rawContent)
+	if err != nil {
+		return Status{}, fmt.Errorf("campaign %d: %w", id, err)
+	}
+	st.Languages = texts.Codes()
 	for _, ch := range Channels {
 		st.Channels[ch] = Counts{}
 	}

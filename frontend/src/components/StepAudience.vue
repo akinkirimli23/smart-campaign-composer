@@ -131,6 +131,11 @@ const reachable = computed(() => (audience.value ? audience.value.sms + audience
         </div>
       </dl>
       <p class="hint">Bir kanaldan gönderim için hem izin hem adres gerekir. Ulaşılamayanlar iki kanalda da bunlardan birine sahip değil.</p>
+      <p v-if="segment.languages && segment.languages.length > 1" class="hint">
+        Ulaşılabilenlerin dili:
+        <template v-for="(l, i) in segment.languages" :key="l.language">{{ i ? ' · ' : ' ' }}{{ l.label }} {{ l.reachable }} kişi</template>.
+        İçerik önce {{ segment.languages[0]?.label }} yazılır; diğer diller içerik adımında tek seferde eklenir ve herkes kendi dilindeki metni alır.
+      </p>
 
       <details v-if="debug" class="advanced">
         <summary>Geliştirici görünümü: kural (JSON)</summary>

@@ -79,6 +79,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/segments/count", s.handleSegmentCount)
 	s.mux.HandleFunc("GET /api/segments/options", s.handleSegmentOptions)
 	s.mux.HandleFunc("POST /api/content/generate", s.handleContentGenerate)
+	s.mux.HandleFunc("POST /api/content/localize", s.handleContentLocalize)
 	s.mux.HandleFunc("POST /api/campaigns", s.handleCampaignCreate)
 	s.mux.HandleFunc("GET /api/campaigns", s.handleCampaignList)
 	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignStatus)

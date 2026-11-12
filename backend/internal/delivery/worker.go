@@ -2,7 +2,6 @@ package delivery
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -175,14 +174,18 @@ type claimed struct {
 	email, phone           *string
 	reachable              bool
 	cancelled              bool // the campaign was cancelled
-	content                content.Content
+	// content is the campaign's text in this recipient's language, or in the
+	// campaign's default language when it has none for them (DECISIONS 30).
+	content content.Content
 }
 
 // claim leases up to BatchSize due messages of a channel: pending ones whose
 // time has come and "sending" ones whose lease ran out (their worker died).
 // SKIP LOCKED lets several workers claim at once without waiting on, or
 // double-claiming, each other's rows. Reachability is re-evaluated here, at
-// send time, with the same definition the audience count uses.
+// send time, with the same definition the audience count uses. The
+// recipient's language is read here too: like consent, it is the value at
+// send time that counts.
 func (w *Worker) claim(ctx context.Context, channel string) ([]claimed, error) {
 	now := w.Now().UTC()
 	lease := now.Add(w.Lease)
@@ -206,7 +209,7 @@ WITH due AS (
 )
 SELECT l.id, l.campaign_id, l.user_id, l.attempts,
        u.first_name, u.last_name, u.city, u.email, u.phone, `+reachable+`, c.content,
-       c.cancelled_at IS NOT NULL
+       c.cancelled_at IS NOT NULL, u.language
 FROM leased l
 JOIN users u ON u.id = l.user_id
 JOIN campaigns c ON c.id = l.campaign_id
@@ -220,13 +223,16 @@ ORDER BY l.id`, channel, now, w.BatchSize, lease)
 	for rows.Next() {
 		m := claimed{channel: channel, leaseUntil: lease}
 		var raw []byte
+		var language string
 		if err := rows.Scan(&m.id, &m.campaignID, &m.userID, &m.attempts,
-			&m.firstName, &m.lastName, &m.city, &m.email, &m.phone, &m.reachable, &raw, &m.cancelled); err != nil {
+			&m.firstName, &m.lastName, &m.city, &m.email, &m.phone, &m.reachable, &raw, &m.cancelled, &language); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(raw, &m.content); err != nil {
+		texts, err := content.UnmarshalLocalized(raw)
+		if err != nil {
 			return nil, fmt.Errorf("campaign %d content: %w", m.campaignID, err)
 		}
+		m.content = texts.For(language)
 		batch = append(batch, m)
 	}
 	return batch, rows.Err()

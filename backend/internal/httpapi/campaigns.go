@@ -20,7 +20,7 @@ import (
 
 // CampaignStore creates campaigns and reports their delivery progress.
 type CampaignStore interface {
-	Create(ctx context.Context, brief string, rule segment.Rule, c content.Content, asOf, sendAt time.Time) (campaign.Created, error)
+	Create(ctx context.Context, brief string, rule segment.Rule, c content.Localized, asOf, sendAt time.Time) (campaign.Created, error)
 	Cancel(ctx context.Context, id int64, now time.Time) (campaign.Status, error)
 	Status(ctx context.Context, id int64) (campaign.Status, error)
 	Totals(ctx context.Context) (campaign.Totals, error)
@@ -34,6 +34,10 @@ const MaxScheduleAhead = segment.MaxScheduleAhead
 // POST /api/campaigns {"brief": "...", "rule": {...}, "content": {...}, "send_at": "2026-11-14T09:00:00Z"}
 //
 // send_at is optional (RFC 3339); without it the campaign is sent at once.
+// content is either one set of texts ({"sms": ..., "email": {...}}) or one set
+// per language ({"default": "tr", "variants": {"tr": {...}, "en": {...}}});
+// each recipient gets the set of their own language, or the default one when
+// the campaign has none for them (DECISIONS 30).
 //
 // This is the approval. Whatever the marketer saw or edited in the browser,
 // the rule and the texts are validated again here, by the same code that
@@ -86,7 +90,7 @@ func (s *Server) handleCampaignCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Değişken uzunlukları hesaplanamadı", nil)
 		return
 	}
-	c, _, err := content.Parse(req.Content, max)
+	c, _, err := content.ParseLocalized(req.Content, max)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "content_invalid", "İçerik geçersiz", err)
 		return

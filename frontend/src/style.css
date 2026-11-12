@@ -386,6 +386,22 @@ button.danger:hover:not(:disabled) { background: var(--error-soft); }
 .mail .body { padding: 12px 14px; font-size: 0.9rem; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 4em; }
 .placeholder { color: var(--muted); font-style: italic; }
 
+/* --- content languages --- */
+.languages { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 4px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-weight: 600;
+}
+.tab.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.tab:disabled { opacity: 0.75; }
+.tag.bad { background: var(--error-soft); color: var(--error); }
+
 .variables { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; }
 .variables span {
   padding: 2px 8px;

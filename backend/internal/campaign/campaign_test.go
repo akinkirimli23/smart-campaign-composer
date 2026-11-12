@@ -22,10 +22,10 @@ var exampleRule = segment.Rule{Match: segment.MatchAll, Conditions: []segment.Co
 	{Type: segment.TypeEvent, Event: "purchase", WithinDays: 30, Exists: false},
 }}
 
-var texts = content.Content{
+var texts = content.Single("tr", content.Content{
 	SMS:   "Merhaba {{first_name}}, %30 indirim!",
 	Email: content.Email{Subject: "{{first_name}}, fırsat", Body: "Merhaba"},
-}
+})
 
 // What is queued is exactly what the audience count promised the marketer:
 // the example brief queues 222 SMS and 254 emails, and nothing for the 58
@@ -295,5 +295,46 @@ WHERE id IN (SELECT id FROM messages WHERE campaign_id = $1 ORDER BY id LIMIT 5)
 	later, err := store.List(ctx, refNow.Add(31*time.Minute))
 	if err != nil || later[2].ID != halfHour.ID || later[2].State != campaign.StateSending || later[1].State != campaign.StateScheduled {
 		t.Errorf("after 31 minutes: %+v, %v", later, err)
+	}
+}
+
+// A campaign keeps one set of texts per language and reports which
+// languages it has, the default first.
+func TestCampaignKeepsEveryLanguage(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 300, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	store := campaign.Store{DB: pool}
+	rule := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+	}}
+	both := content.Localized{Default: "tr", Variants: map[string]content.Content{
+		"tr": texts.Variants["tr"],
+		"en": {SMS: "Hi {{first_name}}, 30% off!", Email: content.Email{Subject: "An offer", Body: "Hi"}},
+	}}
+
+	created, err := store.Create(ctx, "brief", rule, both, refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var def, english string
+	err = pool.QueryRow(ctx, `SELECT content->>'default', content->'variants'->'en'->>'sms' FROM campaigns WHERE id = $1`, created.ID).
+		Scan(&def, &english)
+	if err != nil || def != "tr" || english != "Hi {{first_name}}, 30% off!" {
+		t.Fatalf("stored default %q, english sms %q (err %v)", def, english, err)
+	}
+	st, err := store.Status(ctx, created.ID)
+	if err != nil || len(st.Languages) != 2 || st.Languages[0] != "tr" || st.Languages[1] != "en" {
+		t.Errorf("languages = %v, err = %v", st.Languages, err)
+	}
+
+	single, err := store.Create(ctx, "brief", rule, texts, refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := store.Status(ctx, single.ID); err != nil || len(st.Languages) != 1 || st.Languages[0] != "tr" {
+		t.Errorf("languages = %v, err = %v", st.Languages, err)
 	}
 }

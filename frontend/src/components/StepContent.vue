@@ -2,21 +2,43 @@
 import { computed } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import { renderSample, SAMPLE_RECIPIENT } from '../lib/template'
+import type { FieldError } from '../api/types'
 import ErrorBox from './ErrorBox.vue'
 
 const store = useCampaignStore()
 
 const variables = computed(() => Object.entries(store.contentMeta?.variables ?? {}))
-const editable = computed(() => !store.streaming && store.contentMeta !== null)
+const busy = computed(() => store.streaming || store.localizing)
+const editable = computed(() => !busy.value && store.contentMeta !== null)
 const audience = computed(() => store.segment?.audience)
+
+// The texts in the editor: the main language's, or another language's.
+const text = computed(() => store.activeContent)
 
 // What one recipient would receive, with a made-up person filled in.
 const preview = computed(() => ({
-  sms: renderSample(store.content.sms),
-  subject: renderSample(store.content.email.subject),
-  body: renderSample(store.content.email.body),
+  sms: renderSample(text.value.sms),
+  subject: renderSample(text.value.email.subject),
+  body: renderSample(text.value.email.body),
 }))
 const sampleName = `${SAMPLE_RECIPIENT.first_name} ${SAMPLE_RECIPIENT.last_name}, ${SAMPLE_RECIPIENT.city}`
+
+// --- languages ------------------------------------------------------------------
+// Tabs appear only when the audience reads more than one language.
+const multilingual = computed(() => store.languages.length > 1)
+const mainLabel = computed(() => store.languageLabel(store.contentLanguage))
+
+function labels(codes: string[]): string {
+  return codes.map((code) => store.languageLabel(code)).join(', ')
+}
+
+const missing = computed(() => labels(store.missingLanguages))
+const written = computed(() => labels(Object.keys(store.variants)))
+
+/** Reachable people who read a language that has no text of its own. */
+const missingReaders = computed(() =>
+  store.languages.filter((l) => store.missingLanguages.includes(l.language)).reduce((sum, l) => sum + l.reachable, 0),
+)
 
 // Earliest selectable start, in the form datetime-local expects (local time,
 // minutes). Only a hint for the picker; the store and the backend check too.
@@ -26,10 +48,34 @@ const earliest = (() => {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
 })()
 
-/** Server-side errors for one field, from a refused approval. */
-function approveErrorsFor(path: string): string[] {
-  return (store.approveError?.details ?? []).filter((d) => d.path === path).map((d) => d.message)
+// --- errors of a refused approval ---------------------------------------------
+// The backend names the language in the path: "variants.en.sms".
+const FIELDS = ['sms', 'email.subject', 'email.body']
+
+function splitPath(path: string): { language: string; field: string } | null {
+  const match = /^variants\.([^.]+)\.(.+)$/.exec(path)
+  return match ? { language: match[1] ?? '', field: match[2] ?? '' } : null
 }
+
+/** Server-side errors for one field of the language being edited. */
+function approveErrorsFor(field: string): string[] {
+  return (store.approveError?.details ?? [])
+    .filter((d) => {
+      const at = splitPath(d.path)
+      return at ? at.language === store.activeLanguage && at.field === field : d.path === field
+    })
+    .map((d) => d.message)
+}
+
+/** Everything else: errors of the other languages (named), and non-field errors. */
+const otherApproveErrors = computed<FieldError[]>(() =>
+  (store.approveError?.details ?? []).flatMap((d) => {
+    const at = splitPath(d.path)
+    if (!at) return FIELDS.includes(d.path) ? [] : [d]
+    if (at.language === store.activeLanguage && FIELDS.includes(at.field)) return []
+    return [{ path: `${store.languageLabel(at.language)} · ${at.field}`, message: d.message }]
+  }),
+)
 </script>
 
 <template>
@@ -38,7 +84,7 @@ function approveErrorsFor(path: string): string[] {
 
     <p v-if="store.streaming" class="status" role="status">
       <span class="spinner" aria-hidden="true" />
-      {{ store.attempt > 1 ? `${store.attempt}. deneme yazılıyor…` : 'Metinler yazılıyor…' }}
+      {{ store.attempt > 1 ? `${store.attempt}. deneme yazılıyor…` : multilingual ? `${mainLabel} metinler yazılıyor…` : 'Metinler yazılıyor…' }}
     </p>
     <p v-else-if="store.contentMeta" class="hint">
       Metinleri düzenleyebilirsin. Sayaçlar, değişkenler en uzun değerleriyle doldurulmuş halini ölçer; onayda sunucu aynı kontrolü yeniden yapar.
@@ -54,6 +100,56 @@ function approveErrorsFor(path: string): string[] {
 
     <ErrorBox v-if="store.contentError" :message="store.contentError.message" :details="store.contentError.details" />
 
+    <!-- One tab per language of the audience. Each recipient gets their own. -->
+    <template v-if="multilingual && store.contentMeta && !store.contentError">
+      <div class="languages">
+        <div class="tabs" role="tablist" aria-label="Metnin dili">
+          <button
+            v-for="l in store.languages"
+            :key="l.language"
+            type="button"
+            role="tab"
+            class="tab"
+            :class="{ active: store.activeLanguage === l.language }"
+            :aria-selected="store.activeLanguage === l.language"
+            :disabled="!store.hasText(l.language)"
+            @click="store.activeLanguage = l.language"
+          >
+            {{ l.label }}
+            <span class="muted">· {{ l.reachable }} kişi</span>
+            <span v-if="!store.hasText(l.language)" class="tag">metin yok</span>
+            <span v-else-if="!busy && store.invalidLanguages.includes(l.language)" class="tag bad">düzeltilmeli</span>
+          </button>
+        </div>
+        <button v-if="!store.localizing && store.missingLanguages.length" type="button" :disabled="busy" @click="store.localize()">
+          {{ missing }} metnini yaz
+        </button>
+        <button v-else-if="!store.localizing && store.translationsStale" type="button" :disabled="busy" @click="store.localize()">
+          {{ written }} metnini yeniden yaz
+        </button>
+      </div>
+
+      <p v-if="store.localizing" class="status" role="status">
+        <span class="spinner" aria-hidden="true" />
+        {{ store.localizeAttempt > 1 ? `${store.localizeAttempt}. deneme: ` : '' }}{{ mainLabel }} metinden diğer diller yazılıyor…
+      </p>
+      <p v-else-if="store.missingLanguages.length" class="alert info">
+        Kitlede {{ missing }} okuyan {{ missingReaders }} kişi var. Önce {{ mainLabel }} metni son haline getir, sonra “{{ missing }} metnini yaz”
+        ile onlara kendi dillerinde metin yazdır; yazdırmazsan {{ mainLabel }} metni alırlar.
+      </p>
+      <p v-else-if="store.translationsStale" class="alert warn">
+        {{ mainLabel }} metin değişti; {{ written }} metin önceki halinden yazılmıştı. Yeniden yazdırabilir ya da elle güncelleyebilirsin.
+      </p>
+
+      <div v-for="r in store.localizeRejections" :key="'l' + r.attempt" class="alert warn">
+        <strong>Diğer diller: {{ r.attempt }}. deneme doğrulamadan geçemedi{{ store.localizing || !store.localizeError ? ', yeniden yazdırıldı' : '' }}</strong>
+        <ul>
+          <li v-for="(e, i) in r.errors" :key="i"><code>{{ e.path }}</code> {{ e.message }}</li>
+        </ul>
+      </div>
+      <ErrorBox v-if="store.localizeError" :message="store.localizeError.message" :details="store.localizeError.details" />
+    </template>
+
     <div v-if="!store.contentError" class="compose">
       <div>
         <div class="field">
@@ -68,7 +164,7 @@ function approveErrorsFor(path: string): string[] {
           </div>
           <textarea
             id="sms"
-            v-model="store.content.sms"
+            v-model="text.sms"
             rows="4"
             :readonly="!editable"
             :aria-invalid="editable && (store.measured.sms.problems.length > 0 || store.measured.sms.length > store.limits.sms)"
@@ -89,7 +185,7 @@ function approveErrorsFor(path: string): string[] {
           </div>
           <input
             id="subject"
-            v-model="store.content.email.subject"
+            v-model="text.email.subject"
             type="text"
             :readonly="!editable"
             :aria-invalid="editable && (store.measured.subject.problems.length > 0 || store.measured.subject.length > store.limits.email_subject)"
@@ -102,7 +198,7 @@ function approveErrorsFor(path: string): string[] {
           <label for="body">Email metni</label>
           <textarea
             id="body"
-            v-model="store.content.email.body"
+            v-model="text.email.body"
             rows="9"
             :readonly="!editable"
             :aria-invalid="editable && store.measured.body.problems.length > 0"
@@ -122,7 +218,9 @@ function approveErrorsFor(path: string): string[] {
       </div>
 
       <aside class="preview" aria-label="Önizleme">
-        <p class="who">Önizleme · örnek alıcı: {{ sampleName }}</p>
+        <p class="who">
+          Önizleme<template v-if="multilingual"> · {{ store.languageLabel(store.activeLanguage) }}</template> · örnek alıcı: {{ sampleName }}
+        </p>
 
         <h3>SMS</h3>
         <div class="phone">
@@ -147,11 +245,7 @@ function approveErrorsFor(path: string): string[] {
       </aside>
     </div>
 
-    <ErrorBox
-      v-if="store.approveError"
-      :message="store.approveError.message"
-      :details="store.approveError.details.filter((d) => !['sms', 'email.subject', 'email.body'].includes(d.path))"
-    />
+    <ErrorBox v-if="store.approveError" :message="store.approveError.message" :details="otherApproveErrors" />
 
     <fieldset v-if="store.contentMeta" class="schedule">
       <legend>Ne zaman gönderilsin?</legend>
@@ -178,19 +272,22 @@ function approveErrorsFor(path: string): string[] {
     </fieldset>
 
     <div class="actions">
-      <button type="button" :disabled="store.streaming || store.approving" @click="store.step = 'audience'">Geri</button>
-      <button type="button" :disabled="store.streaming || store.approving" @click="store.generateContent()">Yeniden üret</button>
+      <button type="button" :disabled="busy || store.approving" @click="store.step = 'audience'">Geri</button>
+      <button type="button" :disabled="busy || store.approving" @click="store.generateContent()">Yeniden üret</button>
       <button
         class="primary"
         type="button"
-        :disabled="!store.contentValid || store.streaming || store.approving || store.scheduleProblem !== null"
+        :disabled="!store.contentValid || busy || store.approving || store.scheduleProblem !== null"
         @click="store.approve()"
       >
         {{ store.approving ? 'Kuyruğa alınıyor…' : store.sendMode === 'later' ? 'Onayla ve zamanla' : 'Onayla ve gönder' }}
       </button>
     </div>
     <p v-if="audience && store.contentMeta" class="hint">
-      Onaylarsan {{ audience.sms }} SMS ve {{ audience.email }} email kuyruğa alınır. Gönderim test sağlayıcısına yapılır; gerçek kimseye mesaj gitmez.
+      Onaylarsan {{ audience.sms }} SMS ve {{ audience.email }} email kuyruğa alınır.
+      <template v-if="multilingual && !store.missingLanguages.length">Her alıcı kendi dilindeki metni alır.</template>
+      <template v-else-if="multilingual">{{ missing }} okuyan {{ missingReaders }} kişi {{ mainLabel }} metni alır.</template>
+      Gönderim test sağlayıcısına yapılır; gerçek kimseye mesaj gitmez.
     </p>
   </section>
 </template>

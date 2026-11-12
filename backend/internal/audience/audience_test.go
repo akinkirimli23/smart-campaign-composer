@@ -205,3 +205,55 @@ func TestCountRejectsInvalidRule(t *testing.T) {
 		t.Fatalf("want ValidationError, got %v", err)
 	}
 }
+
+// The language breakdown counts only people who will actually get a
+// message, puts the largest group first and agrees with a hand-written query.
+func TestLanguagesOfTheReachableAudience(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 5000, 42, refNow); err != nil {
+		t.Fatal(err)
+	}
+	counter := audience.Counter{DB: pool}
+
+	got, err := counter.Languages(ctx, exampleRule, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := 0
+	for i, l := range got {
+		sum += l.Reachable
+		if i > 0 && l.Reachable > got[i-1].Reachable {
+			t.Errorf("not sorted by size: %+v", got)
+		}
+	}
+	// 381 match the example brief, 58 of them cannot be reached at all.
+	if sum != 381-58 || len(got) != 2 || got[0].Language != "tr" {
+		t.Fatalf("languages = %+v (sum %d)", got, sum)
+	}
+
+	city := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İzmir"}},
+	}}
+	got, err = counter.Languages(ctx, city, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range got {
+		var want int
+		err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE city = 'İzmir' AND language = $1
+AND ((sms_opt_in AND phone IS NOT NULL) OR (email_opt_in AND email IS NOT NULL))`, l.Language).Scan(&want)
+		if err != nil || want != l.Reachable {
+			t.Errorf("%s: %d reachable, hand-written query says %d (err %v)", l.Language, l.Reachable, want, err)
+		}
+	}
+
+	// A language nobody in the audience reads is not listed at all.
+	onlyEnglish := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"en"}},
+	}}
+	got, err = counter.Languages(ctx, onlyEnglish, refNow)
+	if err != nil || len(got) != 1 || got[0].Language != "en" {
+		t.Errorf("languages = %+v, err = %v", got, err)
+	}
+}

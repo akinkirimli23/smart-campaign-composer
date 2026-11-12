@@ -28,8 +28,8 @@ type Email struct {
 
 // Content is one set of campaign texts. Every field is a template.
 //
-// There is exactly one set per campaign for now (DECISIONS 17). Validate works
-// on a single set on purpose: per-language variants would be a list of these.
+// A campaign holds one set per language (Localized, DECISIONS 30). Validate
+// works on a single set on purpose: every language goes through it.
 type Content struct {
 	SMS   string `json:"sms"`
 	Email Email  `json:"email"`

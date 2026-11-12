@@ -43,11 +43,12 @@ const (
 // Event is progress reported while generating. Only Result is validated
 // content; deltas are a preview of text that may still be rejected.
 type Event struct {
-	Kind    EventKind
-	Attempt int
-	Field   string            // EventDelta
-	Text    string            // EventDelta
-	Errors  validation.Errors // EventRejected
+	Kind     EventKind
+	Attempt  int
+	Language string            // EventDelta, when several languages are written at once (Localize)
+	Field    string            // EventDelta
+	Text     string            // EventDelta
+	Errors   validation.Errors // EventRejected
 }
 
 // Result is content that passed validation.
@@ -81,6 +82,13 @@ type Generator struct {
 // If the client can stream, deltas are emitted while the model writes;
 // otherwise each field arrives as one delta when the reply is complete.
 func (g Generator) Generate(ctx context.Context, brief string, max VarLengths, emit func(Event)) (Result, error) {
+	return g.GenerateIn(ctx, brief, "", max, emit)
+}
+
+// GenerateIn is Generate with the language to write in: the campaign's main
+// language, the one most of its recipients read (DECISIONS 30). An empty
+// language leaves the choice to the prompt's default.
+func (g Generator) GenerateIn(ctx context.Context, brief, language string, max VarLengths, emit func(Event)) (Result, error) {
 	if emit == nil {
 		emit = func(Event) {}
 	}
@@ -93,7 +101,7 @@ func (g Generator) Generate(ctx context.Context, brief string, max VarLengths, e
 		System:     systemPrompt,
 		SchemaName: schemaName,
 		Schema:     Schema(),
-		Messages:   []llm.Message{{Role: llm.RoleUser, Text: userPrompt(brief, max)}},
+		Messages:   []llm.Message{{Role: llm.RoleUser, Text: userPrompt(brief, language, max)}},
 	}
 
 	var lastErrs validation.Errors
@@ -160,16 +168,19 @@ Hard limits, checked by a validator after your reply:
 Lengths are counted in characters after personalisation, with each variable counted at the longest value listed in the request. Leave some room; do not aim for the exact limit.
 
 Writing:
-- Write in Turkish unless the brief asks for another language.
+- Write in the language the request names. If it names none, write in Turkish unless the brief asks for another language.
 - Use only facts from the brief: discount rates, dates, product categories. Never invent a discount code, a link, a price, a deadline or a brand name; leave out what the brief does not give you.
 - The brief also describes who receives the campaign. Use it to pick the angle, do not repeat the targeting back to the recipient ("you have not purchased in 30 days").
 - SMS: one clear message with one call to action. Email: a subject that states the offer, and a short body.`
 
-func userPrompt(brief string, max VarLengths) string {
+func userPrompt(brief, language string, max VarLengths) string {
 	var b strings.Builder
 	b.WriteString("Variables you may use (longest value, in characters):\n")
 	for _, v := range Variables {
 		fmt.Fprintf(&b, "- {{%s}}: %s, counted as %d characters\n", v.Name, v.Description, max[v.Name])
+	}
+	if language != "" {
+		fmt.Fprintf(&b, "\nLanguage to write in: %s %s%s%s\n", languageName(language), languageOpen, language, languageClose)
 	}
 	b.WriteString("\nWrite the campaign texts for this brief.\n" + briefOpen + "\n" + brief + "\n" + briefClose)
 	return b.String()

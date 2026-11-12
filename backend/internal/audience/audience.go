@@ -28,9 +28,18 @@ type Counts struct {
 	Unreachable int `json:"unreachable"`
 }
 
+// LanguageCount is the part of an audience that reads one language. Only
+// people who can be reached on at least one channel are counted: these are
+// the people who will actually receive a text in that language.
+type LanguageCount struct {
+	Language  string `json:"language"`
+	Reachable int    `json:"reachable"`
+}
+
 // Querier is the part of pgxpool.Pool the counter needs.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 type Counter struct{ DB Querier }
@@ -54,4 +63,33 @@ func (c Counter) Count(ctx context.Context, rule segment.Rule, asOf time.Time) (
 		return Counts{}, fmt.Errorf("count audience: %w", err)
 	}
 	return n, nil
+}
+
+// Languages reports which languages the reachable part of the audience reads,
+// largest group first (ties in alphabetical order). The first entry is the
+// campaign's main language; the others are the languages it is localised into
+// (DECISIONS 30). Languages nobody reachable reads are not listed, so no text
+// is written that nobody would receive.
+func (c Counter) Languages(ctx context.Context, rule segment.Rule, asOf time.Time) ([]LanguageCount, error) {
+	q, err := segment.Compile(rule, asOf)
+	if err != nil {
+		return nil, err
+	}
+	sql := "SELECT u.language, count(*) FROM users u WHERE (" + q.Where + ")" +
+		" AND (" + SMSReachable + " OR " + EmailReachable + ")" +
+		" GROUP BY u.language ORDER BY count(*) DESC, u.language"
+	rows, err := c.DB.Query(ctx, sql, q.Args...)
+	if err != nil {
+		return nil, fmt.Errorf("audience languages: %w", err)
+	}
+	defer rows.Close()
+	out := []LanguageCount{}
+	for rows.Next() {
+		var l LanguageCount
+		if err := rows.Scan(&l.Language, &l.Reachable); err != nil {
+			return nil, fmt.Errorf("audience languages: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }

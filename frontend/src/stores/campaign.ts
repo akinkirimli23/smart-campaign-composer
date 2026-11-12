@@ -14,6 +14,8 @@ import type {
   ContentResult,
   FieldError,
   Lengths,
+  LocalizedContent,
+  LocalizeEvent,
   RuleOptions,
   SegmentResponse,
 } from '../api/types'
@@ -39,8 +41,27 @@ export interface Rejection {
   errors: FieldError[]
 }
 
+/** The language of a campaign whose audience names none. */
+const DEFAULT_LANGUAGE = 'tr'
+
 function emptyContent(): Content {
   return { sms: '', email: { subject: '', body: '' } }
+}
+
+/** A plain copy: what is sent must not be the object the form edits. */
+function copyContent(c: Content): Content {
+  return { sms: c.sms, email: { subject: c.email.subject, body: c.email.body } }
+}
+
+function setField(c: Content, field: ContentField, value: string) {
+  if (field === 'sms') c.sms = value
+  else if (field === 'email.subject') c.email.subject = value
+  else c.email.body = value
+}
+
+function getField(c: Content, field: ContentField): string {
+  if (field === 'sms') return c.sms
+  return field === 'email.subject' ? c.email.subject : c.email.body
 }
 
 function describe(err: unknown): { message: string; details: FieldError[] } {
@@ -126,24 +147,25 @@ export const useCampaignStore = defineStore('campaign', () => {
   }
 
   // --- content ----------------------------------------------------------------
+  // The audience's languages, largest first (DECISIONS 30). The texts are
+  // written once in the first one ("content" below), then adapted to the
+  // others in a single further request ("variants").
+  const languages = computed(() => segment.value?.languages ?? [])
+
+  function languageLabel(code: string): string {
+    return languages.value.find((l) => l.language === code)?.label ?? code.toUpperCase()
+  }
+
   const content = reactive<Content>(emptyContent())
+  // The language "content" is written in: the audience's largest when it
+  // was generated.
+  const contentLanguage = ref(DEFAULT_LANGUAGE)
   const streaming = ref(false)
   const attempt = ref(0)
   const rejections = ref<Rejection[]>([])
   const contentMeta = ref<Omit<ContentResult, 'content'> | null>(null)
   const contentError = ref<{ message: string; details: FieldError[] } | null>(null)
   let abortContent: AbortController | null = null
-
-  function setField(field: ContentField, value: string) {
-    if (field === 'sms') content.sms = value
-    else if (field === 'email.subject') content.email.subject = value
-    else content.email.body = value
-  }
-
-  function getField(field: ContentField): string {
-    if (field === 'sms') return content.sms
-    return field === 'email.subject' ? content.email.subject : content.email.body
-  }
 
   function clearContent() {
     Object.assign(content, emptyContent())
@@ -157,7 +179,7 @@ export const useCampaignStore = defineStore('campaign', () => {
         clearContent()
         break
       case 'delta':
-        setField(e.data.field, getField(e.data.field) + e.data.text)
+        setField(content, e.data.field, getField(content, e.data.field) + e.data.text)
         break
       case 'rejected':
         rejections.value.push({ attempt: e.data.attempt, errors: e.data.errors })
@@ -165,7 +187,7 @@ export const useCampaignStore = defineStore('campaign', () => {
       case 'result': {
         // Only this event carries validated content; it replaces the preview.
         const { content: validated, ...meta } = e.data
-        Object.assign(content, validated)
+        Object.assign(content, copyContent(validated))
         contentMeta.value = meta
         break
       }
@@ -188,8 +210,12 @@ export const useCampaignStore = defineStore('campaign', () => {
     contentError.value = null
     approveError.value = null
     clearContent()
+    // The other languages were written from the text that is being replaced.
+    clearLocalization()
+    contentLanguage.value = languages.value[0]?.language ?? DEFAULT_LANGUAGE
+    activeLanguage.value = contentLanguage.value
     try {
-      await api.streamContent(brief.value, onContentEvent, controller.signal)
+      await api.streamContent(brief.value, contentLanguage.value, onContentEvent, controller.signal)
       if (!contentMeta.value && !contentError.value) {
         contentError.value = { message: 'Akış sonuç gelmeden kesildi', details: [] }
       }
@@ -202,32 +228,150 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
+  // --- other languages ----------------------------------------------------------
+  // Texts for the audience's other languages, by language code. Empty until
+  // the marketer asks for them; a recipient whose language is missing here
+  // receives the main text.
+  const variants = reactive<Record<string, Content>>({})
+  const localizing = ref(false)
+  const localizeAttempt = ref(0)
+  const localizeRejections = ref<Rejection[]>([])
+  const localizeError = ref<{ message: string; details: FieldError[] } | null>(null)
+  // The main text the variants were written from, to notice when it changes.
+  const localizedFrom = ref<string | null>(null)
+  let abortLocalize: AbortController | null = null
+
+  // The language shown in the editor.
+  const activeLanguage = ref(DEFAULT_LANGUAGE)
+
+  function clearVariants() {
+    for (const code of Object.keys(variants)) delete variants[code]
+  }
+
+  function clearLocalization() {
+    abortLocalize?.abort()
+    abortLocalize = null
+    clearVariants()
+    localizing.value = false
+    localizeAttempt.value = 0
+    localizeRejections.value = []
+    localizeError.value = null
+    localizedFrom.value = null
+  }
+
+  function hasText(language: string): boolean {
+    return language === contentLanguage.value || language in variants
+  }
+
+  /** The texts being edited: the main ones, or one of the other languages. */
+  const activeContent = computed<Content>(() => variants[activeLanguage.value] ?? content)
+
+  /** Audience languages that have no text of their own yet. */
+  const missingLanguages = computed(() => languages.value.map((l) => l.language).filter((code) => !hasText(code)))
+
+  /** The main text was edited after the other languages were written from it. */
+  const translationsStale = computed(
+    () => localizedFrom.value !== null && Object.keys(variants).length > 0 && localizedFrom.value !== JSON.stringify(copyContent(content)),
+  )
+
+  function onLocalizeEvent(e: LocalizeEvent, source: Content) {
+    switch (e.event) {
+      case 'attempt':
+        localizeAttempt.value = e.data.attempt
+        clearVariants()
+        break
+      case 'delta': {
+        const target = (variants[e.data.language] ??= emptyContent())
+        setField(target, e.data.field, getField(target, e.data.field) + e.data.text)
+        break
+      }
+      case 'rejected':
+        localizeRejections.value.push({ attempt: e.data.attempt, errors: e.data.errors })
+        break
+      case 'result':
+        // Only this event carries validated texts; it replaces the preview.
+        // Copies, so editing a text never writes into the event's own objects.
+        clearVariants()
+        for (const [code, text] of Object.entries(e.data.variants)) variants[code] = copyContent(text)
+        localizedFrom.value = JSON.stringify(source)
+        break
+      case 'error':
+        clearVariants()
+        localizeError.value = { message: e.data.message, details: e.data.details ?? [] }
+        break
+    }
+  }
+
   /**
-   * Live measurement of the limited fields as the marketer edits them, with
-   * the same rules the backend applies on approval.
+   * Writes the texts for every other language of the audience from the main
+   * text as it stands now, edits included. One request for all of them.
    */
-  const measured = computed(() => {
+  async function localize() {
+    const to = languages.value.map((l) => l.language).filter((code) => code !== contentLanguage.value)
+    if (to.length === 0 || contentMeta.value === null || streaming.value) return
+    clearLocalization()
+    const controller = new AbortController()
+    abortLocalize = controller
+    localizing.value = true
+    approveError.value = null
+    const source = copyContent(content)
+    activeLanguage.value = to[0] ?? contentLanguage.value // watch the first one being written
+    try {
+      await api.streamLocalize(brief.value, source, contentLanguage.value, to, (e) => onLocalizeEvent(e, source), controller.signal)
+      if (localizedFrom.value === null && !localizeError.value) {
+        clearVariants()
+        localizeError.value = { message: 'Akış sonuç gelmeden kesildi', details: [] }
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return // superseded
+      clearVariants()
+      localizeError.value = describe(err)
+    } finally {
+      if (abortLocalize === controller) {
+        localizing.value = false
+        if (!hasText(activeLanguage.value)) activeLanguage.value = contentLanguage.value
+      }
+    }
+  }
+
+  // --- measuring ------------------------------------------------------------------
+  function measureContent(c: Content) {
     const variables = contentMeta.value?.variables ?? {}
     return {
-      sms: measure(content.sms, variables),
-      subject: measure(content.email.subject, variables),
-      body: measure(content.email.body, variables),
+      sms: measure(c.sms, variables),
+      subject: measure(c.email.subject, variables),
+      body: measure(c.email.body, variables),
     }
-  })
+  }
+
+  /**
+   * Live measurement of the limited fields of the language being edited,
+   * with the same rules the backend applies on approval.
+   */
+  const measured = computed(() => measureContent(activeContent.value))
 
   const limits = computed<Lengths>(() => contentMeta.value?.limits ?? { sms: 160, email_subject: 80 })
 
-  const contentValid = computed(() => {
-    const m = measured.value
+  function withinLimits(c: Content): boolean {
+    const m = measureContent(c)
     return (
-      contentMeta.value !== null &&
       m.sms.problems.length === 0 &&
       m.subject.problems.length === 0 &&
       m.body.problems.length === 0 &&
       m.sms.length <= limits.value.sms &&
       m.subject.length <= limits.value.email_subject
     )
+  }
+
+  /** Languages whose text would be refused: every one of them is checked, not only the visible one. */
+  const invalidLanguages = computed(() => {
+    const bad: string[] = []
+    if (!withinLimits(content)) bad.push(contentLanguage.value)
+    for (const [code, text] of Object.entries(variants)) if (!withinLimits(text)) bad.push(code)
+    return bad
   })
+
+  const contentValid = computed(() => contentMeta.value !== null && !localizing.value && invalidLanguages.value.length === 0)
 
   // --- approval and delivery ----------------------------------------------------
   // "now": send at once. "later": start at scheduledFor, a local date-time as
@@ -282,12 +426,9 @@ export const useCampaignStore = defineStore('campaign', () => {
     try {
       // Whatever the counters above say, the backend validates the rule and
       // the edited texts again here and may still refuse.
-      campaign.value = await api.createCampaign(
-        brief.value,
-        rule,
-        { sms: content.sms, email: { subject: content.email.subject, body: content.email.body } },
-        scheduledAt.value?.toISOString(),
-      )
+      const texts: LocalizedContent = { default: contentLanguage.value, variants: { [contentLanguage.value]: copyContent(content) } }
+      for (const [code, text] of Object.entries(variants)) texts.variants[code] = copyContent(text)
+      campaign.value = await api.createCampaign(brief.value, rule, texts, scheduledAt.value?.toISOString())
       standalone.value = false
       step.value = 'dashboard'
       watch(campaign.value.id)
@@ -350,7 +491,9 @@ export const useCampaignStore = defineStore('campaign', () => {
   /** Opens the dashboard of an existing campaign and follows it live. */
   function openCampaign(id: number) {
     abortContent?.abort()
+    abortLocalize?.abort()
     streaming.value = false
+    localizing.value = false
     view.value = 'compose'
     standalone.value = true
     step.value = 'dashboard'
@@ -395,6 +538,9 @@ export const useCampaignStore = defineStore('campaign', () => {
     segment.value = null
     segmentError.value = null
     clearContent()
+    clearLocalization()
+    contentLanguage.value = DEFAULT_LANGUAGE
+    activeLanguage.value = DEFAULT_LANGUAGE
     streaming.value = false
     attempt.value = 0
     rejections.value = []
@@ -415,6 +561,9 @@ export const useCampaignStore = defineStore('campaign', () => {
     segment, segmentLoading, segmentError, generateSegment, recountSegment,
     ruleOptions, loadRuleOptions, applyRule,
     content, streaming, attempt, rejections, contentMeta, contentError, generateContent,
+    languages, languageLabel, contentLanguage, activeLanguage, activeContent, hasText,
+    variants, localizing, localizeAttempt, localizeRejections, localizeError, localize,
+    missingLanguages, translationsStale, invalidLanguages,
     measured, limits, contentValid,
     sendMode, scheduledFor, scheduleProblem, scheduleSuggestion,
     approving, approveError, campaign, status, done, statusError, approve,

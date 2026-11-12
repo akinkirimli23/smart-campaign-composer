@@ -7,6 +7,8 @@ import type {
   Content,
   ContentEvent,
   FieldError,
+  LocalizedContent,
+  LocalizeEvent,
   Rule,
   RuleOptions,
   SegmentResponse,
@@ -67,6 +69,30 @@ async function getJSON<T>(path: string): Promise<T> {
   return (await response.json()) as T
 }
 
+/**
+ * POSTs and reads the answer as a server-sent event stream (EventSource
+ * cannot POST). Resolves when the stream ends; request-level problems reject
+ * with an ApiError before any event.
+ */
+async function postStream<E>(path: string, body: unknown, onEvent: (event: E) => void, signal?: AbortSignal): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch (err) {
+    if (signal?.aborted) throw err
+    throw new ApiError(0, 'network', 'Sunucuya ulaşılamadı')
+  }
+  if (!response.ok || !response.body) throw await toApiError(response)
+  await readEventStream(response.body, (message) => {
+    onEvent({ event: message.event, data: JSON.parse(message.data) } as E)
+  })
+}
+
 export const api = {
   /** Allowed values and bounds for the rule editor. */
   segmentOptions: () => getJSON<RuleOptions>('/api/segments/options'),
@@ -79,7 +105,7 @@ export const api = {
   countSegment: (rule: unknown) => postJSON<SegmentResponse>('/api/segments/count', { rule }),
 
   /** The approval: the backend validates rule and content again before queueing. */
-  createCampaign: (brief: string, rule: Rule, content: Content, sendAt?: string) =>
+  createCampaign: (brief: string, rule: Rule, content: LocalizedContent, sendAt?: string) =>
     postJSON<CampaignCreated>('/api/campaigns', { brief, rule, content, ...(sendAt ? { send_at: sendAt } : {}) }),
 
   /** Recent campaigns, newest first. */
@@ -89,28 +115,24 @@ export const api = {
   cancelCampaign: (id: number) => postJSON<CampaignStatus>(`/api/campaigns/${id}/cancel`, {}),
 
   /**
-   * Streams content generation. Resolves when the stream ends; the final
-   * event is "result" or "error". Request-level problems (empty brief, ...)
-   * reject with an ApiError before any event.
+   * Streams content generation in one language (the one most of the audience
+   * reads). The final event is "result" or "error".
    */
-  async streamContent(brief: string, onEvent: (event: ContentEvent) => void, signal?: AbortSignal): Promise<void> {
-    let response: Response
-    try {
-      response = await fetch('/api/content/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ brief }),
-        signal,
-      })
-    } catch (err) {
-      if (signal?.aborted) throw err
-      throw new ApiError(0, 'network', 'Sunucuya ulaşılamadı')
-    }
-    if (!response.ok || !response.body) throw await toApiError(response)
-    await readEventStream(response.body, (message) => {
-      onEvent({ event: message.event, data: JSON.parse(message.data) } as ContentEvent)
-    })
-  },
+  streamContent: (brief: string, language: string, onEvent: (event: ContentEvent) => void, signal?: AbortSignal) =>
+    postStream<ContentEvent>('/api/content/generate', { brief, language }, onEvent, signal),
+
+  /**
+   * Streams the texts for the other languages, written from the main text.
+   * One request, and one model call behind it, however many languages.
+   */
+  streamLocalize: (
+    brief: string,
+    content: Content,
+    from: string,
+    to: string[],
+    onEvent: (event: LocalizeEvent) => void,
+    signal?: AbortSignal,
+  ) => postStream<LocalizeEvent>('/api/content/localize', { brief, content, from, to }, onEvent, signal),
 
   /**
    * Follows a campaign's live status. EventSource reconnects by itself if the

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
 
@@ -23,6 +24,7 @@ type SegmentGenerator interface {
 // AudienceCounter counts the users a rule selects as of a point in time.
 type AudienceCounter interface {
 	Count(ctx context.Context, rule segment.Rule, asOf time.Time) (audience.Counts, error)
+	Languages(ctx context.Context, rule segment.Rule, asOf time.Time) ([]audience.LanguageCount, error)
 }
 
 const (
@@ -36,12 +38,23 @@ type segmentResponse struct {
 	Description *segment.Description `json:"description,omitempty"`
 	Assumptions []segment.Assumption `json:"assumptions,omitempty"`
 	Audience    *audience.Counts     `json:"audience,omitempty"`
+	// Languages of the reachable audience, largest first: the first is the
+	// language the content is written in, the rest are localised (DECISIONS 30).
+	Languages   []segmentLanguage    `json:"languages,omitempty"`
 	AsOf        *time.Time           `json:"as_of,omitempty"`
 	Attempts    int                  `json:"attempts,omitempty"`
 	Unsupported *segment.Unsupported `json:"unsupported,omitempty"`
 	// Schedule is a send time read from the brief: a suggestion the UI
 	// pre-fills, never something acted on by itself.
 	Schedule *segment.Schedule `json:"schedule,omitempty"`
+}
+
+// segmentLanguage is one language of the reachable audience, with the name
+// the UI shows for it.
+type segmentLanguage struct {
+	Language  string `json:"language"`
+	Label     string `json:"label"`
+	Reachable int    `json:"reachable"`
 }
 
 // defaultTimeZone is used when the client sends none (or one we cannot load).
@@ -146,10 +159,23 @@ func (s *Server) writeSegment(w http.ResponseWriter, r *http.Request, rule segme
 		writeError(w, http.StatusInternalServerError, "internal", "Kitle sayısı hesaplanamadı", nil)
 		return
 	}
+	counted, err := s.audience.Languages(ctx, rule, asOf)
+	if err != nil {
+		slog.Error("audience languages failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Kitle sayısı hesaplanamadı", nil)
+		return
+	}
+	languages := make([]segmentLanguage, len(counted))
+	for i, l := range counted {
+		languages[i] = segmentLanguage{Language: l.Language, Label: l.Language, Reachable: l.Reachable}
+		if known, ok := content.LanguageByCode(l.Language); ok {
+			languages[i].Label = known.Label
+		}
+	}
 	desc := segment.Describe(rule)
 	writeJSON(w, http.StatusOK, segmentResponse{
 		Status: "ok", Rule: &rule, Description: &desc, Assumptions: assumptions,
-		Audience: &counts, AsOf: &asOf, Attempts: attempts, Schedule: schedule,
+		Audience: &counts, Languages: languages, AsOf: &asOf, Attempts: attempts, Schedule: schedule,
 	})
 }
 

@@ -344,6 +344,10 @@ türetilebilir; kolonu sonradan eklemek tek satırlık bir migration. Pahalı ol
 **Alternatif.** Şemayı baştan `variants: [{language, sms, email}]` olarak kurmak. Bonus
 karşılanır ve aşama 4–5 tek seferde doğru şekille kurulur; bedeli yukarıdaki ek iş.
 
+**Güncelleme (12 Kasım).** Çekirdek akış ve teslim aşaması bittikten sonra bonus yapıldı; bu
+karar 30 ile değişti. Burada öngörülen iki şey tuttu: doğrulayıcı yeniden yazılmadı (her dil
+aynı `Validate`'ten geçiyor) ve `messages` tablosuna dil kolonu yine eklenmedi.
+
 ---
 
 ## 18. İçerik akışı: backend alan bazlı olaylar yollar
@@ -791,3 +795,73 @@ kayboluyordu.
 
 **Alternatif.** `vue-router` eklemek. Standart çözüm ve büyüyen bir uygulamada doğru tercih;
 ama üç adres için bir bağımlılık ve yapılandırma getirir.
+
+---
+
+## 30. Dile göre içerik: ana dil için bir çağrı, diğer dillerin tamamı için bir çağrı
+
+**Bağlam.** Karar 17 içeriği tek dilde bırakmıştı: seed'deki `language = en` kullanıcılar da
+Türkçe metni alıyordu. Bonus ele alınırken iki soru konuşuldu: kim hangi dilde alır ve bunun
+için model kaç kez çağrılır. İlk öneri dil başına ayrı çağrıydı; dil sayısı arttıkça çağrı
+sayısının ve maliyetin de artacağı gerekçesiyle reddedildi.
+
+**Karar.**
+- **Her alıcı yalnızca kendi dilindeki metni alır** (`users.language`). Kimseye iki dilde mesaj
+  gitmez.
+- **Hangi dillerde metin yazılacağını kitle belirler:** kitlenin ulaşılabilen kısmının okuduğu
+  diller (`audience.Counter.Languages`, kitle yanıtındaki `languages`). Kitlede hiç İngilizce
+  okuyan yoksa İngilizce metin yazılmaz.
+- **İçerik, dil sayısından bağımsız olarak iki model çağrısıyla üretilir:**
+  1. Ana dil, yani kitlede en çok kişinin okuduğu dil için mevcut akışlı üretim
+     (`Generator.GenerateIn`). Pazarlamacı okur, gerekirse düzenler.
+  2. Pazarlamacı istediğinde geri kalan dillerin **tamamı tek çağrıda** yazılır
+     (`Generator.Localize`, `POST /api/content/localize`). Model brief'ten yeniden yazmaz;
+     pazarlamacının son haline getirdiği ana metni diğer dillere uyarlar.
+- Kampanyanın içeriği dil başına bir set olarak saklanır:
+  `{"default": "tr", "variants": {"tr": {...}, "en": {...}}}` (`content.Localized`; migration
+  005 eski kampanyaları bu biçime sarar). Worker gönderim anında alıcının diline göre seti
+  seçer; kampanyada o dil yoksa varsayılan dildeki seti gönderir.
+- Her dil aynı doğrulamadan geçer (SMS 160, konu 80, izinli değişkenler, en kötü durum
+  ölçümü); onayda hepsi yeniden doğrulanır. Hata yolları dili taşır (`variants.en.sms`).
+
+**Neden.**
+- **Çağrı sayısı sabit.** Kitlede beş dil olsa da iki çağrı yapılır; dil başına çağrıda bu
+  beş olurdu. Maliyet dil sayısıyla değil, üretilen metin miktarıyla büyür.
+- **İkinci çağrı onaylanan metinden yazılır.** Diller aynı teklifi anlatır ve pazarlamacının
+  ana metinde yaptığı düzeltme diğerlerine de yansır. Her dil brief'ten bağımsız yazılsaydı iki
+  dil farklı şeyler söyleyebilirdi.
+- **İkinci çağrı pazarlamacının isteğiyle yapılır.** Ana metin beğenilmeyip yeniden
+  üretildiğinde çeviriye boşuna token harcanmaz.
+- **Kitlede olmayan dil yazılmaz.** Kimsenin almayacağı bir metin için ne model çağrılır ne
+  pazarlamacıdan onay istenir.
+- **Varsayılan dile düşme.** Pazarlamacı diğer dili yazdırmazsa ya da ileride kapalı kümeye
+  metni olmayan bir dil eklenirse kimse mesajsız kalmaz; davranış bu karardan öncekiyle aynıdır.
+- **Dil gönderim anında okunur,** izin ve adres gibi (22). `messages` tablosuna dil kolonu
+  yine eklenmedi (17'deki gerekçe sürüyor): hangi setin gittiği kampanya ve kullanıcıdan türetilir.
+- **Dil kümesi kapalı.** `content.Languages` (`tr`, `en`) `users.language` kısıtıyla aynı
+  kümedir; bir test ikisinin örtüştüğünü kontrol eder.
+
+**Bedeli / sınırı.**
+- Tek çağrının bedeli: dillerden biri limiti aşarsa yanıtın tamamı reddedilir ve model bütün
+  dilleri yeniden yazar. İki dilde önemsiz; çok dilde yeniden deneme pahalanır ve tek yanıt
+  uzar. O noktada diller birkaç gruba bölünür.
+- Ana metin çeviriden sonra değiştirilirse diğer diller eskir. Arayüz bunu fark edip uyarır
+  ("yeniden yaz"), ama zorlamaz; backend bu ilişkiyi bilmez.
+- Diğer diller yazdırılmadan da onaylanabilir; o alıcılar ana dildeki metni alır. Arayüz kaç
+  kişi olduğunu onaydan önce söyler.
+- Doğrulama limiti ve değişkenleri kontrol eder, anlamı değil: pazarlamacı okuyamadığı bir
+  dildeki metni onaylıyor olabilir.
+- Mock LLM çeviri yapmaz; her dil için brief'ten sabit metnini yazar. Ana metne elle yapılan
+  değişiklik mock'ta diğer dile yansımaz. Gerçek Claude ile denenmedi.
+- Pano dil bazında sayı göstermez; yalnızca kampanyanın hangi dillerde metni olduğunu söyler.
+- Zamanlanmış bir kampanyada, onay ile gönderim arasında dilini değiştiren alıcı yeni dilindeki
+  metni alır.
+
+**Alternatifler.**
+- *Dil başına ayrı çağrı (paralel).* Bir dildeki hata diğerlerini etkilemez ve her dil ayrı
+  izlenir; ama çağrı sayısı dil sayısıyla artar. Maliyet gerekçesiyle reddedildi.
+- *Bütün diller tek çağrıda, ana dil dahil.* Toplam bir çağrı; ama pazarlamacı ana metni
+  düzelttiğinde diğer diller yine yeniden yazdırılmalı, yani ikinci çağrı ortadan kalkmaz, ilk
+  yanıt ise uzar ve akışı izlemek zorlaşır.
+- *Onaydan sonra arka planda çeviri.* Pazarlamacının görmediği bir metin gönderilmiş olurdu;
+  "insan düzenler ve onaylar" akışına aykırı.

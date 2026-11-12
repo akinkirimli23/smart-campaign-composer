@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { CampaignStatus, ContentEvent, ContentResult, SegmentResponse } from '../api/types'
+import type { CampaignStatus, Content, ContentEvent, ContentResult, LocalizeEvent, SegmentResponse } from '../api/types'
 
 // The store is tested against a fake API: no network, no backend.
 const fake = vi.hoisted(() => ({
@@ -11,6 +11,7 @@ const fake = vi.hoisted(() => ({
   cancelCampaign: vi.fn(),
   listCampaigns: vi.fn(),
   streamContent: vi.fn(),
+  streamLocalize: vi.fn(),
   watchCampaign: vi.fn(),
 }))
 
@@ -40,7 +41,7 @@ const result: ContentResult = {
 
 /** Makes streamContent replay the given events. */
 function script(...events: ContentEvent[]) {
-  fake.streamContent.mockImplementation(async (_brief: string, onEvent: (e: ContentEvent) => void) => {
+  fake.streamContent.mockImplementation(async (_brief: string, _language: string, onEvent: (e: ContentEvent) => void) => {
     for (const e of events) onEvent(e)
   })
 }
@@ -139,7 +140,7 @@ describe('content stream', () => {
   it('builds the fields from deltas and replaces them with the validated result', async () => {
     const store = useCampaignStore()
     const seen: string[] = []
-    fake.streamContent.mockImplementation(async (_b: string, onEvent: (e: ContentEvent) => void) => {
+    fake.streamContent.mockImplementation(async (_b: string, _l: string, onEvent: (e: ContentEvent) => void) => {
       onEvent({ event: 'attempt', data: { attempt: 1 } })
       onEvent({ event: 'delta', data: { field: 'sms', text: 'Merhaba {{fir' } })
       onEvent({ event: 'delta', data: { field: 'sms', text: 'st_name}}' } })
@@ -160,7 +161,7 @@ describe('content stream', () => {
     const store = useCampaignStore()
     const errors = [{ path: 'sms', message: '{{name}} bilinmeyen bir değişken' }]
     let afterSecondAttempt = 'unset'
-    fake.streamContent.mockImplementation(async (_b: string, onEvent: (e: ContentEvent) => void) => {
+    fake.streamContent.mockImplementation(async (_b: string, _l: string, onEvent: (e: ContentEvent) => void) => {
       onEvent({ event: 'attempt', data: { attempt: 1 } })
       onEvent({ event: 'delta', data: { field: 'sms', text: 'Merhaba {{name}}' } })
       onEvent({ event: 'rejected', data: { attempt: 1, errors } })
@@ -241,7 +242,8 @@ describe('approval and delivery', () => {
     expect(fake.createCampaign).toHaveBeenCalledWith(
       'brief',
       segment.rule,
-      { sms: 'Elle düzenlendi {{first_name}}', email: result.content.email },
+      // No language information on this audience: one text, in the default language.
+      { default: 'tr', variants: { tr: { sms: 'Elle düzenlendi {{first_name}}', email: result.content.email } } },
       undefined, // no schedule: send at once
     )
     expect(store.step).toBe('dashboard')
@@ -497,5 +499,187 @@ describe('campaign list and navigation', () => {
     expect(store.step).toBe('brief')
     expect(store.campaign).toBeNull()
     expect(store.standalone).toBe(false)
+  })
+})
+
+describe('content per language', () => {
+  const bilingual: SegmentResponse = {
+    ...segment,
+    languages: [
+      { language: 'tr', label: 'Türkçe', reachable: 291 },
+      { language: 'en', label: 'İngilizce', reachable: 32 },
+    ],
+  }
+  const english: Content = { sms: 'Hi {{first_name}}, 30% off!', email: { subject: 'An offer', body: 'Hi' } }
+
+  /** Makes streamLocalize replay the given events. */
+  function scriptLocalize(...events: LocalizeEvent[]) {
+    fake.streamLocalize.mockImplementation(
+      async (_brief: string, _content: Content, _from: string, _to: string[], onEvent: (e: LocalizeEvent) => void) => {
+        for (const e of events) onEvent(e)
+      },
+    )
+  }
+
+  const localized: LocalizeEvent = {
+    event: 'result',
+    data: { variants: { en: english }, lengths: { en: { sms: 27, email_subject: 8 } }, limits: result.limits, variables: result.variables, attempts: 1 },
+  }
+
+  async function bilingualAtContent() {
+    const store = useCampaignStore()
+    store.brief = 'brief'
+    fake.generateSegment.mockResolvedValue(bilingual)
+    await store.generateSegment()
+    script({ event: 'attempt', data: { attempt: 1 } }, { event: 'result', data: result })
+    await store.generateContent()
+    return store
+  }
+
+  it('writes the main text in the language most of the audience reads', async () => {
+    const store = await bilingualAtContent()
+    expect(fake.streamContent.mock.calls[0]?.[1]).toBe('tr')
+    expect(store.contentLanguage).toBe('tr')
+    expect(store.missingLanguages).toEqual(['en'])
+    expect(fake.streamLocalize).not.toHaveBeenCalled() // the other languages wait for the marketer
+
+    // An audience that mostly reads English gets English first.
+    fake.countSegment.mockResolvedValue({ ...bilingual, languages: [...bilingual.languages!].reverse() })
+    await store.applyRule(bilingual.rule)
+    await store.generateContent()
+    expect(fake.streamContent.mock.calls[1]?.[1]).toBe('en')
+    expect(store.missingLanguages).toEqual(['tr'])
+  })
+
+  it('asks for all the other languages in one request, from the text as edited', async () => {
+    const store = await bilingualAtContent()
+    store.content.sms = 'Elle düzenlendi {{first_name}}'
+    scriptLocalize(
+      { event: 'attempt', data: { attempt: 1 } },
+      { event: 'delta', data: { language: 'en', field: 'sms', text: 'Hi {{first' } },
+      { event: 'delta', data: { language: 'en', field: 'sms', text: '_name}}' } },
+      localized,
+    )
+
+    await store.localize()
+
+    expect(fake.streamLocalize).toHaveBeenCalledTimes(1)
+    const [brief, source, from, to] = fake.streamLocalize.mock.calls[0] ?? []
+    expect([brief, from, to]).toEqual(['brief', 'tr', ['en']])
+    expect(source).toEqual({ sms: 'Elle düzenlendi {{first_name}}', email: result.content.email })
+    expect(store.variants.en).toEqual(english) // the validated result replaced the streamed preview
+    expect(store.missingLanguages).toEqual([])
+    expect(store.localizing).toBe(false)
+    expect(store.activeLanguage).toBe('en')
+    expect(store.activeContent).toEqual(english)
+    expect(store.contentValid).toBe(true)
+  })
+
+  it('shows the text while it streams and clears it when an attempt is rejected', async () => {
+    const store = await bilingualAtContent()
+    let duringFirst = ''
+    fake.streamLocalize.mockImplementation(async (_b: string, _c: Content, _f: string, _t: string[], onEvent: (e: LocalizeEvent) => void) => {
+      onEvent({ event: 'attempt', data: { attempt: 1 } })
+      onEvent({ event: 'delta', data: { language: 'en', field: 'sms', text: 'Hi {{nickname}}' } })
+      duringFirst = store.variants.en?.sms ?? ''
+      onEvent({ event: 'rejected', data: { attempt: 1, errors: [{ path: 'en.sms', message: 'bilinmeyen bir değişken' }] } })
+      onEvent({ event: 'attempt', data: { attempt: 2 } })
+      expect(store.variants.en).toBeUndefined()
+      onEvent(localized)
+    })
+    await store.localize()
+    expect(duringFirst).toBe('Hi {{nickname}}')
+    expect(store.localizeRejections).toEqual([{ attempt: 1, errors: [{ path: 'en.sms', message: 'bilinmeyen bir değişken' }] }])
+    expect(store.variants.en).toEqual(english)
+  })
+
+  it('sends every language on approval, the main one as the default', async () => {
+    const store = await bilingualAtContent()
+    scriptLocalize(localized)
+    await store.localize()
+    store.variants.en!.sms = 'Hi {{first_name}}, edited'
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
+    fake.watchCampaign.mockReturnValue(() => {})
+
+    await store.approve()
+
+    expect(fake.createCampaign.mock.calls[0]?.[2]).toEqual({
+      default: 'tr',
+      variants: { tr: result.content, en: { ...english, sms: 'Hi {{first_name}}, edited' } },
+    })
+  })
+
+  it('can be approved with the main language only; the others are reported as missing', async () => {
+    const store = await bilingualAtContent()
+    expect(store.contentValid).toBe(true)
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+    expect(fake.createCampaign.mock.calls[0]?.[2]).toEqual({ default: 'tr', variants: { tr: result.content } })
+  })
+
+  it('blocks approval while any language is over a limit, not only the visible one', async () => {
+    const store = await bilingualAtContent()
+    scriptLocalize(localized)
+    await store.localize()
+    store.activeLanguage = 'tr'
+    store.variants.en!.sms = 'x'.repeat(151) + '{{first_name}}' // 161 with the longest name
+    expect(store.invalidLanguages).toEqual(['en'])
+    expect(store.contentValid).toBe(false)
+    expect(store.measured.sms.length).toBe(32) // the counter still shows the visible language
+
+    store.activeLanguage = 'en'
+    expect(store.measured.sms.length).toBe(161)
+    store.variants.en!.sms = english.sms
+    expect(store.contentValid).toBe(true)
+  })
+
+  it('notices when the main text changes after the others were written from it', async () => {
+    const store = await bilingualAtContent()
+    scriptLocalize(localized)
+    await store.localize()
+    expect(store.translationsStale).toBe(false)
+    store.content.email.subject = 'Yeni konu'
+    expect(store.translationsStale).toBe(true)
+    await store.localize() // written again from the new text
+    expect(store.translationsStale).toBe(false)
+    expect(fake.streamLocalize.mock.calls[1]?.[1]).toMatchObject({ email: { subject: 'Yeni konu' } })
+  })
+
+  it('drops the other languages when the main text is generated again', async () => {
+    const store = await bilingualAtContent()
+    scriptLocalize(localized)
+    await store.localize()
+    await store.generateContent()
+    expect(store.variants).toEqual({})
+    expect(store.activeLanguage).toBe('tr')
+    expect(store.missingLanguages).toEqual(['en'])
+  })
+
+  it('keeps the main text and shows the error when the other languages fail', async () => {
+    const store = await bilingualAtContent()
+    scriptLocalize(
+      { event: 'attempt', data: { attempt: 1 } },
+      { event: 'delta', data: { language: 'en', field: 'sms', text: 'Hi' } },
+      { event: 'error', data: { code: 'llm_output_invalid', message: 'Model limitlere uyan bir içerik üretemedi', details: [{ path: 'en.sms', message: 'x' }] } },
+    )
+    await store.localize()
+    expect(store.variants).toEqual({})
+    expect(store.localizeError?.message).toBe('Model limitlere uyan bir içerik üretemedi')
+    expect(store.content).toEqual(result.content)
+    expect(store.activeLanguage).toBe('tr') // back to a language that has text
+    expect(store.contentValid).toBe(true) // still sendable in the main language
+
+    fake.streamLocalize.mockRejectedValue(new ApiError(0, 'network', 'Sunucuya ulaşılamadı'))
+    await store.localize()
+    expect(store.localizeError?.message).toBe('Sunucuya ulaşılamadı')
+    expect(store.localizing).toBe(false)
+  })
+
+  it('does nothing when the audience reads a single language', async () => {
+    const store = await storeAtContent()
+    await store.localize()
+    expect(fake.streamLocalize).not.toHaveBeenCalled()
+    expect(store.missingLanguages).toEqual([])
   })
 })

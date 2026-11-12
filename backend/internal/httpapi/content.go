@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,7 +17,11 @@ import (
 
 // ContentGenerator writes validated campaign content, reporting progress.
 type ContentGenerator interface {
-	Generate(ctx context.Context, brief string, max content.VarLengths, emit func(content.Event)) (content.Result, error)
+	// GenerateIn writes the texts in one language ("" leaves it to the model).
+	GenerateIn(ctx context.Context, brief, language string, max content.VarLengths, emit func(content.Event)) (content.Result, error)
+	// Localize writes the texts in the other languages, all in one model call.
+	Localize(ctx context.Context, brief string, source content.Content, from string, to []string,
+		max content.VarLengths, emit func(content.Event)) (content.Localization, error)
 }
 
 // VarLengthSource reports the longest value each template variable can take.
@@ -26,9 +31,12 @@ type VarLengthSource interface {
 
 const contentTimeout = 3 * time.Minute // up to three model attempts
 
+var contentLimits = content.Lengths{SMS: content.MaxSMS, EmailSubject: content.MaxEmailSubject}
+
 // contentResult is the payload of the final "result" event: the only content
 // in the stream that passed validation.
 type contentResult struct {
+	Language  string             `json:"language,omitempty"`
 	Content   content.Content    `json:"content"`
 	Lengths   content.Lengths    `json:"lengths"`
 	Limits    content.Lengths    `json:"limits"`
@@ -36,7 +44,20 @@ type contentResult struct {
 	Attempts  int                `json:"attempts"`
 }
 
-// POST /api/content/generate {"brief": "..."}
+// localizeResult is the "result" event of a localisation: validated texts
+// per target language.
+type localizeResult struct {
+	Variants  map[string]content.Content `json:"variants"`
+	Lengths   map[string]content.Lengths `json:"lengths"`
+	Limits    content.Lengths            `json:"limits"`
+	Variables content.VarLengths         `json:"variables"`
+	Attempts  int                        `json:"attempts"`
+}
+
+// POST /api/content/generate {"brief": "...", "language": "tr"}
+//
+// language is optional: the language to write in, normally the one most of
+// the audience reads (DECISIONS 30).
 //
 // Replies with a server-sent event stream (DECISIONS 18):
 //
@@ -49,63 +70,132 @@ type contentResult struct {
 // Problems found before the model is called are ordinary JSON error responses.
 func (s *Server) handleContentGenerate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Brief string `json:"brief"`
+		Brief    string `json:"brief"`
+		Language string `json:"language"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	brief := strings.TrimSpace(req.Brief)
-	switch n := utf8.RuneCountInString(brief); {
-	case n == 0:
-		writeError(w, http.StatusBadRequest, "invalid_request", "brief boş olamaz", nil)
+	brief, ok := contentBrief(w, req.Brief)
+	if !ok {
 		return
-	case n > content.MaxBriefRunes:
-		writeError(w, http.StatusBadRequest, "invalid_request", "brief en fazla 2000 karakter olabilir", nil)
+	}
+	if _, known := content.LanguageByCode(req.Language); req.Language != "" && !known {
+		writeError(w, http.StatusBadRequest, "invalid_request", "bilinmeyen dil: "+req.Language, nil)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), contentTimeout)
 	defer cancel()
-
-	max, err := s.varLengths.MaxLengths(ctx)
-	if err != nil {
-		slog.Error("variable lengths", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "Değişken uzunlukları hesaplanamadı", nil)
+	max, ok := s.maxLengths(ctx, w)
+	if !ok {
 		return
 	}
 
 	stream := newEventStream(w)
-	out, err := s.content.Generate(ctx, brief, max, func(e content.Event) {
-		switch e.Kind {
-		case content.EventAttempt:
-			stream.send("attempt", map[string]any{"attempt": e.Attempt})
-		case content.EventDelta:
-			stream.send("delta", map[string]any{"field": e.Field, "text": e.Text})
-		case content.EventRejected:
-			stream.send("rejected", map[string]any{"attempt": e.Attempt, "errors": e.Errors})
-		}
-	})
-
-	var invalid *content.InvalidOutputError
-	switch {
-	case errors.As(err, &invalid):
-		stream.send("error", map[string]any{
-			"code": "llm_output_invalid", "message": "Model limitlere uyan bir içerik üretemedi",
-			"details": invalid.Errors, "attempts": invalid.Attempts,
-		})
-	case err != nil:
-		if r.Context().Err() != nil {
-			return // the client went away; nobody to tell
-		}
-		slog.Error("content generation failed", "err", err)
-		stream.send("error", map[string]any{"code": "llm_unavailable", "message": "Model şu anda yanıt veremiyor"})
-	default:
-		stream.send("result", contentResult{
-			Content: out.Content, Lengths: out.Lengths,
-			Limits:    content.Lengths{SMS: content.MaxSMS, EmailSubject: content.MaxEmailSubject},
-			Variables: max, Attempts: out.Attempts,
-		})
+	out, err := s.content.GenerateIn(ctx, brief, req.Language, max, stream.progress)
+	if stream.failed(r, err, "content generation failed") {
+		return
 	}
+	stream.send("result", contentResult{
+		Language: req.Language, Content: out.Content, Lengths: out.Lengths,
+		Limits: contentLimits, Variables: max, Attempts: out.Attempts,
+	})
+}
+
+// POST /api/content/localize {"brief": "...", "content": {...}, "from": "tr", "to": ["en"]}
+//
+// Writes the campaign texts in the languages in "to", starting from "content"
+// (the texts in the language "from", as the marketer left them). However
+// many languages are asked for, it is one model call (DECISIONS 30).
+//
+// The event stream is that of /api/content/generate, except that a delta
+// names its language ({"language":"en","field":"sms","text":"Hi"}) and the
+// result carries one content per language:
+//
+//	result {"variants":{"en":{...}},"lengths":{"en":{...}}, ...}
+func (s *Server) handleContentLocalize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Brief   string          `json:"brief"`
+		Content json.RawMessage `json:"content"`
+		From    string          `json:"from"`
+		To      []string        `json:"to"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	brief, ok := contentBrief(w, req.Brief)
+	if !ok {
+		return
+	}
+	if _, known := content.LanguageByCode(req.From); !known {
+		writeError(w, http.StatusBadRequest, "invalid_request", "from bilinen bir dil olmalı", nil)
+		return
+	}
+	if len(req.To) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "to en az bir dil içermeli", nil)
+		return
+	}
+	for i, code := range req.To {
+		_, known := content.LanguageByCode(code)
+		if !known || code == req.From || slices.Contains(req.To[:i], code) {
+			writeError(w, http.StatusBadRequest, "invalid_request",
+				"to yalnızca bilinen, birbirinden ve kaynak dilden farklı dilleri içerebilir", nil)
+			return
+		}
+	}
+	if req.Content == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "content alanı zorunlu", nil)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), contentTimeout)
+	defer cancel()
+	max, ok := s.maxLengths(ctx, w)
+	if !ok {
+		return
+	}
+	// The source is what the other languages are written from; a text that
+	// is itself invalid is not worth a model call.
+	source, _, err := content.Parse(req.Content, max)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "content_invalid", "İçerik geçersiz", err)
+		return
+	}
+
+	stream := newEventStream(w)
+	out, err := s.content.Localize(ctx, brief, source, req.From, req.To, max, stream.progress)
+	if stream.failed(r, err, "content localisation failed") {
+		return
+	}
+	stream.send("result", localizeResult{
+		Variants: out.Variants, Lengths: out.Lengths,
+		Limits: contentLimits, Variables: max, Attempts: out.Attempts,
+	})
+}
+
+// contentBrief trims and bounds the brief; on failure it writes the error.
+func contentBrief(w http.ResponseWriter, raw string) (string, bool) {
+	brief := strings.TrimSpace(raw)
+	switch n := utf8.RuneCountInString(brief); {
+	case n == 0:
+		writeError(w, http.StatusBadRequest, "invalid_request", "brief boş olamaz", nil)
+		return "", false
+	case n > content.MaxBriefRunes:
+		writeError(w, http.StatusBadRequest, "invalid_request", "brief en fazla 2000 karakter olabilir", nil)
+		return "", false
+	}
+	return brief, true
+}
+
+func (s *Server) maxLengths(ctx context.Context, w http.ResponseWriter) (content.VarLengths, bool) {
+	max, err := s.varLengths.MaxLengths(ctx)
+	if err != nil {
+		slog.Error("variable lengths", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Değişken uzunlukları hesaplanamadı", nil)
+		return nil, false
+	}
+	return max, true
 }
 
 // eventStream writes server-sent events and flushes after each one.
@@ -138,4 +228,41 @@ func (s *eventStream) send(event string, payload any) {
 		return
 	}
 	_ = s.rc.Flush()
+}
+
+// progress forwards a generator's progress events to the client.
+func (s *eventStream) progress(e content.Event) {
+	switch e.Kind {
+	case content.EventAttempt:
+		s.send("attempt", map[string]any{"attempt": e.Attempt})
+	case content.EventDelta:
+		delta := map[string]any{"field": e.Field, "text": e.Text}
+		if e.Language != "" {
+			delta["language"] = e.Language
+		}
+		s.send("delta", delta)
+	case content.EventRejected:
+		s.send("rejected", map[string]any{"attempt": e.Attempt, "errors": e.Errors})
+	}
+}
+
+// failed reports a generation error to the client as the final "error" event
+// and says whether there was one.
+func (s *eventStream) failed(r *http.Request, err error, logMessage string) bool {
+	var invalid *content.InvalidOutputError
+	switch {
+	case err == nil:
+		return false
+	case errors.As(err, &invalid):
+		s.send("error", map[string]any{
+			"code": "llm_output_invalid", "message": "Model limitlere uyan bir içerik üretemedi",
+			"details": invalid.Errors, "attempts": invalid.Attempts,
+		})
+	case r.Context().Err() != nil:
+		// the client went away; nobody to tell
+	default:
+		slog.Error(logMessage, "err", err)
+		s.send("error", map[string]any{"code": "llm_unavailable", "message": "Model şu anda yanıt veremiyor"})
+	}
+	return true
 }

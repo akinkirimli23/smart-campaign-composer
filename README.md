@@ -63,6 +63,10 @@ docker compose --profile test run --rm --build web-test
    Gönderim hemen yapılabilir ya da ileri bir tarihe zamanlanabilir; brief'te bir zaman
    geçiyorsa ("cuma sabahı gönder") alan onunla dolu gelir ve değiştirilebilir. Onay sunucuda
    yeniden doğrular.
+   Kitle birden fazla dil okuyorsa (seed'de Türkçe ve İngilizce) metin önce en çok kişinin
+   okuduğu dilde yazılır. "İngilizce metnini yaz" diğer dilleri, o anki metinden, tek istekte
+   ekler; diller sekmelerde ayrı ayrı düzenlenir ve her alıcı yalnızca kendi dilindeki metni
+   alır. Yazdırılmayan dilin okurları ana dildeki metni alır; ekran kaç kişi olduğunu söyler.
 4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
    sayıları canlı güncellenir. Zamanlanmış kampanya başlayacağı saati gösterir; kampanya
    bitene kadar iptal edilebilir.
@@ -74,8 +78,9 @@ sayfa yenilense de aynı yerde kalır.
 
 Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
 tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır; içerik için brief'teki
-indirim oranını sabit bir metne yerleştirir. Çıktısı gerçek modelinkiyle aynı doğrulamadan
-geçer. Brief'e `#demo-retry` eklenirse içerik adımında ilk deneme bilerek reddedilir ve yeniden
+indirim oranını sabit bir metne yerleştirir (Türkçe ya da İngilizce). Çeviri yapmaz: diğer dil
+istendiğinde o dildeki sabit metnini yazar, ana metne elle yapılan değişikliği taşımaz. Çıktısı
+gerçek modelinkiyle aynı doğrulamadan geçer. Brief'e `#demo-retry` eklenirse içerik adımında ilk deneme bilerek reddedilir ve yeniden
 deneme ekranda görülür.
 
 | Adres | Ne |
@@ -91,13 +96,14 @@ deneme ekranda görülür.
 |---|---|
 | `GET /healthz` | Liveness: süreç ayakta mı |
 | `GET /readyz` | Readiness: veritabanına ulaşılabiliyor mu (değilse 503) |
-| `POST /api/segments/generate` | `{"brief": "...", "time_zone"?: "Europe/Istanbul"}` → LLM'in önerdiği kural, kuraldan türetilen açıklama, LLM'in yorumları ve kanal bazlı kitle sayısı. Format brief'i ifade edemiyorsa `status: "unsupported"`. Brief'te gönderim zamanı varsa `schedule` (öneri) |
+| `POST /api/segments/generate` | `{"brief": "...", "time_zone"?: "Europe/Istanbul"}` → LLM'in önerdiği kural, kuraldan türetilen açıklama, LLM'in yorumları, kanal bazlı kitle sayısı ve ulaşılabilen kitlenin okuduğu diller (`languages`, en kalabalık dil ilk sırada). Format brief'i ifade edemiyorsa `status: "unsupported"`. Brief'te gönderim zamanı varsa `schedule` (öneri) |
 | `POST /api/segments/count` | `{"rule": {...}}` → elle düzenlenmiş bir kuralı aynı doğrulayıcıdan geçirir ve yeniden sayar; geçersizse 422 ve `{path, message}` listesi |
 | `GET /api/segments/options` | Kural düzenleyicisi için izinli değerler (şehirler, kategoriler, olaylar, metrikler) ve sınırlar; doğrulayıcının kendi tablolarından |
-| `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
-| `POST /api/campaigns` | Onay: `{"brief", "rule", "content", "send_at"?}`. `send_at` (RFC 3339, en fazla 30 gün sonrası) verilirse gönderim o saatte başlar. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
+| `POST /api/content/generate` | `{"brief": "...", "language"?: "tr"}` → SMS ve email içeriği, SSE akışı olarak. `language` yazılacak dildir (kitlenin ana dili). Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
+| `POST /api/content/localize` | `{"brief", "content", "from": "tr", "to": ["en"]}` → `content` içindeki (pazarlamacının son haline getirdiği) metni `to` dillerine uyarlar. Kaç dil istenirse istensin tek model çağrısı. Aynı SSE olayları; `delta` dilini de taşır, `result` dil başına doğrulanmış içerik döner (`variants`) |
+| `POST /api/campaigns` | Onay: `{"brief", "rule", "content", "send_at"?}`. `content` tek bir set ya da dil başına bir settir: `{"default": "tr", "variants": {"tr": {...}, "en": {...}}}`; her alıcı kendi dilindeki seti, yoksa `default` dildekini alır. `send_at` (RFC 3339, en fazla 30 gün sonrası) verilirse gönderim o saatte başlar. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
 | `GET /api/campaigns` | Son 100 kampanya, en yenisi üstte: brief, başlangıç zamanı, durum (`scheduled`, `sending`, `done`, `cancelled`) ve mesaj sayıları |
-| `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at` ve `done` |
+| `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at`, metin dilleri (`languages`) ve `done` |
 | `POST /api/campaigns/{id}/cancel` | Henüz gönderilmemiş mesajları iptal eder; gönderilenler kalır. Tekrarlanabilir |
 | `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
 | `GET /metrics` | Prometheus metin formatı: `scc_campaigns`, `scc_messages{channel,status}`, `scc_provider_requests_total{channel,outcome}` |
@@ -122,6 +128,15 @@ curl -sN localhost:8080/api/content/generate -H 'Content-Type: application/json'
 Brief'teki `#demo-retry` yalnızca mock LLM'e özeldir: ilk yanıtı bilerek geçersiz üretir
 (bilinmeyen değişken), böylece "reddet, hatayı geri ver, yeniden dene" döngüsü API key olmadan
 izlenebilir.
+
+Diğer dilleri yazdırmak için (kaynak metin bir önceki akışın `result` olayındaki `content`):
+
+```bash
+curl -sN localhost:8080/api/content/localize -H 'Content-Type: application/json' \
+  -d '{"brief":"Sepetine ürün ekleyip almayanlara %30 indirim hatırlatması gönder.",
+       "content":{"sms":"Merhaba {{first_name}}, %30 indirim seni bekliyor!","email":{"subject":"%30 indirim","body":"Merhaba {{first_name}}"}},
+       "from":"tr","to":["en"]}'
+```
 
 Limitler değişkenler doldurulduktan sonra ölçülür: `{{first_name}}`, `{{last_name}}` ve
 `{{city}}` veritabanındaki en uzun değerleriyle sayılır (DECISIONS 19).
@@ -198,7 +213,7 @@ backend/
   internal/campaign onaylanan kampanya ve kuyruğa alma
   internal/delivery worker: kiralama, hız limiti, retry, provider istemcisi
   internal/mockprovider sahte SMS / email provider (cmd/mockprovider)
-  internal/content içerik şablonları: doğrulama, limit ölçümü, akışlı üretim
+  internal/content içerik şablonları: doğrulama, limit ölçümü, akışlı üretim, diğer dillere uyarlama
   internal/validation ortak doğrulama hatası biçimi ({path, message} listesi)
   internal/metrics sayaçlar ve Prometheus metin çıktısı
   internal/llm     LLM arayüzü; llm/anthropicllm Claude istemcisi, llm/mockllm key yokken kullanılan mock
@@ -219,7 +234,7 @@ ai-sessions/       Claude oturum export'ları
 - **users**: ad, soyad, email, telefon, şehir, dil (`tr` / `en`), cinsiyet, doğum yılı,
   kayıt tarihi, kanal izinleri (`email_opt_in`, `sms_opt_in`).
 - **events**: `cart_add` ve `purchase` olayları; kategori, tutar, zaman.
-- **campaigns**: brief, onaylanan kural ve içerik (JSON), kitlenin hesaplandığı an, gönderimin
+- **campaigns**: brief, onaylanan kural ve içerik (JSON; içerik dil başına bir set), kitlenin hesaplandığı an, gönderimin
   başlayacağı an, iptal edildiyse iptal anı.
 - **messages**: kampanya × kullanıcı × kanal; durum (`pending`, `sending`, `sent`, `failed`,
   `skipped`, `cancelled`), deneme sayısı, bir sonraki deneme zamanı. `UNIQUE (campaign_id, user_id, channel)`.
@@ -233,8 +248,8 @@ zamanları seed'in yüklendiği ana göredir.
 |---|---|
 | Kural doğrulama, SQL derleme, enjeksiyon denemeleri | `backend/internal/segment` |
 | Derlenen SQL'in Go'da yazılmış referans hesapla karşılaştırılması; 381 / 222 / 254 / 58 | `backend/internal/audience` |
-| İçerik limitleri, şablonlar, akış çözücü, yeniden deneme (bozuk JSON, uzun SMS, bilinmeyen değişken) | `backend/internal/content` |
-| Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After`; zamanı gelmeden gönderilmeme, iptalden sonra hiçbir şeyin gitmemesi | `backend/internal/delivery` |
+| İçerik limitleri, şablonlar, akış çözücü, yeniden deneme (bozuk JSON, uzun SMS, bilinmeyen değişken); diğer dillerin tek çağrıda yazılması, dil başına doğrulama | `backend/internal/content` |
+| Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After`; zamanı gelmeden gönderilmeme, iptalden sonra hiçbir şeyin gitmemesi; her alıcının kendi dilindeki metni alması | `backend/internal/delivery` |
 | Claude istemcisi (yerel bir SSE sunucusuna karşı, key olmadan) | `backend/internal/llm/anthropicllm` |
 | HTTP uçları, SSE akışları, onayda yeniden doğrulama | `backend/internal/httpapi` |
 | Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, kural düzenleyicisinin mantığı, akışın durumu | `frontend/src/**/*.test.ts` |
@@ -247,6 +262,9 @@ kurulumun kendisi.
 
 - Brief'ten gönderim zamanı okuma yalnızca mock LLM ile denendi; mock birkaç sabit kalıbı
   tanır (DECISIONS 28).
+- Dile göre içerik yalnızca mock LLM ile denendi; mock çeviri yapmaz, her dil için sabit
+  metnini yazar. Gerçek modelin ana metne ne kadar sadık kaldığı ve diğer dilde limitlere ne
+  sıklıkla takıldığı ölçülmedi (DECISIONS 30).
 - **Gerçek Claude ile uçtan uca deneme yapılmadı.** Geliştirme boyunca mock LLM kullanıldı.
   İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
   gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
@@ -281,7 +299,7 @@ Eksik koşullu bir kural daha geniş bir kitle demek olurdu.
 |---|---|
 | CI pipeline | Yapıldı (GitHub Actions: backend, frontend, `docker compose up`) |
 | Zamanlanmış gönderim | Yapıldı; iptal edilebilir (DECISIONS 27). Brief'teki zaman öneri olarak okunur (DECISIONS 28) |
-| Kullanıcının diline göre içerik | Yapılmadı (DECISIONS 17) |
+| Kullanıcının diline göre içerik | Yapıldı (DECISIONS 30): her alıcı kendi dilindeki metni alır. Ana dil için bir model çağrısı, kitledeki diğer dillerin tamamı için bir çağrı |
 | A/B varyantları | Yapılmadı. A/B'nin anlamı kazananı seçmektir; bunun için açılma ya da tıklama verisi gerekir ve mock provider'da yok. Uydurma veriyle yapmak yerine dışarıda bırakıldı |
 
 ## Sonraya bırakılanlar
@@ -297,4 +315,5 @@ Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
 | Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
 | Zamanlanmış kampanyayı düzenleme, alıcının yerel saatinde gönderim | Zamanlanan kampanya yalnızca iptal edilebilir; saat pazarlamacının saat dilimindedir (DECISIONS 27) |
 | Gönderilen metnin saklanması | Şablon ve kullanıcıdan yeniden üretilebilir; satırda tutulmuyor (DECISIONS 22) |
-| Kullanıcının diline göre içerik (bonus) | Kampanya başına tek içerik seti var; `en` kullanıcılar da aynı metni alır (DECISIONS 17) |
+| Türkçe ve İngilizce dışındaki diller | Dil kümesi kapalı ve seed'deki iki dille sınırlı; yeni dil `content.Languages` tablosuna ve `users.language` kısıtına eklenir. Çok dilde tek çağrı yerine dil grupları gerekir (DECISIONS 30) |
+| Panoda dil bazında gönderim sayıları | Pano yalnızca kampanyanın hangi dillerde metni olduğunu gösterir |

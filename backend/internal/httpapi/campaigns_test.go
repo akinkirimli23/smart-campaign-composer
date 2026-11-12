@@ -20,7 +20,7 @@ import (
 type fakeCampaigns struct {
 	created int
 	rule    segment.Rule
-	content content.Content
+	content content.Localized
 	asOf    time.Time
 	sendAt  time.Time
 	err     error
@@ -28,7 +28,7 @@ type fakeCampaigns struct {
 	cancelled int
 }
 
-func (f *fakeCampaigns) Create(_ context.Context, _ string, rule segment.Rule, c content.Content, asOf, sendAt time.Time) (campaign.Created, error) {
+func (f *fakeCampaigns) Create(_ context.Context, _ string, rule segment.Rule, c content.Localized, asOf, sendAt time.Time) (campaign.Created, error) {
 	if f.err != nil {
 		return campaign.Created{}, f.err
 	}
@@ -99,7 +99,8 @@ func TestCampaignCreate(t *testing.T) {
 		t.Errorf("queued = %v", body["queued"])
 	}
 	if store.created != 1 || store.rule.Conditions[0].Values[0] != "İstanbul" ||
-		store.content.SMS != "Merhaba {{first_name}}, %30 indirim!" || !store.asOf.Equal(fixedNow) {
+		store.content.Default != "tr" || len(store.content.Variants) != 1 ||
+		store.content.For("tr").SMS != "Merhaba {{first_name}}, %30 indirim!" || !store.asOf.Equal(fixedNow) {
 		t.Errorf("store got rule %+v, content %+v, asOf %v", store.rule, store.content, store.asOf)
 	}
 }
@@ -119,6 +120,9 @@ func TestCampaignCreateRevalidates(t *testing.T) {
 		{"extra content field", approve(okRule, `{"sms":"a","email":{"subject":"s","body":"b"},"push":"x"}`), "content_invalid", "push", "bilinmeyen alan", 422},
 		{"city outside the set", approve(`{"match":"all","conditions":[{"type":"attribute","field":"city","op":"in","values":["Atlantis"]}]}`, okContent), "rule_invalid", "conditions[0].values[0]", "", 422},
 		{"sql in the rule", approve(`{"match":"all","conditions":[{"type":"attribute","field":"city; DROP TABLE users","op":"in","values":["İstanbul"]}]}`, okContent), "rule_invalid", "conditions[0].field", "", 422},
+		{"a language over the limit", approve(okRule, `{"default":"tr","variants":{"tr":`+okContent+`,"en":`+longSMS+`}}`), "content_invalid", "variants.en.sms", "161 karakter, limit 160", 422},
+		{"a language outside the set", approve(okRule, `{"default":"tr","variants":{"tr":`+okContent+`,"de":`+okContent+`}}`), "content_invalid", "variants.de", "bilinmeyen bir dil", 422},
+		{"default language without text", approve(okRule, `{"default":"en","variants":{"tr":`+okContent+`}}`), "content_invalid", "default", "için metin yok", 422},
 		{"missing content", `{"brief":"b","rule":` + okRule + `}`, "invalid_request", "", "", 400},
 		{"missing rule", `{"brief":"b","content":` + okContent + `}`, "invalid_request", "", "", 400},
 	}
@@ -365,5 +369,22 @@ func TestCampaignList(t *testing.T) {
 	rec, body = campaignRequest(t, &fakeCampaigns{err: errors.New("db down")}, http.MethodGet, "/api/campaigns", "")
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "db down") {
 		t.Errorf("status %d, body %v", rec.Code, body)
+	}
+}
+
+// Approval accepts one set of texts per language; every set is validated and
+// all of them reach the store.
+func TestCampaignCreateLocalized(t *testing.T) {
+	store := &fakeCampaigns{}
+	english := `{"sms":"Hi {{first_name}}, 30% off!","email":{"subject":"An offer","body":"Hi"}}`
+	rec, body := campaignRequest(t, store, http.MethodPost, "/api/campaigns",
+		approve(okRule, `{"default":"tr","variants":{"tr":`+okContent+`,"en":`+english+`}}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d, body %v", rec.Code, body)
+	}
+	if store.content.Default != "tr" || len(store.content.Variants) != 2 ||
+		store.content.For("en").SMS != "Hi {{first_name}}, 30% off!" ||
+		store.content.For("tr").SMS != "Merhaba {{first_name}}, %30 indirim!" {
+		t.Errorf("store got %+v", store.content)
 	}
 }

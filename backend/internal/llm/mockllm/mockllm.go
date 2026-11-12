@@ -38,7 +38,21 @@ func (Client) Complete(_ context.Context, req llm.Request) (llm.Response, error)
 	case content.TaskGenerate:
 		brief := content.BriefFromRequest(req)
 		firstAttempt := len(req.Messages) == 1
-		out, err := json.Marshal(contentResult(brief, firstAttempt && strings.Contains(brief, DemoRetryMarker)))
+		out, err := json.Marshal(contentResult(brief, content.LanguageFromRequest(req),
+			firstAttempt && strings.Contains(brief, DemoRetryMarker)))
+		return llm.Response{Text: string(out)}, err
+	case content.TaskLocalize:
+		// The mock does not translate: it writes its fixed copy for the brief
+		// again, in each language asked for. Edits the marketer made to the
+		// source text are therefore not carried over, as a real model would.
+		brief := content.BriefFromRequest(req)
+		to, _ := content.LocalizeFromRequest(req)
+		broken := len(req.Messages) == 1 && strings.Contains(brief, DemoRetryMarker)
+		variants := map[string]content.Content{}
+		for i, language := range to {
+			variants[language] = contentResult(brief, language, broken && i == 0)
+		}
+		out, err := json.Marshal(variants)
 		return llm.Response{Text: string(out)}, err
 	case segment.TaskGenerate:
 		clock, _ := segment.ClockFromRequest(firstMessage(req))
@@ -75,8 +89,12 @@ func (c Client) Stream(ctx context.Context, req llm.Request, onText func(delta s
 var discountRe = regexp.MustCompile(`%\s?(\d{1,2})|(\d{1,2})\s?%`)
 
 // contentResult writes fixed campaign copy around the discount found in the
-// brief. broken returns copy the validator must reject.
-func contentResult(brief string, broken bool) content.Content {
+// brief, in Turkish unless language is "en". broken returns copy the
+// validator must reject.
+func contentResult(brief, language string, broken bool) content.Content {
+	if language == "en" {
+		return englishContent(brief, broken)
+	}
 	offer := "özel fırsatlar"
 	if m := discountRe.FindStringSubmatch(brief); m != nil {
 		offer = "%" + m[1] + m[2] + " indirim"
@@ -95,6 +113,30 @@ func contentResult(brief string, broken bool) content.Content {
 	}
 	if broken {
 		c.SMS = fmt.Sprintf("Merhaba {{first_name}} {{surname}}, %s seni bekliyor! Sana özel %s fırsatını kaçırmamak için hemen uygulamamızı aç, sepetine git ve alışverişini bugün tamamla. Stoklar tükenmeden acele et!", about, offer)
+	}
+	return c
+}
+
+func englishContent(brief string, broken bool) content.Content {
+	offer := "special offers"
+	if m := discountRe.FindStringSubmatch(brief); m != nil {
+		offer = m[1] + m[2] + "% off"
+	}
+	about := "The products you picked"
+	if strings.Contains(segment.Fold(brief), "sepet") {
+		about = "The items in your cart"
+	}
+	lower := strings.ToLower(about[:1]) + about[1:]
+	c := content.Content{
+		SMS: fmt.Sprintf("Hi {{first_name}}, %s are waiting for you! Open the app now to get %s.", lower, offer),
+		Email: content.Email{
+			Subject: fmt.Sprintf("{{first_name}}, %s are waiting: %s", lower, offer),
+			Body: fmt.Sprintf("Hi {{first_name}},\n\n%s are still waiting for you. Complete your order with %s, just for you.\n\nOpen the app so you don't miss out.\n\nHappy shopping!",
+				about, offer),
+		},
+	}
+	if broken {
+		c.SMS = fmt.Sprintf("Hi {{first_name}} {{surname}}, %s are waiting for you! Do not miss your %s: open our app right now, go to your cart and complete your order today. Hurry up before the stock runs out!", lower, offer)
 	}
 	return c
 }

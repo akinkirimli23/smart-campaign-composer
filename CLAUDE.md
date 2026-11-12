@@ -159,8 +159,8 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (29 kayıt) |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 12 Kasım akşamı güncellendi (kampanyalar ekranına kadar); sonrasında çalışılırsa yeniden alınmalı |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (30 kayıt) |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 12 Kasım akşamı güncellendi (kampanyalar ekranına kadar); dile göre içerik bonusu ondan sonra yapıldı, **export yeniden alınmalı** |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
@@ -169,7 +169,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 |---|---|
 | Zamanlanmış gönderim | ✅ iptal ile birlikte (DECISIONS 27) |
 | A/B varyantları | yapılmadı; nedeni README "Bonuslar"da |
-| Kullanıcının diline göre içerik | yapılmadı (DECISIONS 17); zaman kalırsa aşama 5'ten sonra |
+| Kullanıcının diline göre içerik | ✅ ana dil için bir çağrı, diğer dillerin tamamı için bir çağrı (DECISIONS 30) |
 | CI pipeline | 6 ✅ |
 
 ## Segment kuralı (aşama 2, kesinleşti)
@@ -215,7 +215,21 @@ Kararlar DECISIONS 16–19'da. Kısaca:
 - `POST /api/content/generate` SSE döner: `attempt`, `delta`, `rejected`, `result`, `error`.
   Yalnızca `result` doğrulanmış içerik taşır; `delta` önizlemedir.
 - Mock LLM brief'te `#demo-retry` görürse ilk yanıtı bilerek geçersiz üretir (demo için).
-- Aşama 4'te `messages` tablosuna `language` kolonu eklenmeyecek (DECISIONS 17).
+- `messages` tablosunda `language` kolonu yok (DECISIONS 17, 30): gönderilen dil kampanya ve
+  kullanıcıdan türetilir.
+- **Dile göre içerik (DECISIONS 30).** Kampanyanın içeriği `content.Localized`
+  (`default` + dil başına `Content`); `ParseLocalized` tek seti de kabul eder (varsayılan dil
+  `tr`). Diller kapalı küme: `content.Languages`, `users.language` kısıtıyla aynı olmalı (bir
+  test karşılaştırır).
+  - Çağrı sayısı sabit, iki: `Generator.GenerateIn(…, language, …)` ana dili yazar (kitlede en
+    çok ulaşılabilen kişinin dili, `audience.Counter.Languages`'in ilk satırı);
+    `Generator.Localize(…, source, from, to, …)` kalan dillerin **hepsini tek çağrıda**, ana
+    metinden yazar. Dil başına çağrı yapan bir yol ekleme.
+  - `POST /api/content/localize` SSE döner; `delta` dilini taşır, `result` `variants` döner.
+    Hata yolları: model yanıtında `en.sms`, onayda `variants.en.sms`.
+  - Worker `claim` içinde `u.language` okur ve `Localized.For(dil)` ile seti seçer; set yoksa
+    varsayılan dil. Yeni bir gönderim yolu eklersen seti aynı şekilde seç.
+  - Mock LLM çevirmez; `content.localize` görevinde her dil için sabit metnini yazar.
 
 ## Gönderim (aşama 4, kesinleşti)
 
@@ -260,6 +274,11 @@ Kararlar DECISIONS 23–24'te. Kısaca:
   26). Seçenekler `GET /api/segments/options`'tan gelir; arayüze değer listesi gömme. Geçerlilik
   kararı backend'de: taslak `applyRule` ile gider, hatalar satırın altında gösterilir. JSON
   görünümü yalnızca `?debug` ile.
+- Diller (DECISIONS 30): `store.languages` kitle yanıtından gelir (etiketleriyle; arayüze dil
+  listesi gömme). `store.content` ana dildeki metin, `store.variants` diğer diller,
+  `store.activeLanguage` düzenlenen dil; `store.localize()` diğer dilleri tek istekte yazdırır.
+  `contentValid` görünen dile değil bütün dillere bakar. `approve` her zaman
+  `{default, variants}` gönderir. Ana metin sonradan değişirse `translationsStale`.
 - Brief'ten okunan gönderim zamanı (`segment.schedule`) store'da `scheduleSuggestion` olur ve
   "Zamanla" alanını önceden doldurur; pazarlamacı değiştirebilir. Öneri tek başına hiçbir şeyi
   zamanlamaz.
@@ -290,8 +309,8 @@ Bitti ölçütlerinin durumu:
 | Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ Yapılmadı; README "Bilinen eksikler"de yazıyor. Key gelirse denenir ve README güncellenir |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
 
-Bütün ölçütler sağlandı; aşama 6 tamam. Teslimden önce bu oturumda çalışmaya devam edilirse
-üçüncü export yeniden alınır.
+Bütün ölçütler sağlandı; aşama 6 tamam. 12 Kasım'da export'tan sonra dile göre içerik bonusu
+eklendi (DECISIONS 30); teslimden önce üçüncü export yeniden alınmalı.
 
 - CI üç iş çalıştırır: backend (gofmt, vet, `-race` ile testler, Postgres servisine karşı),
   frontend (`npm ci`, test, build), compose (README'deki kurulum + örnek brief'in kitle sayısı).

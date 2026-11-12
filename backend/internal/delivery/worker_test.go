@@ -44,7 +44,7 @@ func setup(t *testing.T, users int, rule segment.Rule) (*pgxpool.Pool, campaign.
 	if _, err := seed.Load(ctx, pool, users, 7, refNow); err != nil {
 		t.Fatal(err)
 	}
-	created, err := campaign.Store{DB: pool}.Create(ctx, "test", rule, testContent, refNow, time.Time{})
+	created, err := campaign.Store{DB: pool}.Create(ctx, "test", rule, content.Single("tr", testContent), refNow, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func scheduledCampaign(t *testing.T) (*pgxpool.Pool, campaign.Created, time.Time
 		t.Fatal(err)
 	}
 	sendAt := refNow.Add(2 * time.Hour)
-	created, err := campaign.Store{DB: pool}.Create(ctx, "test", cityRule("İstanbul"), testContent, refNow, sendAt)
+	created, err := campaign.Store{DB: pool}.Create(ctx, "test", cityRule("İstanbul"), content.Single("tr", testContent), refNow, sendAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -668,5 +668,114 @@ func TestCancelledCampaignIsNotSentAfterLeaseExpiry(t *testing.T) {
 	}
 	if calls, _ := provider.snapshot(); len(calls) != 0 {
 		t.Errorf("%d messages of a cancelled campaign were sent", len(calls))
+	}
+}
+
+var englishContent = content.Content{
+	SMS:   "Hi {{first_name}}, 30% off is waiting for you!",
+	Email: content.Email{Subject: "{{first_name}}, an offer for {{city}}", Body: "Hi {{first_name}} {{last_name}},\n\nHappy shopping!"},
+}
+
+// languageCampaign creates a campaign for an audience that reads both
+// languages and returns how many of its recipients read each.
+func languageCampaign(t *testing.T, texts content.Localized) (*pgxpool.Pool, campaign.Created, map[string]int) {
+	t.Helper()
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 400, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	created, err := campaign.Store{DB: pool}.Create(ctx, "test", cityRule("İstanbul", "Ankara", "İzmir"), texts, refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readers := map[string]int{}
+	rows, err := pool.Query(ctx, `SELECT u.language, count(DISTINCT u.id) FROM messages m JOIN users u ON u.id = m.user_id
+WHERE m.campaign_id = $1 GROUP BY u.language`, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var language string
+		var n int
+		if err := rows.Scan(&language, &n); err != nil {
+			t.Fatal(err)
+		}
+		readers[language] = n
+	}
+	if readers["tr"] == 0 || readers["en"] == 0 {
+		t.Fatalf("the audience must read both languages: %v", readers)
+	}
+	return pool, created, readers
+}
+
+// recipientLanguage looks up whom a sent message went to.
+func recipientLanguage(t *testing.T, pool *pgxpool.Pool, m delivery.Outbound) (language, firstName string) {
+	t.Helper()
+	column := "phone"
+	if m.Channel == "email" {
+		column = "email"
+	}
+	err := pool.QueryRow(context.Background(), `SELECT language, first_name FROM users WHERE `+column+` = $1`, m.To).Scan(&language, &firstName)
+	if err != nil {
+		t.Fatalf("recipient %q: %v", m.To, err)
+	}
+	return language, firstName
+}
+
+// Each recipient gets the campaign in their own language, on both channels,
+// and only in that language (DECISIONS 30).
+func TestEachRecipientGetsTheirOwnLanguage(t *testing.T) {
+	pool, created, _ := languageCampaign(t, content.Localized{Default: "tr",
+		Variants: map[string]content.Content{"tr": testContent, "en": englishContent}})
+	provider := &scriptedProvider{}
+	st := runUntilDone(t, pool, created.ID, 30*time.Second, worker(pool, provider))
+	if st.Channels["sms"].Sent != created.Queued["sms"] || st.Channels["email"].Sent != created.Queued["email"] {
+		t.Fatalf("status = %+v, queued %+v", st.Channels, created.Queued)
+	}
+
+	calls, _ := provider.snapshot()
+	sent := map[string]int{}
+	for _, c := range calls {
+		language, first := recipientLanguage(t, pool, c)
+		sent[language+"/"+c.Channel]++
+		greeting := map[string]string{"tr": "Merhaba " + first, "en": "Hi " + first}[language]
+		if !strings.HasPrefix(c.Body, greeting) {
+			t.Errorf("%s reader on %s got %q", language, c.Channel, c.Body)
+		}
+		if c.Channel == "email" {
+			inEnglish := strings.Contains(c.Subject, "an offer for")
+			if inEnglish != (language == "en") {
+				t.Errorf("%s reader got the subject %q", language, c.Subject)
+			}
+		}
+	}
+	if len(calls) != created.Queued["sms"]+created.Queued["email"] || sent["en/sms"]+sent["en/email"] == 0 || sent["tr/sms"]+sent["tr/email"] == 0 {
+		t.Errorf("%d calls, per language %v, queued %+v", len(calls), sent, created.Queued)
+	}
+}
+
+// A campaign written in one language still reaches everyone in its
+// audience: readers of another language get the default text rather than
+// nothing.
+func TestRecipientWithoutTheirLanguageGetsTheDefault(t *testing.T) {
+	pool, created, readers := languageCampaign(t, content.Single("tr", testContent))
+	provider := &scriptedProvider{}
+	runUntilDone(t, pool, created.ID, 30*time.Second, worker(pool, provider))
+
+	calls, _ := provider.snapshot()
+	english := 0
+	for _, c := range calls {
+		language, first := recipientLanguage(t, pool, c)
+		if language == "en" {
+			english++
+		}
+		if !strings.HasPrefix(c.Body, "Merhaba "+first) {
+			t.Errorf("%s reader got %q", language, c.Body)
+		}
+	}
+	if english == 0 || len(calls) != created.Queued["sms"]+created.Queued["email"] {
+		t.Errorf("%d calls (%d to English readers), queued %+v, readers %v", len(calls), english, created.Queued, readers)
 	}
 }

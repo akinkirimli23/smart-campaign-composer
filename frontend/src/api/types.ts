@@ -95,12 +95,22 @@ export interface Assumption {
   interpretation: string
 }
 
+/** How many reachable people in the audience read one language. */
+export interface AudienceLanguage {
+  language: string
+  /** The language's name, for display. */
+  label: string
+  reachable: number
+}
+
 export interface SegmentResponse {
   status: 'ok' | 'unsupported'
   rule?: Rule
   description?: { summary: string; conditions: string[] }
   assumptions?: Assumption[]
   audience?: Audience
+  /** Languages of the reachable audience, largest first. */
+  languages?: AudienceLanguage[]
   as_of?: string
   attempts?: number
   unsupported?: { reason: string; phrases: string[] }
@@ -113,6 +123,15 @@ export interface Content {
   email: { subject: string; body: string }
 }
 
+/**
+ * What a campaign sends: one set of texts per language. A recipient gets the
+ * set of their own language, or the default one when there is none for them.
+ */
+export interface LocalizedContent {
+  default: string
+  variants: Record<string, Content>
+}
+
 /** Worst-case lengths of the limited fields, as measured by the backend. */
 export interface Lengths {
   sms: number
@@ -121,6 +140,8 @@ export interface Lengths {
 
 /** Payload of the content stream's final "result" event. */
 export interface ContentResult {
+  /** The language the texts were written in, when one was asked for. */
+  language?: string
   content: Content
   lengths: Lengths
   limits: Lengths
@@ -136,6 +157,23 @@ export type ContentEvent =
   | { event: 'delta'; data: { field: ContentField; text: string } }
   | { event: 'rejected'; data: { attempt: number; errors: FieldError[] } }
   | { event: 'result'; data: ContentResult }
+  | { event: 'error'; data: { code: string; message: string; details?: FieldError[] } }
+
+/** Payload of the localisation stream's final "result" event. */
+export interface LocalizeResult {
+  variants: Record<string, Content>
+  lengths: Record<string, Lengths>
+  limits: Lengths
+  variables: Record<string, number>
+  attempts: number
+}
+
+/** Like ContentEvent, for several languages at once: a delta names its language. */
+export type LocalizeEvent =
+  | { event: 'attempt'; data: { attempt: number } }
+  | { event: 'delta'; data: { language: string; field: ContentField; text: string } }
+  | { event: 'rejected'; data: { attempt: number; errors: FieldError[] } }
+  | { event: 'result'; data: LocalizeResult }
   | { event: 'error'; data: { code: string; message: string; details?: FieldError[] } }
 
 export type Channel = 'sms' | 'email'
@@ -171,6 +209,8 @@ export interface CampaignStatus {
   /** When delivery starts (or started), RFC 3339. */
   send_at: string
   cancelled_at?: string
+  /** Languages the campaign has texts in, the default first. */
+  languages?: string[]
   channels: Record<Channel, ChannelCounts>
   done: boolean
 }
