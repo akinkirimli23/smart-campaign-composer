@@ -166,6 +166,11 @@ function approveErrorsFor(path: string): string[] {
           :aria-invalid="store.scheduleProblem !== null && store.scheduledFor !== ''"
         />
         <p v-if="store.scheduleProblem && store.scheduledFor !== ''" class="field-error">{{ store.scheduleProblem }}</p>
+        <!-- Shown while the field still holds what was read from the brief. -->
+        <p v-if="store.scheduleSuggestion && store.scheduledFor === store.scheduleSuggestion.value" class="assumption suggested">
+          <span class="tag">Brief'ten</span> “{{ store.scheduleSuggestion.phrase }}” → {{ store.scheduleSuggestion.interpretation }}
+          Değiştirebilirsin.
+        </p>
         <p class="hint tight">
           Alıcılar şimdi belirlenir; o saate kadar izni kalkan olursa atlanır. Gönderim başlayana kadar iptal edebilirsin.
         </p>

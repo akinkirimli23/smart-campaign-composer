@@ -359,3 +359,67 @@ describe('scheduling and cancelling', () => {
     expect(store.step).toBe('dashboard')
   })
 })
+
+describe('send time read from the brief', () => {
+  const sendAt = new Date(Date.now() + 2 * 24 * 3600 * 1000)
+  sendAt.setSeconds(0, 0)
+  const suggested: SegmentResponse = {
+    ...segment,
+    schedule: { send_at: sendAt.toISOString(), phrase: 'cuma sabahı', interpretation: 'Cuma 09:00 olarak yorumlandı.' },
+  }
+
+  it('pre-fills the schedule and leaves the decision to the marketer', async () => {
+    const store = useCampaignStore()
+    store.brief = 'brief'
+    fake.generateSegment.mockResolvedValue(suggested)
+    await store.generateSegment()
+
+    expect(store.sendMode).toBe('later')
+    expect(store.scheduleSuggestion?.phrase).toBe('cuma sabahı')
+    expect(new Date(store.scheduledFor).getTime()).toBe(sendAt.getTime())
+    expect(store.scheduleProblem).toBeNull()
+    expect(fake.createCampaign).not.toHaveBeenCalled() // nothing is scheduled without approval
+
+    // Approving as suggested sends exactly that instant.
+    script({ event: 'attempt', data: { attempt: 1 } }, { event: 'result', data: result })
+    await store.generateContent()
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'later', queued: { sms: 1, email: 1 } })
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+    expect(fake.createCampaign.mock.calls[0]?.[3]).toBe(sendAt.toISOString())
+  })
+
+  it('can be overridden: choosing "now" sends at once', async () => {
+    const store = useCampaignStore()
+    fake.generateSegment.mockResolvedValue(suggested)
+    await store.generateSegment()
+    store.sendMode = 'now'
+    script({ event: 'attempt', data: { attempt: 1 } }, { event: 'result', data: result })
+    await store.generateContent()
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+    expect(fake.createCampaign.mock.calls[0]?.[3]).toBeUndefined()
+  })
+
+  it('a new brief without a send time goes back to "send now"', async () => {
+    const store = useCampaignStore()
+    fake.generateSegment.mockResolvedValue(suggested)
+    await store.generateSegment()
+    fake.generateSegment.mockResolvedValue(segment)
+    await store.generateSegment()
+    expect(store.sendMode).toBe('now')
+    expect(store.scheduledFor).toBe('')
+    expect(store.scheduleSuggestion).toBeNull()
+  })
+
+  it('editing the rule keeps the suggestion', async () => {
+    const store = useCampaignStore()
+    fake.generateSegment.mockResolvedValue(suggested)
+    await store.generateSegment()
+    fake.countSegment.mockResolvedValue(segment) // the recount carries no schedule
+    await store.applyRule({ match: 'all', conditions: [] })
+    expect(store.sendMode).toBe('later')
+    expect(store.scheduleSuggestion?.phrase).toBe('cuma sabahı')
+  })
+})

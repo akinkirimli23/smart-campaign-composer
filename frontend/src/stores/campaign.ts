@@ -2,6 +2,7 @@ import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api, ApiError } from '../api/client'
 import { measure } from '../lib/template'
+import { fromLocalInput, toLocalInput } from '../lib/time'
 import type {
   CampaignCreated,
   CampaignStatus,
@@ -63,6 +64,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     segmentError.value = null
     try {
       segment.value = await api.generateSegment(brief.value)
+      applyScheduleSuggestion(segment.value.schedule)
       step.value = 'audience'
     } catch (err) {
       segmentError.value = describe(err)
@@ -225,12 +227,27 @@ export const useCampaignStore = defineStore('campaign', () => {
   const sendMode = ref<'now' | 'later'>('now')
   const scheduledFor = ref('')
 
+  // A send time the model read in the brief. It only pre-fills the two
+  // fields above; the marketer still sees it, can change it, and approves.
+  const scheduleSuggestion = ref<{ value: string; phrase: string; interpretation: string } | null>(null)
+
+  function applyScheduleSuggestion(schedule: SegmentResponse['schedule']) {
+    const at = schedule ? new Date(schedule.send_at) : null
+    if (!schedule || !at || Number.isNaN(at.getTime())) {
+      // A new brief without a send time starts from "send now" again.
+      scheduleSuggestion.value = null
+      sendMode.value = 'now'
+      scheduledFor.value = ''
+      return
+    }
+    const value = toLocalInput(at)
+    scheduleSuggestion.value = { value, phrase: schedule.phrase, interpretation: schedule.interpretation }
+    sendMode.value = 'later'
+    scheduledFor.value = value
+  }
+
   /** The chosen start as an instant, or null when it is missing or not a date. */
-  const scheduledAt = computed<Date | null>(() => {
-    if (sendMode.value !== 'later' || scheduledFor.value === '') return null
-    const at = new Date(scheduledFor.value) // parsed in the marketer's time zone
-    return Number.isNaN(at.getTime()) ? null : at
-  })
+  const scheduledAt = computed<Date | null>(() => (sendMode.value === 'later' ? fromLocalInput(scheduledFor.value) : null))
 
   /** Why the schedule cannot be used, or null when it can. */
   const scheduleProblem = computed<string | null>(() => {
@@ -318,6 +335,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     approveError.value = null
     sendMode.value = 'now'
     scheduledFor.value = ''
+    scheduleSuggestion.value = null
     campaign.value = null
     status.value = null
     done.value = false
@@ -330,7 +348,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     ruleOptions, loadRuleOptions, applyRule,
     content, streaming, attempt, rejections, contentMeta, contentError, generateContent,
     measured, limits, contentValid,
-    sendMode, scheduledFor, scheduleProblem,
+    sendMode, scheduledFor, scheduleProblem, scheduleSuggestion,
     approving, approveError, campaign, status, done, statusError, approve,
     cancelling, cancelCampaign,
     reset,

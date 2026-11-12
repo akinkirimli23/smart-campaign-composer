@@ -17,7 +17,7 @@ import (
 
 // SegmentGenerator turns a brief into a validated rule (or "unsupported").
 type SegmentGenerator interface {
-	Generate(ctx context.Context, brief string) (segment.Outcome, error)
+	GenerateAt(ctx context.Context, brief string, clock segment.Clock) (segment.Outcome, error)
 }
 
 // AudienceCounter counts the users a rule selects as of a point in time.
@@ -39,12 +39,35 @@ type segmentResponse struct {
 	AsOf        *time.Time           `json:"as_of,omitempty"`
 	Attempts    int                  `json:"attempts,omitempty"`
 	Unsupported *segment.Unsupported `json:"unsupported,omitempty"`
+	// Schedule is a send time read from the brief: a suggestion the UI
+	// pre-fills, never something acted on by itself.
+	Schedule *segment.Schedule `json:"schedule,omitempty"`
 }
 
-// POST /api/segments/generate {"brief": "..."}
+// defaultTimeZone is used when the client sends none (or one we cannot load).
+const defaultTimeZone = "Europe/Istanbul"
+
+// clockIn returns "now" in the marketer's time zone, so the model can resolve
+// "tomorrow" and "Friday" the way the marketer means them.
+func (s *Server) clockIn(zone string) segment.Clock {
+	loc, err := time.LoadLocation(zone)
+	if err != nil || zone == "" || zone == "Local" {
+		loc, err = time.LoadLocation(defaultTimeZone)
+		if err != nil {
+			loc = time.UTC
+		}
+	}
+	return segment.Clock{Now: s.now().In(loc)}
+}
+
+// POST /api/segments/generate {"brief": "...", "time_zone": "Europe/Istanbul"}
+//
+// time_zone is the marketer's IANA zone (the browser knows it); it is only
+// used to read a send time out of the brief.
 func (s *Server) handleSegmentGenerate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Brief string `json:"brief"`
+		Brief    string `json:"brief"`
+		TimeZone string `json:"time_zone"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -62,7 +85,7 @@ func (s *Server) handleSegmentGenerate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), generateTimeout)
 	defer cancel()
 
-	out, err := s.segments.Generate(ctx, brief)
+	out, err := s.segments.GenerateAt(ctx, brief, s.clockIn(req.TimeZone))
 	var invalid *segment.InvalidOutputError
 	switch {
 	case errors.As(err, &invalid):
@@ -81,7 +104,7 @@ func (s *Server) handleSegmentGenerate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, segmentResponse{Status: "unsupported", Unsupported: out.Unsupported, Attempts: out.Attempts})
 		return
 	}
-	s.writeSegment(w, r, *out.Rule, out.Assumptions, out.Attempts)
+	s.writeSegment(w, r, *out.Rule, out.Assumptions, out.Schedule, out.Attempts)
 }
 
 // GET /api/segments/options: the allowed values and bounds of a rule, for the
@@ -110,10 +133,10 @@ func (s *Server) handleSegmentCount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "rule_invalid", "Kitle kuralı geçersiz", err)
 		return
 	}
-	s.writeSegment(w, r, rule, nil, 0)
+	s.writeSegment(w, r, rule, nil, nil, 0)
 }
 
-func (s *Server) writeSegment(w http.ResponseWriter, r *http.Request, rule segment.Rule, assumptions []segment.Assumption, attempts int) {
+func (s *Server) writeSegment(w http.ResponseWriter, r *http.Request, rule segment.Rule, assumptions []segment.Assumption, schedule *segment.Schedule, attempts int) {
 	asOf := s.now().UTC()
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -126,7 +149,7 @@ func (s *Server) writeSegment(w http.ResponseWriter, r *http.Request, rule segme
 	desc := segment.Describe(rule)
 	writeJSON(w, http.StatusOK, segmentResponse{
 		Status: "ok", Rule: &rule, Description: &desc, Assumptions: assumptions,
-		Audience: &counts, AsOf: &asOf, Attempts: attempts,
+		Audience: &counts, AsOf: &asOf, Attempts: attempts, Schedule: schedule,
 	})
 }
 

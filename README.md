@@ -60,8 +60,9 @@ docker compose --profile test run --rm --build web-test
    kaldırılır; uygulandığında kural yeniden doğrulanır ve sayılar güncellenir.
 3. **İçerik ve onay.** SMS ve email metinleri ekrana akar. Bittikten sonra düzenlenebilir;
    sayaçlar değişkenler doldurulmuş halini ölçer, yanda örnek bir alıcı için önizleme durur.
-   Gönderim hemen yapılabilir ya da ileri bir tarihe zamanlanabilir. Onay sunucuda yeniden
-   doğrular.
+   Gönderim hemen yapılabilir ya da ileri bir tarihe zamanlanabilir; brief'te bir zaman
+   geçiyorsa ("cuma sabahı gönder") alan onunla dolu gelir ve değiştirilebilir. Onay sunucuda
+   yeniden doğrular.
 4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
    sayıları canlı güncellenir. Zamanlanmış kampanya başlayacağı saati gösterir; kampanya
    bitene kadar iptal edilebilir.
@@ -85,7 +86,7 @@ deneme ekranda görülür.
 |---|---|
 | `GET /healthz` | Liveness: süreç ayakta mı |
 | `GET /readyz` | Readiness: veritabanına ulaşılabiliyor mu (değilse 503) |
-| `POST /api/segments/generate` | `{"brief": "..."}` → LLM'in önerdiği kural, kuraldan türetilen açıklama, LLM'in yorumları ve kanal bazlı kitle sayısı. Format brief'i ifade edemiyorsa `status: "unsupported"` |
+| `POST /api/segments/generate` | `{"brief": "...", "time_zone"?: "Europe/Istanbul"}` → LLM'in önerdiği kural, kuraldan türetilen açıklama, LLM'in yorumları ve kanal bazlı kitle sayısı. Format brief'i ifade edemiyorsa `status: "unsupported"`. Brief'te gönderim zamanı varsa `schedule` (öneri) |
 | `POST /api/segments/count` | `{"rule": {...}}` → elle düzenlenmiş bir kuralı aynı doğrulayıcıdan geçirir ve yeniden sayar; geçersizse 422 ve `{path, message}` listesi |
 | `GET /api/segments/options` | Kural düzenleyicisi için izinli değerler (şehirler, kategoriler, olaylar, metrikler) ve sınırlar; doğrulayıcının kendi tablolarından |
 | `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
@@ -237,6 +238,8 @@ kurulumun kendisi.
 
 ## Bilinen eksikler
 
+- Brief'ten gönderim zamanı okuma yalnızca mock LLM ile denendi; mock birkaç sabit kalıbı
+  tanır (DECISIONS 28).
 - **Gerçek Claude ile uçtan uca deneme yapılmadı.** Geliştirme boyunca mock LLM kullanıldı.
   İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
   gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
@@ -267,7 +270,7 @@ Eksik koşullu bir kural daha geniş bir kitle demek olurdu.
 | Bonus | Durum |
 |---|---|
 | CI pipeline | Yapıldı (GitHub Actions: backend, frontend, `docker compose up`) |
-| Zamanlanmış gönderim | Yapıldı; iptal edilebilir (DECISIONS 27) |
+| Zamanlanmış gönderim | Yapıldı; iptal edilebilir (DECISIONS 27). Brief'teki zaman öneri olarak okunur (DECISIONS 28) |
 | Kullanıcının diline göre içerik | Yapılmadı (DECISIONS 17) |
 | A/B varyantları | Yapılmadı. A/B'nin anlamı kazananı seçmektir; bunun için açılma ya da tıklama verisi gerekir ve mock provider'da yok. Uydurma veriyle yapmak yerine dışarıda bırakıldı |
 

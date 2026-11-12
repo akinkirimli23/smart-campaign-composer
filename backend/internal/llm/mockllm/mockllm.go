@@ -41,7 +41,8 @@ func (Client) Complete(_ context.Context, req llm.Request) (llm.Response, error)
 		out, err := json.Marshal(contentResult(brief, firstAttempt && strings.Contains(brief, DemoRetryMarker)))
 		return llm.Response{Text: string(out)}, err
 	case segment.TaskGenerate:
-		out, err := json.Marshal(map[string]any{"result": segmentResult(segment.BriefFromRequest(req))})
+		clock, _ := segment.ClockFromRequest(firstMessage(req))
+		out, err := json.Marshal(map[string]any{"result": segmentResult(segment.BriefFromRequest(req), clock)})
 		return llm.Response{Text: string(out)}, err
 	default:
 		return llm.Response{}, fmt.Errorf("mockllm: unknown task %q", req.Task)
@@ -120,8 +121,22 @@ var (
 	purchased    = []string{"alisveris yapan", "satin alan", "alisveris yapmis", "satin almis"}
 )
 
-func segmentResult(brief string) map[string]any {
+func firstMessage(req llm.Request) string {
+	if len(req.Messages) == 0 {
+		return ""
+	}
+	return req.Messages[0].Text
+}
+
+func segmentResult(brief string, clock segment.Clock) map[string]any {
 	text := segment.Fold(brief)
+
+	// A send time is read first and its words are blanked out of text, so
+	// "3 gün sonra gönder" is not also taken for a look-back window.
+	var schedule any
+	if !clock.Now.IsZero() {
+		schedule, text = scheduleResult(brief, text, clock)
+	}
 
 	for _, hint := range unsupportedHints {
 		if strings.Contains(text, hint) {
@@ -270,6 +285,7 @@ func segmentResult(brief string) map[string]any {
 		"kind":        "rule",
 		"rule":        segment.Rule{Match: segment.MatchAll, Conditions: conditions},
 		"assumptions": assumptions,
+		"schedule":    schedule,
 	}
 }
 

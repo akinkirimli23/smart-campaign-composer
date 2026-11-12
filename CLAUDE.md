@@ -158,7 +158,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (27 kayıt) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (28 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. **Üçüncü export eskidi:** alındıktan sonra arayüz yenilendi ve zamanlanmış gönderim eklendi; teslimden önce yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
@@ -186,6 +186,11 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   `describe.go`, `schema.go` ve testler. Tablolar tek kaynak; SQL'e giden kolon adı oradan gelir.
 - Claude'un çıktısı ya `rule` ya `unsupported`. Açıklama metni Claude'dan alınmaz; Claude
   yalnızca `assumptions` (yorumlar) döner.
+- `rule` yanıtında isteğe bağlı `schedule` (DECISIONS 28): brief'teki gönderim zamanı, öneri
+  olarak. `Generator.GenerateAt(ctx, brief, Clock)` pazarlamacının yerel saatini modele verir;
+  `Generate` saatsiz çağırır ve zaman aranmaz. Hatalı zaman yeniden denenir ama son denemede
+  kuralı düşürmez (`parseOutcome` zaman hatalarını ayrı döner). Model yerel saat yazar, UTC'ye
+  backend çevirir.
 - `internal/audience`: kanal bazlı sayım. `SMSReachable` / `EmailReachable` sabitleri "bu kanaldan
   gönderilebilir" tanımının tek yeri; aşama 4'teki gönderici de bunları kullanmalı.
 - `internal/llm`: `Client` ve `Streamer` arayüzleri, testler için `Scripted`; `llm/mockllm` key
@@ -254,6 +259,9 @@ Kararlar DECISIONS 23–24'te. Kısaca:
   26). Seçenekler `GET /api/segments/options`'tan gelir; arayüze değer listesi gömme. Geçerlilik
   kararı backend'de: taslak `applyRule` ile gider, hatalar satırın altında gösterilir. JSON
   görünümü yalnızca `?debug` ile.
+- Brief'ten okunan gönderim zamanı (`segment.schedule`) store'da `scheduleSuggestion` olur ve
+  "Zamanla" alanını önceden doldurur; pazarlamacı değiştirebilir. Öneri tek başına hiçbir şeyi
+  zamanlamaz.
 - Onay ekranında "Hemen / Zamanla" seçimi; pano zamanlanmış kampanyada başlangıç saatini ve
   iptal butonunu gösterir. İptal iki tıklamadır ve sayfanın içinde sorulur (tarayıcı penceresi
   değil).

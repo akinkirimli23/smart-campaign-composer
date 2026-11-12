@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import type { Rule } from '../api/types'
+import { formatDateTime, fromLocalInput } from '../lib/time'
 import AppIcon from './AppIcon.vue'
 import ErrorBox from './ErrorBox.vue'
 import RuleEditor from './RuleEditor.vue'
@@ -43,6 +44,11 @@ watch(
   },
   { immediate: true },
 )
+
+const suggestedAt = computed(() => {
+  const at = store.scheduleSuggestion ? fromLocalInput(store.scheduleSuggestion.value) : null
+  return at ? formatDateTime(at) : ''
+})
 
 const reachable = computed(() => (audience.value ? audience.value.sms + audience.value.email > 0 : false))
 </script>
@@ -133,6 +139,11 @@ const reachable = computed(() => (audience.value ? audience.value.sms + audience
           {{ store.segmentLoading ? 'Doğrulanıyor…' : 'Doğrula ve yeniden say' }}
         </button>
       </details>
+
+      <p v-if="store.scheduleSuggestion" class="alert info">
+        <strong>Gönderim zamanı önerisi:</strong> {{ suggestedAt }}
+        (brief'teki “{{ store.scheduleSuggestion.phrase }}”). Onay adımında görür ve değiştirebilirsin.
+      </p>
 
       <ErrorBox v-if="store.segmentError" :message="store.segmentError.message" :details="store.segmentError.details" />
 

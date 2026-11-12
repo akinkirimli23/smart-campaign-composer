@@ -481,3 +481,4 @@ input[type='datetime-local'] {
 .alert.info { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 .alert .row { justify-content: space-between; flex-wrap: wrap; }
 .alert .confirm { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.schedule .suggested { flex-basis: 100%; margin: 2px 0 0; }

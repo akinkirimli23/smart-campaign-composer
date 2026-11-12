@@ -26,10 +26,9 @@ type CampaignStore interface {
 	Totals(ctx context.Context) (campaign.Totals, error)
 }
 
-// MaxScheduleAhead bounds how far in the future a campaign may be scheduled.
-// The audience is frozen at approval, so a distant send date means a stale
-// audience; a month is already generous.
-const MaxScheduleAhead = 30 * 24 * time.Hour
+// MaxScheduleAhead bounds how far in the future a campaign may be scheduled;
+// the same bound applies to a send time suggested from the brief.
+const MaxScheduleAhead = segment.MaxScheduleAhead
 
 // POST /api/campaigns {"brief": "...", "rule": {...}, "content": {...}, "send_at": "2026-11-14T09:00:00Z"}
 //

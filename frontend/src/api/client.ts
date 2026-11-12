@@ -1,4 +1,5 @@
 import { readEventStream } from '../lib/sse'
+import { browserTimeZone } from '../lib/time'
 import type {
   CampaignCreated,
   CampaignStatus,
@@ -69,7 +70,9 @@ export const api = {
   /** Allowed values and bounds for the rule editor. */
   segmentOptions: () => getJSON<RuleOptions>('/api/segments/options'),
 
-  generateSegment: (brief: string) => postJSON<SegmentResponse>('/api/segments/generate', { brief }),
+  // The time zone lets the backend read "yarın saat 10" the way the marketer means it.
+  generateSegment: (brief: string) =>
+    postJSON<SegmentResponse>('/api/segments/generate', { brief, time_zone: browserTimeZone() }),
 
   /** Validates an edited rule and counts its audience. */
   countSegment: (rule: unknown) => postJSON<SegmentResponse>('/api/segments/count', { rule }),

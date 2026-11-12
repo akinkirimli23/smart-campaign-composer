@@ -104,6 +104,8 @@ export interface SegmentResponse {
   as_of?: string
   attempts?: number
   unsupported?: { reason: string; phrases: string[] }
+  /** A send time read from the brief: a suggestion to pre-fill, not a decision. */
+  schedule?: { send_at: string; phrase: string; interpretation: string }
 }
 
 export interface Content {

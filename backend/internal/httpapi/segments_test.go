@@ -188,3 +188,41 @@ func TestSegmentOptionsMatchTheValidator(t *testing.T) {
 		}
 	}
 }
+
+// The marketer's time zone decides what "yarın saat 10" means, and the
+// suggestion travels to the client as an instant.
+func TestGenerateSuggestsASchedule(t *testing.T) {
+	counter := &fakeCounter{}
+	rec, body := post(t, mockllm.Client{}, counter, "/api/segments/generate",
+		`{"brief":"İstanbul'daki kullanıcılara yarın saat 10'da kampanya gönder","time_zone":"Europe/Istanbul"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	schedule, _ := body["schedule"].(map[string]any)
+	// fixedNow is 11 Nov 12:00 UTC = 15:00 in Istanbul; tomorrow 10:00 there is 07:00 UTC.
+	if schedule["send_at"] != "2026-11-12T07:00:00Z" || schedule["phrase"] != "yarın" {
+		t.Fatalf("schedule = %v", body["schedule"])
+	}
+
+	// Another zone, another instant: 10:00 in New York is 15:00 UTC.
+	_, body = post(t, mockllm.Client{}, counter, "/api/segments/generate",
+		`{"brief":"İstanbul'daki kullanıcılara yarın saat 10'da kampanya gönder","time_zone":"America/New_York"}`)
+	if got := body["schedule"].(map[string]any)["send_at"]; got != "2026-11-12T15:00:00Z" {
+		t.Errorf("New York: send_at = %v", got)
+	}
+
+	// No zone, or one that does not exist: Istanbul is assumed, not UTC.
+	for _, zone := range []string{``, `,"time_zone":"Mars/Olympus"`} {
+		_, body = post(t, mockllm.Client{}, counter, "/api/segments/generate",
+			`{"brief":"İstanbul'daki kullanıcılara yarın saat 10'da kampanya gönder"`+zone+`}`)
+		if got := body["schedule"].(map[string]any)["send_at"]; got != "2026-11-12T07:00:00Z" {
+			t.Errorf("zone %q: send_at = %v", zone, got)
+		}
+	}
+
+	// A brief without a send time has no schedule key at all.
+	_, body = post(t, mockllm.Client{}, counter, "/api/segments/generate", `{"brief":"İstanbul'daki kullanıcılara kampanya gönder"}`)
+	if _, present := body["schedule"]; present {
+		t.Errorf("unexpected schedule: %v", body["schedule"])
+	}
+}

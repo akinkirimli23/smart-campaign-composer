@@ -709,3 +709,41 @@ kullanılabilir değildi.
 zamanı gelince kitle o anki veriyle kuyruğa alınır. Kitle her zaman günceldir; ama pazarlamacı
 kaç kişiye gideceğini onaylarken bilemez ve zamanı gelen kampanyaları bulup kuyruğa alan ayrı
 bir zamanlayıcı ile kampanya durumu gerekir.
+
+---
+
+## 28. Brief'teki gönderim zamanı öneri olarak okunur
+
+**Karar.** Brief "cuma sabahı gönder" ya da "15 Kasım 09:30" gibi bir zaman içeriyorsa, kitle
+çağrısında Claude bunu da çıkarır (`result.schedule`: `local_time`, `phrase`, `interpretation`).
+Arayüz onay ekranındaki "Zamanla" alanını bu değerle önceden doldurur ve nereden okunduğunu
+gösterir. Kampanya yalnızca pazarlamacı onaylarsa zamanlanır; alanı değiştirebilir ya da
+"Hemen"i seçebilir.
+
+**Nasıl güvenilir tutuluyor.**
+- **Model saat dilimi hesabı yapmaz.** Tarayıcı kendi saat dilimini yollar; backend modele
+  pazarlamacının o anki yerel tarih ve saatini (ve haftanın gününü) verir. Model zamanı aynı
+  yerel saatte, dilimsiz yazar (`2026-11-13T09:00`); UTC'ye backend çevirir.
+- **Çıktı doğrulanır.** Biçim, gelecekte olması ve 30 gün sınırı backend'de kontrol edilir;
+  hatalı zaman diğer doğrulama hataları gibi modele geri verilir.
+- **Öneri kuralı asla düşürmez.** Son denemede kural geçerli, yalnızca zaman hatalıysa kural
+  önerisiz döner. İsteğe bağlı bir kolaylık, çekirdek akışı bozmamalı.
+- **Yorum gösterilir.** "Sabah" için 09:00 gibi varsayımlar `interpretation` alanında yazılır ve
+  ekranda görünür; kitle ekranındaki "Yorum" satırlarıyla aynı fikir (DECISIONS 14).
+
+**Neden model, neden sabit kurallar değil.** Serbest ifadeleri ("cuma sabahı", "haftaya salı
+öğleden sonra") sabit kalıplarla yakalamak kırılgan: tanınmayan bir yazım sessizce boş kalır.
+Yanlış bir öneri ise zararsızdır, çünkü alan dolu gelir ve pazarlamacı görüp düzeltir.
+
+**Bedeli / sınırı.**
+- Tarih hesabı modelin en çok yanıldığı işlerden biri. Bugünün tarihi ve günü verildiği için
+  risk azalır ama kalkmaz; bu yüzden değer hiçbir zaman onaysız kullanılmaz.
+- **Gerçek Claude ile denenmedi.** Mock LLM yalnızca birkaç kalıbı tanır: "yarın", "N gün
+  sonra", haftanın günü, gün + ay; saat için "saat 10", "09:30", sabah / öğle / akşam.
+- Saat dilimi gelmezse `Europe/Istanbul` varsayılır.
+- Kural formla düzenlenirse öneri kalır; brief yeniden gönderilirse yeniden hesaplanır.
+- "Son 30 günde" gibi geriye dönük pencereler gönderim zamanı değildir; prompt bunu ayırır ve
+  mock'ta "3 gün sonra gönder" ifadesinin kitle penceresi sanılmadığı testle sınanır.
+
+**Alternatif.** Tarihi backend'de sabit kalıplarla aramak. Sonuç kesin ve test edilebilir, model
+hatası riski yok; ama yalnızca öngörülen yazımları tanır.

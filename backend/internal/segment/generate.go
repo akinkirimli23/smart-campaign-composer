@@ -50,7 +50,10 @@ type Outcome struct {
 	Rule        *Rule
 	Assumptions []Assumption
 	Unsupported *Unsupported
-	Attempts    int
+	// Schedule is a send time found in the brief, if any; only ever set
+	// together with Rule.
+	Schedule *Schedule
+	Attempts int
 }
 
 // InvalidOutputError means the model kept producing output that failed
@@ -75,6 +78,17 @@ type Generator struct {
 // MaxAttempts in total; the model never gets to "try" anything against the
 // database.
 func (g Generator) Generate(ctx context.Context, brief string) (Outcome, error) {
+	return g.GenerateAt(ctx, brief, Clock{})
+}
+
+// GenerateAt is Generate with the marketer's clock: the model is told what
+// time it is for them, and a send time mentioned in the brief comes back as
+// Outcome.Schedule.
+//
+// The schedule is a convenience next to the rule, so it must never cost the
+// rule: if on the last attempt the rule is valid and only the schedule is
+// not, the rule is returned without a schedule.
+func (g Generator) GenerateAt(ctx context.Context, brief string, clock Clock) (Outcome, error) {
 	maxAttempts := g.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = DefaultMaxAttempts
@@ -89,6 +103,9 @@ func (g Generator) Generate(ctx context.Context, brief string) (Outcome, error) 
 			Text: "Extract the audience rule from this campaign brief.\n" + briefOpen + "\n" + brief + "\n" + briefClose,
 		}},
 	}
+	if clock.known() {
+		req.Messages[0].Text = "The marketer's current local date and time: " + clock.promptLine() + "\n" + req.Messages[0].Text
+	}
 
 	var lastErrs ValidationError
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -96,11 +113,12 @@ func (g Generator) Generate(ctx context.Context, brief string) (Outcome, error) 
 		if err != nil {
 			return Outcome{}, fmt.Errorf("llm: %w", err)
 		}
-		out, errs := parseOutcome([]byte(resp.Text))
-		if len(errs) == 0 {
+		out, errs, scheduleErrs := parseOutcome([]byte(resp.Text), clock)
+		if len(errs) == 0 && (len(scheduleErrs) == 0 || attempt == maxAttempts) {
 			out.Attempts = attempt
 			return out, nil
 		}
+		errs = append(errs, scheduleErrs...)
 		lastErrs = errs
 		req.Messages = append(req.Messages,
 			llm.Message{Role: llm.RoleAssistant, Text: resp.Text, Raw: resp.Raw},
@@ -147,7 +165,14 @@ Rules:
 - Comparisons are inclusive. "Over 1000 TL" / "1000 TL üzeri" becomes gte 1000 and "under" becomes lte; add an assumption saying the boundary value itself is included.
 - A metric without a stated period covers all time. Use within_days only when the brief gives a period for that metric.
 - When you had to pick one reading of an ambiguous phrase, add an assumption for the condition it produced: quote the phrase and state the reading in Turkish, in one sentence a marketer understands. Do not add assumptions for unambiguous conditions.
-- Write "reason" and "interpretation" in Turkish.`
+- Write "reason" and "interpretation" in Turkish.
+
+Send time ("schedule"):
+- The request may start with the marketer's current local date and time in <local_time> tags (date and time, weekday, time zone). If it does and the brief says when to send ("cuma sabahı", "yarın 10'da", "15 Kasım 09:30"), set schedule.local_time to that moment on the marketer's own clock as YYYY-MM-DDTHH:MM. Do not convert time zones.
+- Quote the words you read it from in schedule.phrase, and in schedule.interpretation say in Turkish which day and hour you chose and what you had to assume (a day without an hour: 10:00; "sabah": 09:00; "öğlen": 12:00; "akşam": 18:00).
+- The time must be after the current time and at most 30 days ahead. A weekday means its next occurrence.
+- If the brief gives no send time, or there is no <local_time>, schedule is null. Never invent a send time; a look-back window such as "son 30 günde" is part of the audience, not a send time.
+- The schedule is a suggestion for a person to confirm. It never changes the rule.`
 
 // OutcomeSchema is the structured-output schema of a generation reply: a
 // discriminated union of a rule proposal and an "unsupported" answer.
@@ -166,7 +191,21 @@ func OutcomeSchema() map[string]any {
 						"interpretation":  text,
 					}, "condition_index", "phrase", "interpretation"),
 				},
-			}, "kind", "rule", "assumptions"),
+				"schedule": map[string]any{
+					"description": "When to send, if the brief says so; otherwise null.",
+					"anyOf": []any{
+						map[string]any{"type": "null"},
+						objectSchema(map[string]any{
+							"local_time": map[string]any{
+								"type":        "string",
+								"description": "The send time on the marketer's own clock, as YYYY-MM-DDTHH:MM, without a time zone.",
+							},
+							"phrase":         text,
+							"interpretation": text,
+						}, "local_time", "phrase", "interpretation"),
+					},
+				},
+			}, "kind", "rule", "assumptions", "schedule"),
 			objectSchema(map[string]any{
 				"kind":    constant(kindUnsupported),
 				"reason":  text,
@@ -177,33 +216,45 @@ func OutcomeSchema() map[string]any {
 }
 
 // parseOutcome validates a model reply as strictly as Parse validates a rule.
-func parseOutcome(data []byte) (Outcome, ValidationError) {
+// Problems with the optional schedule are returned separately, so the caller
+// can decide that a valid rule is worth keeping without it.
+func parseOutcome(data []byte, clock Clock) (Outcome, ValidationError, ValidationError) {
+	out, scheduleRaw, errs := parseResult(data)
+	if len(errs) > 0 || out.Rule == nil {
+		return out, errs, nil
+	}
+	schedule, scheduleErrs := parseSchedule(scheduleRaw, clock)
+	out.Schedule = schedule
+	return out, nil, scheduleErrs
+}
+
+func parseResult(data []byte) (Outcome, json.RawMessage, ValidationError) {
 	var col collector
 	root, ok := object(&col, "", data)
 	if !ok {
-		return Outcome{}, col.errs
+		return Outcome{}, nil, col.errs
 	}
 	checkKeys(&col, "", root, []string{"result"}, nil)
 	rawResult, present := root["result"]
 	if !present {
-		return Outcome{}, col.errs
+		return Outcome{}, nil, col.errs
 	}
 	res, ok := object(&col, "result", rawResult)
 	if !ok {
-		return Outcome{}, col.errs
+		return Outcome{}, nil, col.errs
 	}
 	kind, ok := str(&col, "result.kind", res["kind"])
 	if !ok {
 		if _, present := res["kind"]; !present {
 			col.add("result.kind", "zorunlu alan eksik; izinli değerler: %s, %s", kindRule, kindUnsupported)
 		}
-		return Outcome{}, col.errs
+		return Outcome{}, nil, col.errs
 	}
 
 	var out Outcome
 	switch kind {
 	case kindRule:
-		checkKeys(&col, "result", res, []string{"kind", "rule", "assumptions"}, nil)
+		checkKeys(&col, "result", res, []string{"kind", "rule", "assumptions"}, []string{"schedule"})
 		if raw, present := res["rule"]; present {
 			rule, err := Parse(raw)
 			if verr, isValidation := err.(ValidationError); isValidation {
@@ -236,9 +287,9 @@ func parseOutcome(data []byte) (Outcome, ValidationError) {
 		col.add("result.kind", "%q geçersiz; izinli değerler: %s, %s", kind, kindRule, kindUnsupported)
 	}
 	if len(col.errs) > 0 {
-		return Outcome{}, col.errs
+		return Outcome{}, nil, col.errs
 	}
-	return out, nil
+	return out, res["schedule"], nil
 }
 
 func parseAssumptions(col *collector, raw json.RawMessage, nConditions int, ruleValid bool) []Assumption {
