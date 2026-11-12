@@ -160,7 +160,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
 | `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (29 kayıt) |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. **Üçüncü export eskidi:** alındıktan sonra arayüz yenilendi ve zamanlanmış gönderim eklendi; teslimden önce yeniden alınmalı |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 12 Kasım akşamı güncellendi (kampanyalar ekranına kadar); sonrasında çalışılırsa yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
@@ -286,7 +286,7 @@ Bitti ölçütlerinin durumu:
 |---|---|
 | Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
 | CI yeşil | ✅ 12 Kasım: üç iş de (backend, frontend, compose) yeşil. İlk dört çalışma GitHub Actions arızası (11 Kasım 20:48 UTC) yüzünden kuyrukta kaldı; iptal edilebilir |
-| `ai-sessions/` temiz | ✅ Üç export var ve tarandı. Üçüncüsü (aşama 3–6) masaüstü uygulamasının dışa aktarımından metne çevrildi; araç çıktıları kısaltıldı, yerel kullanıcı adı ve e-posta gizlendi. 12 Kasım'daki export anına kadarını içerir |
+| `ai-sessions/` temiz | ✅ Üç export var ve tarandı. Üçüncüsü (aşama 3–6) masaüstü uygulamasının dışa aktarımından metne çevrildi; araç çıktıları kısaltıldı, yerel kullanıcı adı ve e-posta gizlendi. 12 Kasım akşamındaki export anına kadarını içerir (arayüz yenilemesi, zamanlanmış gönderim, kampanyalar ekranı dahil) |
 | Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ Yapılmadı; README "Bilinen eksikler"de yazıyor. Key gelirse denenir ve README güncellenir |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
 
