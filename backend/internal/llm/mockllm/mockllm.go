@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,17 @@ func segmentResult(brief string) map[string]any {
 				"reason":  "Kural formatı sıralama, doğum günü, sadakat seviyesi, cihaz ya da ürün görüntüleme koşullarını ifade edemiyor.",
 				"phrases": []string{original(brief, text, hint)},
 			}
+		}
+	}
+
+	// A city the data does not cover must not simply be ignored: the rest of
+	// the brief would then select a much wider audience than was asked for.
+	if city, ok := unknownCity(brief, text); ok {
+		return map[string]any{
+			"kind": "unsupported",
+			"reason": fmt.Sprintf("%s sistemdeki şehirler arasında yok. Geçerli şehirler: %s.",
+				city, strings.Join(seed.Cities(), ", ")),
+			"phrases": []string{city},
 		}
 	}
 
@@ -259,6 +271,51 @@ func segmentResult(brief string) map[string]any {
 		"rule":        segment.Rule{Match: segment.MatchAll, Conditions: conditions},
 		"assumptions": assumptions,
 	}
+}
+
+// provinces are Turkey's provinces (and two common short names), folded. The
+// mock uses them only to notice a city that is not in the seed data.
+var provinces = strings.Fields(`adana adiyaman afyonkarahisar afyon agri aksaray amasya ankara antalya ardahan
+artvin aydin balikesir bartin batman bayburt bilecik bingol bitlis bolu burdur bursa canakkale cankiri corum
+denizli diyarbakir duzce edirne elazig erzincan erzurum eskisehir gaziantep giresun gumushane hakkari hatay
+igdir isparta istanbul izmir kahramanmaras karabuk karaman kars kastamonu kayseri kilis kirikkale kirklareli
+kirsehir kocaeli konya kutahya malatya manisa mardin mersin mugla mus nevsehir nigde ordu osmaniye rize
+sakarya samsun sanliurfa urfa siirt sinop sirnak sivas tekirdag tokat trabzon tunceli usak van yalova yozgat
+zonguldak`)
+
+// unknownCity returns the first word of the brief that names a province with
+// no users in the data, in the marketer's own spelling. A word counts only
+// when it is the name itself or the name followed by an apostrophe suffix
+// ("Elazığ'daki"), so ordinary words that merely start like a province do not.
+func unknownCity(brief, folded string) (string, bool) {
+	supported := map[string]bool{}
+	for _, c := range seed.Cities() {
+		supported[segment.Fold(c)] = true
+	}
+	original := strings.Fields(strings.TrimSpace(brief))
+	words := strings.Fields(folded)
+	for i, w := range words {
+		name := strings.TrimRight(w, ".,;:!?)")
+		for _, sep := range []string{"'", "’"} {
+			if at := strings.Index(name, sep); at >= 0 {
+				name = name[:at]
+			}
+		}
+		if supported[name] || !slices.Contains(provinces, name) {
+			continue
+		}
+		if i < len(original) {
+			shown := strings.TrimRight(original[i], ".,;:!?)")
+			for _, sep := range []string{"'", "’"} {
+				if at := strings.Index(shown, sep); at >= 0 {
+					shown = shown[:at]
+				}
+			}
+			return shown, true
+		}
+		return name, true
+	}
+	return "", false
 }
 
 // orBetweenConditions finds an "or" that does not simply join two city names.

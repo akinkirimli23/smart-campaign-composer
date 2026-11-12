@@ -3,6 +3,7 @@ package mockllm_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/llm/mockllm"
@@ -126,5 +127,34 @@ func TestStillUnsupported(t *testing.T) {
 		if out := generate(t, brief); out.Unsupported == nil || out.Rule != nil {
 			t.Errorf("brief %q: want unsupported, got %+v", brief, out.Rule)
 		}
+	}
+}
+
+// A city without data is refused by name, with the list of valid ones; it is
+// never dropped, which would send the campaign to everyone else in the brief.
+func TestCityOutsideTheData(t *testing.T) {
+	for brief, city := range map[string]string{
+		"Elazığ'daki kadın kullanıcılara %10 indirim gönder":                               "Elazığ",
+		"Son 30 günde sepete ekleyen Van ve İstanbul'daki kullanıcılara hatırlatma gönder": "Van",
+		"Şanlıurfa, Ankara ve İzmir için kampanya":                                         "Şanlıurfa",
+	} {
+		out := generate(t, brief)
+		if out.Unsupported == nil || out.Rule != nil {
+			t.Errorf("brief %q: want unsupported, got %+v", brief, out.Rule)
+			continue
+		}
+		if len(out.Unsupported.Phrases) != 1 || out.Unsupported.Phrases[0] != city {
+			t.Errorf("brief %q: phrases = %v, want [%s]", brief, out.Unsupported.Phrases, city)
+		}
+		if !strings.Contains(out.Unsupported.Reason, city+" sistemdeki şehirler arasında yok") ||
+			!strings.Contains(out.Unsupported.Reason, "İstanbul, Ankara") {
+			t.Errorf("brief %q: reason = %q", brief, out.Unsupported.Reason)
+		}
+	}
+
+	// Words that only resemble a province are not cities.
+	out := generate(t, "Ordular gibi kalabalık İstanbul'daki vanilya sevenlere kampanya")
+	if out.Rule == nil || out.Rule.Conditions[0].Values[0] != "İstanbul" {
+		t.Errorf("got %+v", out)
 	}
 }
