@@ -24,6 +24,7 @@ type CampaignStore interface {
 	Cancel(ctx context.Context, id int64, now time.Time) (campaign.Status, error)
 	Status(ctx context.Context, id int64) (campaign.Status, error)
 	Totals(ctx context.Context) (campaign.Totals, error)
+	List(ctx context.Context, now time.Time) ([]campaign.Summary, error)
 }
 
 // MaxScheduleAhead bounds how far in the future a campaign may be scheduled;
@@ -101,6 +102,20 @@ func (s *Server) handleCampaignCreate(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusCreated, created)
 	}
+}
+
+// GET /api/campaigns: recent campaigns, newest first, each with its state
+// (scheduled, sending, done, cancelled) and message counts.
+func (s *Server) handleCampaignList(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	list, err := s.campaigns.List(ctx, s.now())
+	if err != nil {
+		slog.Error("list campaigns", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Kampanyalar okunamadı", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"campaigns": list})
 }
 
 // GET /api/campaigns/{id}: message counts per channel and status.

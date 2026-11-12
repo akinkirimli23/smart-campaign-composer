@@ -482,3 +482,52 @@ input[type='datetime-local'] {
 .alert .row { justify-content: space-between; flex-wrap: wrap; }
 .alert .confirm { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .schedule .suggested { flex-basis: 100%; margin: 2px 0 0; }
+
+/* --- campaign list --- */
+main.standalone { margin-top: 24px; }
+.card-head .hint { margin-bottom: 0; }
+.card-head button { flex: none; }
+
+.campaign-list { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; }
+.campaign-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  font-weight: 400;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.campaign-row:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.campaign-main { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.campaign-brief { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-meta, .campaign-progress { color: var(--muted); font-size: 0.85rem; }
+.campaign-progress { flex: none; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) {
+  .campaign-row { flex-wrap: wrap; }
+  .campaign-progress { flex-basis: 100%; text-align: left; }
+}
+
+.badge {
+  flex: none;
+  min-width: 104px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+.badge.scheduled { background: var(--accent-soft); color: var(--accent); }
+.badge.sending { background: var(--warn-soft); color: var(--warn); }
+.badge.done { background: var(--ok-soft); color: var(--ok); }
+.badge.cancelled { background: var(--border); color: var(--muted); }
+
+button.back { margin: -6px 0 8px -8px; }
+.brief-quote {
+  margin: 2px 0 14px;
+  padding-left: 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}

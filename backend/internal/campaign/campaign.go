@@ -128,6 +128,7 @@ type Counts struct {
 // Status is the delivery progress of a campaign.
 type Status struct {
 	ID        int64     `json:"id"`
+	Brief     string    `json:"brief"`
 	CreatedAt time.Time `json:"created_at"`
 	// SendAt is when delivery starts (or started).
 	SendAt time.Time `json:"send_at"`
@@ -140,8 +141,8 @@ type Status struct {
 
 func (s Store) Status(ctx context.Context, id int64) (Status, error) {
 	st := Status{ID: id, Channels: map[string]Counts{}}
-	err := s.DB.QueryRow(ctx, `SELECT created_at, send_at, cancelled_at FROM campaigns WHERE id = $1`, id).
-		Scan(&st.CreatedAt, &st.SendAt, &st.CancelledAt)
+	err := s.DB.QueryRow(ctx, `SELECT brief, created_at, send_at, cancelled_at FROM campaigns WHERE id = $1`, id).
+		Scan(&st.Brief, &st.CreatedAt, &st.SendAt, &st.CancelledAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Status{}, ErrNotFound
 	}
@@ -215,6 +216,81 @@ func (s Store) Cancel(ctx context.Context, id int64, now time.Time) (Status, err
 		return Status{}, err
 	}
 	return s.Status(ctx, id)
+}
+
+// The states a campaign can be in, as shown in the campaign list.
+const (
+	StateScheduled = "scheduled" // approved, waiting for its send time
+	StateSending   = "sending"   // delivery under way (or retrying)
+	StateDone      = "done"      // every message is final
+	StateCancelled = "cancelled" // cancelled by the marketer
+)
+
+// Summary is one row of the campaign list: a campaign with its message
+// counts added up over both channels.
+type Summary struct {
+	ID          int64      `json:"id"`
+	Brief       string     `json:"brief"`
+	CreatedAt   time.Time  `json:"created_at"`
+	SendAt      time.Time  `json:"send_at"`
+	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
+	State       string     `json:"state"`
+	Messages    Counts     `json:"messages"`
+}
+
+// MaxListed bounds the campaign list. There is no paging: the list is for
+// keeping an eye on recent and scheduled campaigns, not an archive.
+const MaxListed = 100
+
+// List returns the most recent campaigns, newest first, with their state as
+// of now. The counts come from the same rows Status reads.
+func (s Store) List(ctx context.Context, now time.Time) ([]Summary, error) {
+	rows, err := s.DB.Query(ctx, `
+SELECT c.id, c.brief, c.created_at, c.send_at, c.cancelled_at,
+       count(m.id),
+       count(*) FILTER (WHERE m.status = 'pending'),
+       count(*) FILTER (WHERE m.status = 'sending'),
+       count(*) FILTER (WHERE m.status = 'sent'),
+       count(*) FILTER (WHERE m.status = 'failed'),
+       count(*) FILTER (WHERE m.status = 'skipped'),
+       count(*) FILTER (WHERE m.status = 'cancelled')
+FROM campaigns c
+LEFT JOIN messages m ON m.campaign_id = c.id
+GROUP BY c.id
+ORDER BY c.id DESC
+LIMIT $1`, MaxListed)
+	if err != nil {
+		return nil, fmt.Errorf("list campaigns: %w", err)
+	}
+	defer rows.Close()
+
+	list := []Summary{}
+	for rows.Next() {
+		var c Summary
+		m := &c.Messages
+		if err := rows.Scan(&c.ID, &c.Brief, &c.CreatedAt, &c.SendAt, &c.CancelledAt,
+			&m.Total, &m.Pending, &m.Sending, &m.Sent, &m.Failed, &m.Skipped, &m.Cancelled); err != nil {
+			return nil, err
+		}
+		c.State = stateOf(c, now)
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func stateOf(c Summary, now time.Time) string {
+	m := c.Messages
+	switch {
+	case c.CancelledAt != nil:
+		return StateCancelled
+	case m.Pending+m.Sending == 0:
+		return StateDone
+	// Nothing has left the queue yet and the start time is still ahead.
+	case c.SendAt.After(now) && m.Pending == m.Total:
+		return StateScheduled
+	default:
+		return StateSending
+	}
 }
 
 // Totals is the state of the whole queue, across campaigns.

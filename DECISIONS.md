@@ -747,3 +747,47 @@ Yanlış bir öneri ise zararsızdır, çünkü alan dolu gelir ve pazarlamacı 
 
 **Alternatif.** Tarihi backend'de sabit kalıplarla aramak. Sonuç kesin ve test edilebilir, model
 hatası riski yok; ama yalnızca öngörülen yazımları tanır.
+
+---
+
+## 29. Kampanyalar ekranı; adres çubuğu yönlendirici kütüphanesi olmadan
+
+**Bağlam.** Zamanlanmış gönderimle (27) birlikte bir boşluk açıldı: yarım saat ve bir hafta
+sonrasına planlanan iki kampanya veritabanında duruyor ve saatinde gidiyordu, ama arayüzde
+yalnızca az önce onaylanan kampanyanın panosu görülebiliyordu; sayfa yenilenince o da
+kayboluyordu.
+
+**Karar.**
+- `GET /api/campaigns` son 100 kampanyayı en yenisi üstte döner: brief, başlangıç zamanı, mesaj
+  sayıları (iki kanalın toplamı) ve durum: `scheduled`, `sending`, `done`, `cancelled`.
+- Arayüzde "Kampanyalar" ekranı bu listeyi gösterir ve ekranda kaldıkça 5 saniyede bir yeniler.
+  Bir satıra tıklamak o kampanyanın mevcut panosunu açar; zamanlanmış olan oradan iptal edilir.
+- Ekranın yeri adres çubuğunun hash kısmında tutulur: `#/kampanyalar`, `#/kampanya/12`, hash yok
+  (oluşturma akışı). Sayfa yenilenince ya da bağlantı paylaşılınca aynı ekran açılır; geri /
+  ileri tuşları çalışır.
+
+**Neden.**
+- **Durum backend'de türetilir**, arayüzde değil: liste, pano ve `/metrics` aynı satırları sayar;
+  "zamanlandı" tanımı (başlangıç ileride ve hiçbir mesaj kuyruktan çıkmamış) tek yerde durur.
+- **Yeni bir pano yazılmadı.** Listeden açılan kampanya, onaydan sonra görülen panoyla aynı
+  bileşeni ve aynı canlı akışı (23) kullanır.
+- **Yönlendirici kütüphanesi eklenmedi.** Üç adres için `lib/route.ts` içindeki iki saf fonksiyon
+  (hash'i oku, hash'i yaz) yeterli ve test edilebilir. Hash kullanıldığı için nginx tarafında
+  ayar gerekmez.
+- Liste açılırken oluşturulmakta olan kampanya (brief, kitle, metinler) atılmaz; geri dönülünce
+  kaldığı yerden devam eder.
+
+**Bedeli / sınırı.**
+- Sayfalama, arama ve filtre yok; liste 100 kampanyayla sınırlı. Bir arşiv değil, son ve
+  zamanlanmış kampanyaları izleme ekranı.
+- Liste sorgusu her kampanya için mesajları sayar; kampanya ve mesaj sayısı büyüdükçe pahalanır.
+  O noktada sayılar kampanya satırında tutulur ya da sorgu sayfalanır.
+- Liste yenilemesi SSE değil, 5 saniyelik sorgulamadır: iki desen birlikte var. Pano tek bir
+  kampanyayı canlı izler; liste için her kampanyaya ayrı akış açmak gereksiz olurdu.
+- Oluşturma akışının kendisi (brief, kitle, içerik adımları) adreste tutulmaz; o adımlardayken
+  sayfa yenilenirse akış baştan başlar.
+- Kimlik doğrulama yok: adresi bilen herkes her kampanyayı görür ve iptal edebilir. Case'in
+  kapsamında kullanıcı yönetimi yoktu; gerçek bir üründe ilk eklenecek şey bu olurdu.
+
+**Alternatif.** `vue-router` eklemek. Standart çözüm ve büyüyen bir uygulamada doğru tercih;
+ama üç adres için bir bağımlılık ve yapılandırma getirir.

@@ -9,6 +9,7 @@ const fake = vi.hoisted(() => ({
   segmentOptions: vi.fn(),
   createCampaign: vi.fn(),
   cancelCampaign: vi.fn(),
+  listCampaigns: vi.fn(),
   streamContent: vi.fn(),
   watchCampaign: vi.fn(),
 }))
@@ -248,6 +249,7 @@ describe('approval and delivery', () => {
 
     const status: CampaignStatus = {
       id: 7,
+      brief: 'brief',
       created_at: 'now',
       send_at: 'now',
       done: false,
@@ -332,6 +334,7 @@ describe('scheduling and cancelling', () => {
 
     const cancelled: CampaignStatus = {
       id: 7,
+      brief: 'brief',
       created_at: 'now',
       send_at: 'later',
       cancelled_at: 'now',
@@ -421,5 +424,78 @@ describe('send time read from the brief', () => {
     await store.applyRule({ match: 'all', conditions: [] })
     expect(store.sendMode).toBe('later')
     expect(store.scheduleSuggestion?.phrase).toBe('cuma sabahı')
+  })
+})
+
+describe('campaign list and navigation', () => {
+  const list = [
+    { id: 9, brief: 'haftaya', created_at: 'x', send_at: 'x', state: 'scheduled', messages: { total: 18, pending: 18, sending: 0, sent: 0, failed: 0, skipped: 0, cancelled: 0 } },
+  ]
+
+  it('loads the list without throwing away a campaign being composed', async () => {
+    const store = await storeAtContent()
+    fake.listCampaigns.mockResolvedValue(list)
+    store.showCampaigns()
+    await Promise.resolve()
+
+    expect(store.view).toBe('campaigns')
+    expect(store.route).toEqual({ name: 'campaigns' })
+    expect(store.campaigns).toEqual(list)
+    expect(store.content.sms).toBe(result.content.sms) // the draft is still there
+
+    store.navigate({ name: 'compose' }) // browser back
+    expect(store.view).toBe('compose')
+    expect(store.step).toBe('content')
+  })
+
+  it('keeps the previous list and reports the error when a refresh fails', async () => {
+    const store = useCampaignStore()
+    fake.listCampaigns.mockResolvedValue(list)
+    await store.loadCampaigns()
+    fake.listCampaigns.mockRejectedValue(new ApiError(500, 'internal', 'Kampanyalar okunamadı'))
+    await store.loadCampaigns()
+    expect(store.campaigns).toEqual(list)
+    expect(store.campaignsError).toBe('Kampanyalar okunamadı')
+  })
+
+  it('opens an existing campaign on the dashboard and follows it', () => {
+    const store = useCampaignStore()
+    fake.watchCampaign.mockReturnValue(() => {})
+    store.openCampaign(9)
+    expect(store.step).toBe('dashboard')
+    expect(store.standalone).toBe(true)
+    expect(store.route).toEqual({ name: 'campaign', id: 9 })
+    expect(fake.watchCampaign).toHaveBeenCalledWith(9, expect.anything())
+  })
+
+  it('a campaign just approved is addressable too, so a reload comes back to it', async () => {
+    const store = await storeAtContent()
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+    expect(store.route).toEqual({ name: 'campaign', id: 7 })
+    expect(store.standalone).toBe(false)
+  })
+
+  it('follows the address: a campaign link, back to the list, back to an empty composer', () => {
+    const store = useCampaignStore()
+    const stop = vi.fn()
+    fake.watchCampaign.mockReturnValue(stop)
+    fake.listCampaigns.mockResolvedValue(list)
+
+    store.navigate({ name: 'campaign', id: 9 }) // page opened at #/kampanya/9
+    expect(store.route).toEqual({ name: 'campaign', id: 9 })
+
+    store.navigate({ name: 'campaigns' })
+    expect(store.view).toBe('campaigns')
+    store.navigate({ name: 'campaign', id: 9 }) // back: the same campaign is not re-opened
+    expect(fake.watchCampaign).toHaveBeenCalledTimes(1)
+    expect(store.view).toBe('compose')
+
+    store.navigate({ name: 'compose' }) // leaving a dashboard starts fresh
+    expect(stop).toHaveBeenCalled()
+    expect(store.step).toBe('brief')
+    expect(store.campaign).toBeNull()
+    expect(store.standalone).toBe(false)
   })
 })

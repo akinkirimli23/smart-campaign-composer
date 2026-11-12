@@ -151,8 +151,22 @@ export interface ChannelCounts {
   cancelled: number
 }
 
+export type CampaignState = 'scheduled' | 'sending' | 'done' | 'cancelled'
+
+/** One row of the campaign list; counts are summed over both channels. */
+export interface CampaignSummary {
+  id: number
+  brief: string
+  created_at: string
+  send_at: string
+  cancelled_at?: string
+  state: CampaignState
+  messages: ChannelCounts
+}
+
 export interface CampaignStatus {
   id: number
+  brief: string
   created_at: string
   /** When delivery starts (or started), RFC 3339. */
   send_at: string

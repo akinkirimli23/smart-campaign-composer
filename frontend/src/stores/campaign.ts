@@ -3,9 +3,11 @@ import { defineStore } from 'pinia'
 import { api, ApiError } from '../api/client'
 import { measure } from '../lib/template'
 import { fromLocalInput, toLocalInput } from '../lib/time'
+import type { Route } from '../lib/route'
 import type {
   CampaignCreated,
   CampaignStatus,
+  CampaignSummary,
   Content,
   ContentEvent,
   ContentField,
@@ -53,6 +55,12 @@ function describe(err: unknown): { message: string; details: FieldError[] } {
 export const useCampaignStore = defineStore('campaign', () => {
   const step = ref<Step>('brief')
   const brief = ref('')
+
+  // "compose" is the four-step flow; "campaigns" is the list of campaigns.
+  const view = ref<'compose' | 'campaigns'>('compose')
+  // The dashboard shows a campaign opened from the list or a link, not one
+  // that just came through the steps.
+  const standalone = ref(false)
 
   // --- audience ---------------------------------------------------------------
   const segment = ref<SegmentResponse | null>(null)
@@ -259,7 +267,8 @@ export const useCampaignStore = defineStore('campaign', () => {
 
   const approving = ref(false)
   const approveError = ref<{ message: string; details: FieldError[] } | null>(null)
-  const campaign = ref<CampaignCreated | null>(null)
+  // The campaign on the dashboard: just created, or opened from the list.
+  const campaign = ref<Pick<CampaignCreated, 'id'> | null>(null)
   const status = ref<CampaignStatus | null>(null)
   const done = ref(false)
   const statusError = ref<string | null>(null)
@@ -279,6 +288,7 @@ export const useCampaignStore = defineStore('campaign', () => {
         { sms: content.sms, email: { subject: content.email.subject, body: content.email.body } },
         scheduledAt.value?.toISOString(),
       )
+      standalone.value = false
       step.value = 'dashboard'
       watch(campaign.value.id)
     } catch (err) {
@@ -318,10 +328,68 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
+  // --- campaign list -------------------------------------------------------------
+  const campaigns = ref<CampaignSummary[] | null>(null)
+  const campaignsError = ref<string | null>(null)
+
+  async function loadCampaigns() {
+    try {
+      campaigns.value = await api.listCampaigns()
+      campaignsError.value = null
+    } catch (err) {
+      campaignsError.value = describe(err).message
+    }
+  }
+
+  /** Shows the list. Work in progress in the flow is kept, not thrown away. */
+  function showCampaigns() {
+    view.value = 'campaigns'
+    void loadCampaigns()
+  }
+
+  /** Opens the dashboard of an existing campaign and follows it live. */
+  function openCampaign(id: number) {
+    abortContent?.abort()
+    streaming.value = false
+    view.value = 'compose'
+    standalone.value = true
+    step.value = 'dashboard'
+    campaign.value = { id }
+    watch(id)
+  }
+
+  /** Where the app is, for the URL hash (see lib/route.ts). */
+  const route = computed<Route>(() => {
+    if (view.value === 'campaigns') return { name: 'campaigns' }
+    if (step.value === 'dashboard' && campaign.value) return { name: 'campaign', id: campaign.value.id }
+    return { name: 'compose' }
+  })
+
+  /** Goes where the URL hash says (page load, back and forward buttons). */
+  function navigate(to: Route) {
+    switch (to.name) {
+      case 'campaigns':
+        showCampaigns()
+        break
+      case 'campaign':
+        if (step.value === 'dashboard' && campaign.value?.id === to.id) view.value = 'compose'
+        else openCampaign(to.id)
+        break
+      case 'compose':
+        // Back from a dashboard means a fresh start; back from the list
+        // returns to whatever was being composed.
+        if (step.value === 'dashboard') reset()
+        else view.value = 'compose'
+        break
+    }
+  }
+
   function reset() {
     abortContent?.abort()
     stopWatching?.()
     stopWatching = null
+    view.value = 'compose'
+    standalone.value = false
     step.value = 'brief'
     brief.value = ''
     segment.value = null
@@ -351,6 +419,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     sendMode, scheduledFor, scheduleProblem, scheduleSuggestion,
     approving, approveError, campaign, status, done, statusError, approve,
     cancelling, cancelCampaign,
+    view, standalone, campaigns, campaignsError, loadCampaigns, showCampaigns, openCampaign, route, navigate,
     reset,
   }
 })

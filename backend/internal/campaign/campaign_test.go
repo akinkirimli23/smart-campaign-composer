@@ -206,3 +206,94 @@ WHERE id IN (SELECT id FROM messages WHERE campaign_id = $1 AND channel = 'sms' 
 		t.Errorf("totals: %+v, %v", totals, err)
 	}
 }
+
+// The list shows every campaign, newest first, in the state a marketer would
+// call it: scheduled, sending, done or cancelled.
+func TestList(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 300, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	store := campaign.Store{DB: pool}
+	if list, err := store.List(ctx, refNow); err != nil || len(list) != 0 || list == nil {
+		t.Fatalf("empty database: %v, %v (want an empty, non-nil list)", list, err)
+	}
+
+	rule := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+	}}
+	create := func(brief string, sendAt time.Time) campaign.Created {
+		t.Helper()
+		c, err := store.Create(ctx, brief, rule, texts, refNow, sendAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	sending := create("şimdi gidiyor", time.Time{})
+	finished := create("bitti", time.Time{})
+	halfHour := create("yarım saat sonra", refNow.Add(30*time.Minute))
+	nextWeek := create("haftaya", refNow.Add(7*24*time.Hour))
+	cancelled := create("vazgeçildi", refNow.Add(48*time.Hour))
+
+	if _, err := pool.Exec(ctx, `UPDATE messages SET status = 'sent', sent_at = now() WHERE campaign_id = $1`, finished.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE messages SET status = 'sent', sent_at = now()
+WHERE id IN (SELECT id FROM messages WHERE campaign_id = $1 ORDER BY id LIMIT 5)`, sending.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Cancel(ctx, cancelled.ID, refNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := store.List(ctx, refNow.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		id    int64
+		brief string
+		state string
+	}
+	var got []row
+	for _, c := range list {
+		got = append(got, row{c.ID, c.Brief, c.State})
+	}
+	want := []row{
+		{cancelled.ID, "vazgeçildi", campaign.StateCancelled},
+		{nextWeek.ID, "haftaya", campaign.StateScheduled},
+		{halfHour.ID, "yarım saat sonra", campaign.StateScheduled},
+		{finished.ID, "bitti", campaign.StateDone},
+		{sending.ID, "şimdi gidiyor", campaign.StateSending},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d campaigns, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// The counts are the campaign's messages over both channels, and agree with Status.
+	total := sending.Queued["sms"] + sending.Queued["email"]
+	last := list[len(list)-1].Messages
+	if last.Total != total || last.Sent != 5 || last.Pending != total-5 {
+		t.Errorf("sending campaign: %+v, want total %d, 5 sent", last, total)
+	}
+	st, err := store.Status(ctx, nextWeek.ID)
+	if err != nil || st.Brief != "haftaya" ||
+		st.Channels["sms"].Pending+st.Channels["email"].Pending != list[1].Messages.Pending {
+		t.Errorf("status %+v vs list %+v (%v)", st, list[1], err)
+	}
+
+	// Once the half-hour campaign's time has passed it is no longer "scheduled",
+	// even before the worker has picked anything up.
+	later, err := store.List(ctx, refNow.Add(31*time.Minute))
+	if err != nil || later[2].ID != halfHour.ID || later[2].State != campaign.StateSending || later[1].State != campaign.StateScheduled {
+		t.Errorf("after 31 minutes: %+v, %v", later, err)
+	}
+}

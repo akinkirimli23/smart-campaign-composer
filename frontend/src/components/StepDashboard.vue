@@ -68,7 +68,9 @@ async function cancel() {
 
 <template>
   <section class="card">
+    <button v-if="store.standalone" class="ghost back" type="button" @click="store.showCampaigns()">← Kampanyalar</button>
     <h2>Gönderim <span v-if="store.campaign" class="muted">· kampanya #{{ store.campaign.id }}</span></h2>
+    <p v-if="store.status?.brief" class="brief-quote">{{ store.status.brief }}</p>
 
     <p v-if="store.statusError" class="alert error" role="alert">{{ store.statusError }}</p>
 
@@ -111,6 +113,10 @@ async function cancel() {
         </div>
       </div>
     </template>
+
+    <p v-if="!store.status && !store.statusError" class="status" role="status">
+      <span class="spinner" aria-hidden="true" /> Yükleniyor…
+    </p>
 
     <div class="channels">
       <template v-for="ch in channels" :key="ch.id">

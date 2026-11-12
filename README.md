@@ -67,6 +67,11 @@ docker compose --profile test run --rm --build web-test
    sayıları canlı güncellenir. Zamanlanmış kampanya başlayacağı saati gösterir; kampanya
    bitene kadar iptal edilebilir.
 
+Sağ üstteki **Kampanyalar** tüm kampanyaları listeler: zamanlanmış, gönderilen, tamamlanmış
+ve iptal edilmiş olanlar. Bir satıra tıklayınca o kampanyanın panosu açılır; zamanlanmış bir
+kampanya oradan iptal edilir. Ekranlar adreslenebilir (`#/kampanyalar`, `#/kampanya/12`), yani
+sayfa yenilense de aynı yerde kalır.
+
 Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
 tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır; içerik için brief'teki
 indirim oranını sabit bir metne yerleştirir. Çıktısı gerçek modelinkiyle aynı doğrulamadan
@@ -91,6 +96,7 @@ deneme ekranda görülür.
 | `GET /api/segments/options` | Kural düzenleyicisi için izinli değerler (şehirler, kategoriler, olaylar, metrikler) ve sınırlar; doğrulayıcının kendi tablolarından |
 | `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
 | `POST /api/campaigns` | Onay: `{"brief", "rule", "content", "send_at"?}`. `send_at` (RFC 3339, en fazla 30 gün sonrası) verilirse gönderim o saatte başlar. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
+| `GET /api/campaigns` | Son 100 kampanya, en yenisi üstte: brief, başlangıç zamanı, durum (`scheduled`, `sending`, `done`, `cancelled`) ve mesaj sayıları |
 | `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at` ve `done` |
 | `POST /api/campaigns/{id}/cancel` | Henüz gönderilmemiş mesajları iptal eder; gönderilenler kalır. Tekrarlanabilir |
 | `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
@@ -201,7 +207,8 @@ backend/
 frontend/          Vue 3 + TypeScript + Pinia arayüzü (nginx ile sunulur)
   src/stores       tüm akışın durumu (Pinia)
   src/api          API istemcisi ve tipleri
-  src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç), kural düzenleyicisinin mantığı
+  src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç), kural düzenleyicisinin mantığı,
+                   adres (hash) okuma / yazma
   src/components   adım ekranları
 .github/workflows/ CI
 ai-sessions/       Claude oturum export'ları
@@ -246,7 +253,10 @@ kurulumun kendisi.
 - Arayüz masaüstü genişliğinde ve koyu temada denendi; dar ekran ve açık tema denenmedi.
 - Ekran bileşenleri için otomatik test yok; mantık ve durum birim testleriyle, ekranlar tarayıcıda
   elle denendi.
-- Sayfa yenilenince akış baştan başlar; devam eden bir kampanyanın panosuna dönülemez.
+- Oluşturma adımlarındayken (brief, kitle, içerik) sayfa yenilenirse akış baştan başlar.
+  Onaylanan kampanyaların panosu ve liste ise adreslenebilir.
+- Kimlik doğrulama yok: arayüze ulaşan herkes her kampanyayı görür ve iptal edebilir.
+- Kampanya listesinde sayfalama, arama ve filtre yok (son 100 kampanya).
 - Provider sürekli 429 dönerse mesaj süresiz bekler; toplam bekleme için üst sınır yok
   (DECISIONS 21).
 - LLM çağrıları için metrik yok, yalnızca log (DECISIONS 23).

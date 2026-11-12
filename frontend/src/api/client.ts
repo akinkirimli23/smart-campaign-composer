@@ -3,6 +3,7 @@ import { browserTimeZone } from '../lib/time'
 import type {
   CampaignCreated,
   CampaignStatus,
+  CampaignSummary,
   Content,
   ContentEvent,
   FieldError,
@@ -81,6 +82,9 @@ export const api = {
   createCampaign: (brief: string, rule: Rule, content: Content, sendAt?: string) =>
     postJSON<CampaignCreated>('/api/campaigns', { brief, rule, content, ...(sendAt ? { send_at: sendAt } : {}) }),
 
+  /** Recent campaigns, newest first. */
+  listCampaigns: async () => (await getJSON<{ campaigns: CampaignSummary[] }>('/api/campaigns')).campaigns,
+
   /** Stops whatever has not been sent yet; returns the campaign's status. */
   cancelCampaign: (id: number) => postJSON<CampaignStatus>(`/api/campaigns/${id}/cancel`, {}),
 
@@ -130,6 +134,10 @@ export const api = {
       if (typeof data === 'string') {
         source.close()
         handlers.onError((JSON.parse(data) as { message: string }).message)
+      } else if (source.readyState === EventSource.CLOSED) {
+        // The browser gave up for good, which it does when the answer was not
+        // a stream at all: most likely there is no such campaign.
+        handlers.onError('Kampanya bulunamadı ya da sunucuya ulaşılamıyor.')
       }
     })
     return () => source.close()

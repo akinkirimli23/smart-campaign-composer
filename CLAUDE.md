@@ -64,7 +64,8 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
   Uygulanmış migration'ı düzenleme, yenisini ekle.
 - DB gerektiren testler `testdb.New(t)` kullanır (her test için ayrı şema).
 - Frontend: Vue 3 (`<script setup>`), TypeScript (strict), Pinia, Vite, vitest. Yönlendirici ve
-  arayüz kütüphanesi yok; tek sayfa, dört adım.
+  arayüz kütüphanesi yok; dört adımlı oluşturma akışı ve bir kampanyalar listesi. Ekranın yeri
+  adres çubuğunun hash'inde tutulur (`lib/route.ts`, DECISIONS 29).
 - Kod yorumları İngilizce, dokümanlar (README, DECISIONS) Türkçe.
 - `.env` asla commit edilmez. `ai-sessions/` içine koymadan önce API key ve kişisel bilgileri temizle.
 
@@ -158,7 +159,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (28 kayıt) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (29 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. **Üçüncü export eskidi:** alındıktan sonra arayüz yenilendi ve zamanlanmış gönderim eklendi; teslimden önce yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
@@ -222,7 +223,7 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 
 - `internal/campaign`: `Store.Create` kampanyayı ve alıcılarını tek transaction'da yazar (kanal
   başına tek `INSERT … SELECT`, derleyicinin WHERE'i + `audience.*Reachable`); `Store.Status`
-  kanal ve durum bazında sayar. Aşama 5'in canlı panosu ve metrics endpoint'i bunun üzerine kurulur.
+  kanal ve durum bazında sayar; `Store.List` son 100 kampanyayı durumlarıyla döner. Aşama 5'in canlı panosu ve metrics endpoint'i bunun üzerine kurulur.
 - `internal/delivery`: `Worker` (kanal başına bir döngü; `FOR UPDATE SKIP LOCKED` ile kiralama,
   gönderimde şablon doldurma ve izin kontrolü, sonuç yazarken `status = 'sending' AND attempts = N`
   koşulu), `Limiter` (eşit aralıklı slot, burst yok, `PauseUntil` ile 429), `HTTPProvider`.
@@ -262,6 +263,13 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Brief'ten okunan gönderim zamanı (`segment.schedule`) store'da `scheduleSuggestion` olur ve
   "Zamanla" alanını önceden doldurur; pazarlamacı değiştirebilir. Öneri tek başına hiçbir şeyi
   zamanlamaz.
+- Kampanyalar ekranı (`components/CampaignList.vue`, DECISIONS 29): `GET /api/campaigns`
+  listesini gösterir, 5 saniyede bir yeniler; satıra tıklamak `store.openCampaign(id)` ile aynı
+  panoyu açar (`standalone`). Durum (`scheduled` / `sending` / `done` / `cancelled`) backend'de
+  `campaign.stateOf` içinde türetilir; arayüzde yeniden hesaplama.
+- Adres: `store.route` hesaplanır, `App.vue` hash ile iki yönlü eşitler; `store.navigate` hash'ten
+  gelen adrese gider. Yeni bir ekran eklersen `lib/route.ts`, `route` ve `navigate` üçünü birlikte
+  güncelle.
 - Onay ekranında "Hemen / Zamanla" seçimi; pano zamanlanmış kampanyada başlangıç saatini ve
   iptal butonunu gösterir. İptal iki tıklamadır ve sayfanın içinde sorulur (tarayıcı penceresi
   değil).

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -49,6 +50,16 @@ func (f *fakeCampaigns) Status(_ context.Context, id int64) (campaign.Status, er
 		return campaign.Status{}, campaign.ErrNotFound
 	}
 	return campaign.Status{ID: 7, Channels: map[string]campaign.Counts{"sms": {Total: 222, Sent: 200, Pending: 22}}}, nil
+}
+
+func (f *fakeCampaigns) List(_ context.Context, now time.Time) ([]campaign.Summary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return []campaign.Summary{
+		{ID: 9, Brief: "haftaya", SendAt: now.Add(7 * 24 * time.Hour), State: campaign.StateScheduled, Messages: campaign.Counts{Total: 18, Pending: 18}},
+		{ID: 7, Brief: "bitti", SendAt: now.Add(-time.Hour), State: campaign.StateDone, Messages: campaign.Counts{Total: 476, Sent: 476}},
+	}, nil
 }
 
 func (f *fakeCampaigns) Totals(context.Context) (campaign.Totals, error) {
@@ -333,5 +344,26 @@ func TestCampaignCancel(t *testing.T) {
 		if rec, _ := campaignRequest(t, store, http.MethodPost, path, ""); rec.Code != want {
 			t.Errorf("%s: status %d, want %d", path, rec.Code, want)
 		}
+	}
+}
+
+func TestCampaignList(t *testing.T) {
+	rec, body := campaignRequest(t, &fakeCampaigns{}, http.MethodGet, "/api/campaigns", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	list := body["campaigns"].([]any)
+	first := list[0].(map[string]any)
+	if len(list) != 2 || first["id"] != float64(9) || first["state"] != "scheduled" || first["brief"] != "haftaya" ||
+		first["messages"].(map[string]any)["pending"] != float64(18) {
+		t.Errorf("list = %v", list)
+	}
+	if _, present := first["cancelled_at"]; present {
+		t.Errorf("a campaign that was not cancelled has cancelled_at: %v", first)
+	}
+
+	rec, body = campaignRequest(t, &fakeCampaigns{err: errors.New("db down")}, http.MethodGet, "/api/campaigns", "")
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "db down") {
+		t.Errorf("status %d, body %v", rec.Code, body)
 	}
 }
