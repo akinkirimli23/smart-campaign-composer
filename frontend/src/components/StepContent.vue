@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
+import { renderSample, SAMPLE_RECIPIENT } from '../lib/template'
 import ErrorBox from './ErrorBox.vue'
 
 const store = useCampaignStore()
@@ -8,6 +9,14 @@ const store = useCampaignStore()
 const variables = computed(() => Object.entries(store.contentMeta?.variables ?? {}))
 const editable = computed(() => !store.streaming && store.contentMeta !== null)
 const audience = computed(() => store.segment?.audience)
+
+// What one recipient would receive, with a made-up person filled in.
+const preview = computed(() => ({
+  sms: renderSample(store.content.sms),
+  subject: renderSample(store.content.email.subject),
+  body: renderSample(store.content.email.body),
+}))
+const sampleName = `${SAMPLE_RECIPIENT.first_name} ${SAMPLE_RECIPIENT.last_name}, ${SAMPLE_RECIPIENT.city}`
 
 /** Server-side errors for one field, from a refused approval. */
 function approveErrorsFor(path: string): string[] {
@@ -37,69 +46,98 @@ function approveErrorsFor(path: string): string[] {
 
     <ErrorBox v-if="store.contentError" :message="store.contentError.message" :details="store.contentError.details" />
 
-    <template v-if="!store.contentError">
-      <div class="field">
-        <div class="row between">
-          <label for="sms">SMS</label>
-          <span
-            v-if="store.contentMeta"
-            class="counter"
-            :class="{ over: store.measured.sms.length > store.limits.sms }"
-            aria-live="polite"
-          >{{ store.measured.sms.length }} / {{ store.limits.sms }}</span>
+    <div v-if="!store.contentError" class="compose">
+      <div>
+        <div class="field">
+          <div class="row between">
+            <label for="sms">SMS</label>
+            <span
+              v-if="store.contentMeta"
+              class="counter"
+              :class="{ over: store.measured.sms.length > store.limits.sms }"
+              aria-live="polite"
+            >{{ store.measured.sms.length }} / {{ store.limits.sms }}</span>
+          </div>
+          <textarea
+            id="sms"
+            v-model="store.content.sms"
+            rows="4"
+            :readonly="!editable"
+            :aria-invalid="editable && (store.measured.sms.problems.length > 0 || store.measured.sms.length > store.limits.sms)"
+          />
+          <p v-for="p in editable ? store.measured.sms.problems : []" :key="p" class="field-error">{{ p }}</p>
+          <p v-for="p in approveErrorsFor('sms')" :key="p" class="field-error">{{ p }}</p>
         </div>
-        <textarea
-          id="sms"
-          v-model="store.content.sms"
-          rows="3"
-          :readonly="!editable"
-          :aria-invalid="editable && (store.measured.sms.problems.length > 0 || store.measured.sms.length > store.limits.sms)"
-        />
-        <p v-for="p in editable ? store.measured.sms.problems : []" :key="p" class="field-error">{{ p }}</p>
-        <p v-for="p in approveErrorsFor('sms')" :key="p" class="field-error">{{ p }}</p>
-      </div>
 
-      <div class="field">
-        <div class="row between">
-          <label for="subject">Email konusu</label>
-          <span
-            v-if="store.contentMeta"
-            class="counter"
-            :class="{ over: store.measured.subject.length > store.limits.email_subject }"
-            aria-live="polite"
-          >{{ store.measured.subject.length }} / {{ store.limits.email_subject }}</span>
+        <div class="field">
+          <div class="row between">
+            <label for="subject">Email konusu</label>
+            <span
+              v-if="store.contentMeta"
+              class="counter"
+              :class="{ over: store.measured.subject.length > store.limits.email_subject }"
+              aria-live="polite"
+            >{{ store.measured.subject.length }} / {{ store.limits.email_subject }}</span>
+          </div>
+          <input
+            id="subject"
+            v-model="store.content.email.subject"
+            type="text"
+            :readonly="!editable"
+            :aria-invalid="editable && (store.measured.subject.problems.length > 0 || store.measured.subject.length > store.limits.email_subject)"
+          />
+          <p v-for="p in editable ? store.measured.subject.problems : []" :key="p" class="field-error">{{ p }}</p>
+          <p v-for="p in approveErrorsFor('email.subject')" :key="p" class="field-error">{{ p }}</p>
         </div>
-        <input
-          id="subject"
-          v-model="store.content.email.subject"
-          type="text"
-          :readonly="!editable"
-          :aria-invalid="editable && (store.measured.subject.problems.length > 0 || store.measured.subject.length > store.limits.email_subject)"
-        />
-        <p v-for="p in editable ? store.measured.subject.problems : []" :key="p" class="field-error">{{ p }}</p>
-        <p v-for="p in approveErrorsFor('email.subject')" :key="p" class="field-error">{{ p }}</p>
-      </div>
 
-      <div class="field">
-        <label for="body">Email metni</label>
-        <textarea
-          id="body"
-          v-model="store.content.email.body"
-          rows="8"
-          :readonly="!editable"
-          :aria-invalid="editable && store.measured.body.problems.length > 0"
-        />
-        <p v-for="p in editable ? store.measured.body.problems : []" :key="p" class="field-error">{{ p }}</p>
-        <p v-for="p in approveErrorsFor('email.body')" :key="p" class="field-error">{{ p }}</p>
-      </div>
+        <div class="field">
+          <label for="body">Email metni</label>
+          <textarea
+            id="body"
+            v-model="store.content.email.body"
+            rows="9"
+            :readonly="!editable"
+            :aria-invalid="editable && store.measured.body.problems.length > 0"
+          />
+          <p v-for="p in editable ? store.measured.body.problems : []" :key="p" class="field-error">{{ p }}</p>
+          <p v-for="p in approveErrorsFor('email.body')" :key="p" class="field-error">{{ p }}</p>
+        </div>
 
-      <p v-if="variables.length" class="hint">
-        Kullanılabilir değişkenler:
-        <template v-for="([name, length], i) in variables" :key="name">
-          <code v-text="'{{' + name + '}}'" /> ({{ length }} karakter sayılır){{ i < variables.length - 1 ? ', ' : '' }}
+        <template v-if="variables.length">
+          <p class="hint tight">Kullanılabilir değişkenler (en uzun değerleriyle sayılır):</p>
+          <div class="variables">
+            <span v-for="[name, length] in variables" :key="name">
+              <code v-text="'{{' + name + '}}'" /> · {{ length }} karakter
+            </span>
+          </div>
         </template>
-      </p>
-    </template>
+      </div>
+
+      <aside class="preview" aria-label="Önizleme">
+        <p class="who">Önizleme · örnek alıcı: {{ sampleName }}</p>
+
+        <h3>SMS</h3>
+        <div class="phone">
+          <p class="sender">Mağaza</p>
+          <p class="bubble">
+            <template v-if="preview.sms">{{ preview.sms }}</template>
+            <span v-else class="placeholder">Metin burada görünecek</span>
+          </p>
+        </div>
+
+        <h3>Email</h3>
+        <div class="mail">
+          <p class="subject">
+            <template v-if="preview.subject">{{ preview.subject }}</template>
+            <span v-else class="placeholder">Konu</span>
+          </p>
+          <p class="body">
+            <template v-if="preview.body">{{ preview.body }}</template>
+            <span v-else class="placeholder">Metin burada görünecek</span>
+          </p>
+        </div>
+      </aside>
+    </div>
 
     <ErrorBox
       v-if="store.approveError"

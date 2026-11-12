@@ -58,3 +58,14 @@ export function measure(template: string, variables: Record<string, number>): Me
   if (template.trim() === '') problems.push('boş olamaz')
   return { length, problems }
 }
+
+/** A made-up recipient for the preview. Nothing is sent to this person. */
+export const SAMPLE_RECIPIENT: Record<string, string> = { first_name: 'Ayşe', last_name: 'Yılmaz', city: 'İstanbul' }
+
+/**
+ * Fills a template for the preview. Known variables get the sample values;
+ * anything else is left as written, so a mistake stays visible.
+ */
+export function renderSample(template: string, sample: Record<string, string> = SAMPLE_RECIPIENT): string {
+  return template.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (whole, name: string) => sample[name] ?? whole)
+}

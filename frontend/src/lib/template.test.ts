@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countChars, measure } from './template'
+import { countChars, measure, renderSample } from './template'
 
 const variables = { first_name: 10, last_name: 12, city: 9 }
 
@@ -50,5 +50,15 @@ describe('measure', () => {
 
   it('names the allowed variables', () => {
     expect(measure('{{name}}', variables).problems[0]).toContain('{{first_name}}, {{last_name}}, {{city}}')
+  })
+})
+
+describe('renderSample', () => {
+  it('fills known variables for the preview', () => {
+    expect(renderSample('Merhaba {{first_name}} {{ last_name }}, {{city}}!')).toBe('Merhaba Ayşe Yılmaz, İstanbul!')
+  })
+
+  it('leaves unknown or malformed placeholders as written, so the mistake stays visible', () => {
+    expect(renderSample('Merhaba {{nickname}} ve {{first_name')).toBe('Merhaba {{nickname}} ve {{first_name')
   })
 })

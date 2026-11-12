@@ -20,6 +20,16 @@ export type Step = 'brief' | 'audience' | 'content' | 'dashboard'
 export const EXAMPLE_BRIEF =
   'Son 30 günde sepetine ürün ekleyip alışveriş yapmayan İstanbul bölgesindeki kullanıcılara %30 indirim hatırlatması gönder.'
 
+/** Starting points offered on the first screen. */
+export const EXAMPLE_BRIEFS: { label: string; text: string }[] = [
+  { label: 'Sepeti terk edenler', text: EXAMPLE_BRIEF },
+  {
+    label: 'Sadık müşteriler',
+    text: "İstanbul ve Ankara'da 1000 TL üzeri harcayan kullanıcıları yeni sezon ön satışına davet et. Özel hissettirsin.",
+  },
+  { label: 'Yeni üyeler', text: 'Son 7 günde kayıt olanlara hoş geldin mesajı ve ilk alışverişe %10 indirim gönder.' },
+]
+
 /** One rejected generation attempt, shown so the retry is not a mystery. */
 export interface Rejection {
   attempt: number

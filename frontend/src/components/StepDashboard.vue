@@ -2,12 +2,21 @@
 import { computed } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import type { Channel, ChannelCounts } from '../api/types'
+import AppIcon from './AppIcon.vue'
 
 const store = useCampaignStore()
 
 const channels: { id: Channel; label: string }[] = [
   { id: 'sms', label: 'SMS' },
   { id: 'email', label: 'Email' },
+]
+
+const rows: { key: keyof Omit<ChannelCounts, 'total'>; label: string }[] = [
+  { key: 'sent', label: 'Teslim edildi' },
+  { key: 'sending', label: 'Gönderiliyor' },
+  { key: 'pending', label: 'Bekliyor' },
+  { key: 'failed', label: 'Başarısız' },
+  { key: 'skipped', label: 'Atlandı' },
 ]
 
 function counts(channel: Channel): ChannelCounts | undefined {
@@ -42,31 +51,38 @@ const totals = computed(() => {
     </p>
     <p v-else class="status" role="status"><span class="spinner" aria-hidden="true" /> Gönderiliyor… sayılar canlı güncellenir.</p>
 
-    <div v-for="ch in channels" :key="ch.id" class="channel">
-      <template v-if="counts(ch.id)">
-        <div class="row between">
-          <h3>{{ ch.label }}</h3>
-          <span class="counter">{{ counts(ch.id)!.sent }} / {{ counts(ch.id)!.total }}</span>
+    <div class="channels">
+      <template v-for="ch in channels" :key="ch.id">
+        <div v-if="counts(ch.id)" class="channel" :class="ch.id">
+          <div class="channel-head">
+            <span class="icon"><AppIcon :name="ch.id" /></span>
+            <div>
+              <h3>{{ ch.label }}</h3>
+              <p class="muted">{{ counts(ch.id)!.sent }} / {{ counts(ch.id)!.total }} teslim edildi</p>
+            </div>
+            <span class="percent">{{ Math.floor(percent(counts(ch.id)!.sent, counts(ch.id)!.total)) }}%</span>
+          </div>
+          <div
+            class="bar"
+            role="progressbar"
+            :aria-label="ch.label + ' gönderim ilerlemesi'"
+            :aria-valuenow="counts(ch.id)!.sent"
+            aria-valuemin="0"
+            :aria-valuemax="counts(ch.id)!.total"
+          >
+            <span class="sent" :style="{ width: percent(counts(ch.id)!.sent, counts(ch.id)!.total) + '%' }" />
+            <span class="sending" :style="{ width: percent(counts(ch.id)!.sending, counts(ch.id)!.total) + '%' }" />
+            <span class="failed" :style="{ width: percent(counts(ch.id)!.failed, counts(ch.id)!.total) + '%' }" />
+            <span class="skipped" :style="{ width: percent(counts(ch.id)!.skipped, counts(ch.id)!.total) + '%' }" />
+          </div>
+          <dl class="legend">
+            <div v-for="r in rows" :key="r.key">
+              <span class="swatch" :class="r.key" />
+              <dt>{{ r.label }}</dt>
+              <dd>{{ counts(ch.id)![r.key] }}</dd>
+            </div>
+          </dl>
         </div>
-        <div
-          class="bar"
-          role="progressbar"
-          :aria-label="ch.label + ' gönderim ilerlemesi'"
-          :aria-valuenow="counts(ch.id)!.sent"
-          aria-valuemin="0"
-          :aria-valuemax="counts(ch.id)!.total"
-        >
-          <span class="sent" :style="{ width: percent(counts(ch.id)!.sent, counts(ch.id)!.total) + '%' }" />
-          <span class="failed" :style="{ width: percent(counts(ch.id)!.failed, counts(ch.id)!.total) + '%' }" />
-          <span class="skipped" :style="{ width: percent(counts(ch.id)!.skipped, counts(ch.id)!.total) + '%' }" />
-        </div>
-        <dl class="stats small">
-          <div><dt>Bekliyor</dt><dd>{{ counts(ch.id)!.pending }}</dd></div>
-          <div><dt>Gönderiliyor</dt><dd>{{ counts(ch.id)!.sending }}</dd></div>
-          <div><dt>Teslim edildi</dt><dd>{{ counts(ch.id)!.sent }}</dd></div>
-          <div><dt>Başarısız</dt><dd>{{ counts(ch.id)!.failed }}</dd></div>
-          <div><dt>Atlandı</dt><dd>{{ counts(ch.id)!.skipped }}</dd></div>
-        </dl>
       </template>
     </div>
 

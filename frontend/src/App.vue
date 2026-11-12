@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCampaignStore, type Step } from './stores/campaign'
+import AppIcon from './components/AppIcon.vue'
 import StepBrief from './components/StepBrief.vue'
 import StepAudience from './components/StepAudience.vue'
 import StepContent from './components/StepContent.vue'
@@ -21,7 +22,13 @@ function position(id: Step): number {
 
 <template>
   <header class="topbar">
-    <h1>Smart Campaign Composer</h1>
+    <div class="brand">
+      <span class="brand-mark"><AppIcon name="megaphone" /></span>
+      <div>
+        <h1>Smart Campaign Composer</h1>
+        <p>Brief'ten kitleye, mesaja ve gönderime</p>
+      </div>
+    </div>
     <button v-if="store.step !== 'brief'" class="ghost" type="button" @click="store.reset()">Yeni kampanya</button>
   </header>
 
@@ -32,7 +39,10 @@ function position(id: Step): number {
       :class="{ current: s.id === store.step, done: i < position(store.step) }"
       :aria-current="s.id === store.step ? 'step' : undefined"
     >
-      <span class="index">{{ i + 1 }}</span>
+      <span class="dot">
+        <AppIcon v-if="i < position(store.step)" name="check" />
+        <template v-else>{{ i + 1 }}</template>
+      </span>
       {{ s.label }}
     </li>
   </ol>

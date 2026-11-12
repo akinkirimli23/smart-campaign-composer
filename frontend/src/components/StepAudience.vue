@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import type { Rule } from '../api/types'
+import AppIcon from './AppIcon.vue'
 import ErrorBox from './ErrorBox.vue'
 import RuleEditor from './RuleEditor.vue'
 
@@ -80,7 +81,10 @@ const reachable = computed(() => (audience.value ? audience.value.sms + audience
     <template v-else>
       <p class="hint">Bu açıklama kuraldan türetilir; gönderimde tam olarak bu kitle kullanılır.</p>
 
-      <p class="summary">{{ segment.description?.summary }}</p>
+      <div class="row between">
+        <p class="summary">{{ segment.description?.summary }}</p>
+        <button class="ghost" type="button" :disabled="!store.ruleOptions" @click="startEditing">Koşulları düzenle</button>
+      </div>
       <ul class="conditions">
         <li v-for="(line, i) in segment.description?.conditions ?? []" :key="i">
           {{ line }}
@@ -89,24 +93,35 @@ const reachable = computed(() => (audience.value ? audience.value.sms + audience
           </p>
         </li>
       </ul>
-      <button type="button" :disabled="!store.ruleOptions" @click="startEditing">Koşulları düzenle</button>
 
       <dl class="stats">
-        <div>
-          <dt>Kurala uyan</dt>
-          <dd>{{ audience.total }}</dd>
+        <div class="stat">
+          <span class="icon"><AppIcon name="users" /></span>
+          <div>
+            <dt>Kurala uyan</dt>
+            <dd>{{ audience.total }}</dd>
+          </div>
         </div>
-        <div>
-          <dt>SMS gidecek</dt>
-          <dd>{{ audience.sms }}</dd>
+        <div class="stat sms">
+          <span class="icon"><AppIcon name="sms" /></span>
+          <div>
+            <dt>SMS gidecek</dt>
+            <dd>{{ audience.sms }}</dd>
+          </div>
         </div>
-        <div>
-          <dt>Email gidecek</dt>
-          <dd>{{ audience.email }}</dd>
+        <div class="stat email">
+          <span class="icon"><AppIcon name="email" /></span>
+          <div>
+            <dt>Email gidecek</dt>
+            <dd>{{ audience.email }}</dd>
+          </div>
         </div>
-        <div class="muted">
-          <dt>Ulaşılamayan</dt>
-          <dd>{{ audience.unreachable }}</dd>
+        <div class="stat off">
+          <span class="icon"><AppIcon name="user-off" /></span>
+          <div>
+            <dt>Ulaşılamayan</dt>
+            <dd>{{ audience.unreachable }}</dd>
+          </div>
         </div>
       </dl>
       <p class="hint">Bir kanaldan gönderim için hem izin hem adres gerekir. Ulaşılamayanlar iki kanalda da bunlardan birine sahip değil.</p>
