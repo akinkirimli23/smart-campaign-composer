@@ -169,7 +169,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | Zamanlanmış gönderim | planda yok |
 | A/B varyantları | planda yok |
 | Kullanıcının diline göre içerik | yapılmadı (DECISIONS 17); zaman kalırsa aşama 5'ten sonra |
-| CI pipeline | 6 (yazıldı ve push'landı; sonucu GitHub'da doğrulanmadı) |
+| CI pipeline | 6 ✅ |
 
 ## Segment kuralı (aşama 2, kesinleşti)
 
@@ -261,7 +261,7 @@ Bitti ölçütlerinin durumu:
 | Ölçüt | Durum |
 |---|---|
 | Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
-| CI yeşil | ⏳ `.github/workflows/ci.yml` push'landı; repo özel olduğu için sonucu buradan görülemedi. Aynı adımlar yerelde geçti (yarış dedektörü dahil) |
+| CI yeşil | ✅ 12 Kasım: üç iş de (backend, frontend, compose) yeşil. İlk dört çalışma GitHub Actions arızası (11 Kasım 20:48 UTC) yüzünden kuyrukta kaldı; iptal edilebilir |
 | `ai-sessions/` temiz | ⏳ İlk iki export tarandı. Aşama 3–6'nın export'u kullanıcıdan bekleniyor; gelince taranacak |
 | Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ Yapılmadı; README "Bilinen eksikler"de yazıyor. Key gelirse denenir ve README güncellenir |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
@@ -270,4 +270,4 @@ Kalan işler bittiğinde yukarıdaki durum tablosunda aşama 6 ✅ yapılır.
 
 - CI üç iş çalıştırır: backend (gofmt, vet, `-race` ile testler, Postgres servisine karşı),
   frontend (`npm ci`, test, build), compose (README'deki kurulum + örnek brief'in kitle sayısı).
-- Teslimden önce kontrol: repo değerlendirenlerin erişebileceği şekilde paylaşıldı mı.
+- Repo 11 Kasım'da herkese açık yapıldı.
