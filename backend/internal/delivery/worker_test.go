@@ -2,10 +2,12 @@ package delivery_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,7 +44,7 @@ func setup(t *testing.T, users int, rule segment.Rule) (*pgxpool.Pool, campaign.
 	if _, err := seed.Load(ctx, pool, users, 7, refNow); err != nil {
 		t.Fatal(err)
 	}
-	created, err := campaign.Store{DB: pool}.Create(ctx, "test", rule, testContent, refNow)
+	created, err := campaign.Store{DB: pool}.Create(ctx, "test", rule, testContent, refNow, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,5 +474,199 @@ func TestShutdownRecordsInFlightSends(t *testing.T) {
 	sent := scalar[int](t, pool, `SELECT count(*) FROM messages WHERE status = 'sent'`)
 	if sent != len(calls) || sent == 0 {
 		t.Errorf("%d sends reached the provider, %d recorded as sent", len(calls), sent)
+	}
+}
+
+// --- scheduling and cancellation (DECISIONS 27) --------------------------------
+
+// fakeClock is a settable clock shared by a test and its worker.
+type fakeClock struct{ now atomic.Pointer[time.Time] }
+
+func newClock(t time.Time) *fakeClock {
+	c := &fakeClock{}
+	c.Set(t)
+	return c
+}
+func (c *fakeClock) Set(t time.Time) { c.now.Store(&t) }
+func (c *fakeClock) Now() time.Time  { return *c.now.Load() }
+
+// scheduledCampaign creates an SMS-only campaign whose delivery starts two
+// hours after refNow.
+func scheduledCampaign(t *testing.T) (*pgxpool.Pool, campaign.Created, time.Time) {
+	t.Helper()
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 200, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	sendAt := refNow.Add(2 * time.Hour)
+	created, err := campaign.Store{DB: pool}.Create(ctx, "test", cityRule("İstanbul"), testContent, refNow, sendAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM messages WHERE channel = 'email'`); err != nil {
+		t.Fatal(err)
+	}
+	if created.Queued["sms"] < 5 || !created.SendAt.Equal(sendAt) {
+		t.Fatalf("created = %+v", created)
+	}
+	return pool, created, sendAt
+}
+
+// runFor runs a worker for a fixed real-time span and waits for it to stop.
+func runFor(w *delivery.Worker, d time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	w.Run(ctx)
+}
+
+// A scheduled campaign is not touched before its time and is sent in full
+// once the time has come. No scheduler is involved: the worker's ordinary
+// claim query skips messages whose next_attempt_at is still ahead.
+func TestScheduledCampaignWaitsForItsTime(t *testing.T) {
+	pool, created, sendAt := scheduledCampaign(t)
+	clock := newClock(sendAt.Add(-time.Minute))
+	provider := &scriptedProvider{}
+	w := worker(pool, provider)
+	w.Now = clock.Now
+
+	runFor(w, 300*time.Millisecond)
+	if calls, _ := provider.snapshot(); len(calls) != 0 {
+		t.Fatalf("%d messages sent a minute before the scheduled time", len(calls))
+	}
+	st, err := campaign.Store{DB: pool}.Status(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Done || st.Channels["sms"].Pending != created.Queued["sms"] || !st.SendAt.Equal(sendAt) {
+		t.Fatalf("before the time: %+v", st)
+	}
+
+	clock.Set(sendAt.Add(time.Second))
+	st = runUntilDone(t, pool, created.ID, 30*time.Second, w)
+	if st.Channels["sms"].Sent != created.Queued["sms"] {
+		t.Fatalf("after the time: %+v", st.Channels["sms"])
+	}
+}
+
+// Cancelling before the scheduled time leaves nothing to send, however long
+// the worker runs afterwards, and can be repeated.
+func TestCancelBeforeSend(t *testing.T) {
+	pool, created, sendAt := scheduledCampaign(t)
+	store := campaign.Store{DB: pool}
+	ctx := context.Background()
+	cancelledAt := sendAt.Add(-time.Hour)
+
+	st, err := store.Cancel(ctx, created.ID, cancelledAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := created.Queued["sms"]
+	if !st.Done || st.Channels["sms"].Cancelled != n || st.CancelledAt == nil || !st.CancelledAt.Equal(cancelledAt) {
+		t.Fatalf("after cancel: %+v", st)
+	}
+
+	again, err := store.Cancel(ctx, created.ID, cancelledAt.Add(time.Minute))
+	if err != nil || !again.CancelledAt.Equal(cancelledAt) || again.Channels["sms"].Cancelled != n {
+		t.Fatalf("second cancel: %+v, %v", again, err)
+	}
+	if _, err := store.Cancel(ctx, created.ID+999, cancelledAt); !errors.Is(err, campaign.ErrNotFound) {
+		t.Fatalf("unknown campaign: %v", err)
+	}
+
+	provider := &scriptedProvider{}
+	w := worker(pool, provider)
+	w.Now = newClock(sendAt.Add(time.Hour)).Now
+	runFor(w, 300*time.Millisecond)
+	if calls, _ := provider.snapshot(); len(calls) != 0 {
+		t.Fatalf("%d messages of a cancelled campaign were sent", len(calls))
+	}
+}
+
+// Cancelling while delivery is under way: what was delivered stays delivered,
+// messages that were failing and waiting for a retry are cancelled instead of
+// retried, and the provider is not called again.
+func TestCancelDuringDelivery(t *testing.T) {
+	pool, created := smallCampaign(t)
+	provider := &scriptedProvider{fn: func(call int, _ delivery.Outbound) (string, error) {
+		if call <= 3 {
+			return "ok", nil // the first three get through
+		}
+		return "", &delivery.SendError{Kind: delivery.Retryable, Status: 503, Message: "down"}
+	}}
+	w := worker(pool, provider)
+	w.MaxAttempts = 1000 // keep retrying until cancelled
+
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); w.Run(ctx) }()
+	defer func() { stop(); <-done }()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if calls, _ := provider.snapshot(); len(calls) >= 10 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("delivery did not get going")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	store := campaign.Store{DB: pool}
+	if _, err := store.Cancel(context.Background(), created.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// In-flight attempts finish and, failing, end as cancelled.
+	var st campaign.Status
+	for deadline = time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var err error
+		if st, err = store.Status(context.Background(), created.ID); err != nil {
+			t.Fatal(err)
+		}
+		if st.Done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("campaign did not settle after cancel: %+v", st.Channels["sms"])
+		}
+	}
+	c := st.Channels["sms"]
+	if c.Sent != 3 || c.Cancelled != created.Queued["sms"]-3 || c.Failed != 0 || c.Pending != 0 || c.Sending != 0 {
+		t.Fatalf("after cancel: %+v", c)
+	}
+
+	before, _ := provider.snapshot()
+	time.Sleep(200 * time.Millisecond)
+	if after, _ := provider.snapshot(); len(after) != len(before) {
+		t.Errorf("provider called %d more times after the campaign settled", len(after)-len(before))
+	}
+}
+
+// A row left "sending" by a dead worker is reclaimed after its lease. If the
+// campaign was cancelled meanwhile it must be closed, not sent.
+func TestCancelledCampaignIsNotSentAfterLeaseExpiry(t *testing.T) {
+	pool, created := smallCampaign(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx,
+		`UPDATE messages SET status = 'sending', attempts = 1, locked_until = now() - interval '1 second'`); err != nil {
+		t.Fatal(err)
+	}
+	store := campaign.Store{DB: pool}
+	st, err := store.Cancel(ctx, created.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Done || st.Channels["sms"].Sending != created.Queued["sms"] {
+		t.Fatalf("leased rows are not Cancel's to change: %+v", st.Channels["sms"])
+	}
+
+	provider := &scriptedProvider{}
+	st = runUntilDone(t, pool, created.ID, 30*time.Second, worker(pool, provider))
+	if st.Channels["sms"].Cancelled != created.Queued["sms"] {
+		t.Fatalf("status = %+v", st.Channels["sms"])
+	}
+	if calls, _ := provider.snapshot(); len(calls) != 0 {
+		t.Errorf("%d messages of a cancelled campaign were sent", len(calls))
 	}
 }

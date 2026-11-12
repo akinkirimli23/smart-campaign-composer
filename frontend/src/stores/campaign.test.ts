@@ -8,6 +8,7 @@ const fake = vi.hoisted(() => ({
   countSegment: vi.fn(),
   segmentOptions: vi.fn(),
   createCampaign: vi.fn(),
+  cancelCampaign: vi.fn(),
   streamContent: vi.fn(),
   watchCampaign: vi.fn(),
 }))
@@ -227,7 +228,7 @@ describe('approval and delivery', () => {
   it('sends the edited texts and the rule, then follows the campaign live', async () => {
     const store = await storeAtContent()
     store.content.sms = 'Elle düzenlendi {{first_name}}'
-    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', queued: { sms: 222, email: 254 } })
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 222, email: 254 } })
     let handlers: { onStatus: (s: CampaignStatus) => void; onDone: () => void } | undefined
     fake.watchCampaign.mockImplementation((_id: number, h: typeof handlers) => {
       handlers = h
@@ -236,20 +237,23 @@ describe('approval and delivery', () => {
 
     await store.approve()
 
-    expect(fake.createCampaign).toHaveBeenCalledWith('brief', segment.rule, {
-      sms: 'Elle düzenlendi {{first_name}}',
-      email: result.content.email,
-    })
+    expect(fake.createCampaign).toHaveBeenCalledWith(
+      'brief',
+      segment.rule,
+      { sms: 'Elle düzenlendi {{first_name}}', email: result.content.email },
+      undefined, // no schedule: send at once
+    )
     expect(store.step).toBe('dashboard')
     expect(fake.watchCampaign).toHaveBeenCalledWith(7, expect.anything())
 
     const status: CampaignStatus = {
       id: 7,
       created_at: 'now',
+      send_at: 'now',
       done: false,
       channels: {
-        sms: { total: 222, pending: 100, sending: 22, sent: 100, failed: 0, skipped: 0 },
-        email: { total: 254, pending: 254, sending: 0, sent: 0, failed: 0, skipped: 0 },
+        sms: { total: 222, pending: 100, sending: 22, sent: 100, failed: 0, skipped: 0, cancelled: 0 },
+        email: { total: 254, pending: 254, sending: 0, sent: 0, failed: 0, skipped: 0, cancelled: 0 },
       },
     }
     handlers?.onStatus(status)
@@ -272,7 +276,7 @@ describe('approval and delivery', () => {
   it('reset stops watching and returns to an empty brief', async () => {
     const store = await storeAtContent()
     const stop = vi.fn()
-    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', queued: { sms: 1, email: 1 } })
+    fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
     fake.watchCampaign.mockReturnValue(stop)
     await store.approve()
     store.reset()
@@ -281,5 +285,77 @@ describe('approval and delivery', () => {
     expect(store.brief).toBe('')
     expect(store.content.sms).toBe('')
     expect(store.campaign).toBeNull()
+  })
+})
+
+describe('scheduling and cancelling', () => {
+  const created = { id: 7, as_of: 'now', send_at: 'later', queued: { sms: 222, email: 254 } }
+
+  it('sends the chosen start time as an instant', async () => {
+    const store = await storeAtContent()
+    fake.createCampaign.mockResolvedValue(created)
+    fake.watchCampaign.mockReturnValue(() => {})
+    const start = new Date(Date.now() + 3 * 24 * 3600 * 1000)
+    start.setSeconds(0, 0)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    // What <input type="datetime-local"> holds: local time without a zone.
+    store.sendMode = 'later'
+    store.scheduledFor = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}T${pad(start.getHours())}:${pad(start.getMinutes())}`
+
+    expect(store.scheduleProblem).toBeNull()
+    await store.approve()
+    expect(fake.createCampaign.mock.calls[0]?.[3]).toBe(start.toISOString())
+    expect(store.step).toBe('dashboard')
+  })
+
+  it('reports a missing or past time and never sends it', async () => {
+    const store = await storeAtContent()
+    store.sendMode = 'later'
+    expect(store.scheduleProblem).toContain('seç')
+
+    store.scheduledFor = '2020-01-01T09:00'
+    expect(store.scheduleProblem).toContain('geçmişte')
+
+    store.sendMode = 'now' // switching back makes the stale date irrelevant
+    expect(store.scheduleProblem).toBeNull()
+    fake.createCampaign.mockResolvedValue(created)
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+    expect(fake.createCampaign.mock.calls[0]?.[3]).toBeUndefined()
+  })
+
+  it('shows the cancelled state as soon as the backend confirms it', async () => {
+    const store = await storeAtContent()
+    fake.createCampaign.mockResolvedValue(created)
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+
+    const cancelled: CampaignStatus = {
+      id: 7,
+      created_at: 'now',
+      send_at: 'later',
+      cancelled_at: 'now',
+      done: true,
+      channels: {
+        sms: { total: 222, pending: 0, sending: 0, sent: 0, failed: 0, skipped: 0, cancelled: 222 },
+        email: { total: 254, pending: 0, sending: 0, sent: 0, failed: 0, skipped: 0, cancelled: 254 },
+      },
+    }
+    fake.cancelCampaign.mockResolvedValue(cancelled)
+    await store.cancelCampaign()
+    expect(fake.cancelCampaign).toHaveBeenCalledWith(7)
+    expect(store.status?.cancelled_at).toBe('now')
+    expect(store.cancelling).toBe(false)
+  })
+
+  it('keeps the dashboard and shows the error when cancelling fails', async () => {
+    const store = await storeAtContent()
+    fake.createCampaign.mockResolvedValue(created)
+    fake.watchCampaign.mockReturnValue(() => {})
+    await store.approve()
+    fake.cancelCampaign.mockRejectedValue(new ApiError(500, 'internal', 'Kampanya iptal edilemedi'))
+    await store.cancelCampaign()
+    expect(store.statusError).toBe('Kampanya iptal edilemedi')
+    expect(store.step).toBe('dashboard')
   })
 })

@@ -18,6 +18,14 @@ const preview = computed(() => ({
 }))
 const sampleName = `${SAMPLE_RECIPIENT.first_name} ${SAMPLE_RECIPIENT.last_name}, ${SAMPLE_RECIPIENT.city}`
 
+// Earliest selectable start, in the form datetime-local expects (local time,
+// minutes). Only a hint for the picker; the store and the backend check too.
+const earliest = (() => {
+  const now = new Date(Date.now() + 60_000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
+})()
+
 /** Server-side errors for one field, from a refused approval. */
 function approveErrorsFor(path: string): string[] {
   return (store.approveError?.details ?? []).filter((d) => d.path === path).map((d) => d.message)
@@ -145,11 +153,35 @@ function approveErrorsFor(path: string): string[] {
       :details="store.approveError.details.filter((d) => !['sms', 'email.subject', 'email.body'].includes(d.path))"
     />
 
+    <fieldset v-if="store.contentMeta" class="schedule">
+      <legend>Ne zaman gönderilsin?</legend>
+      <label class="choice"><input v-model="store.sendMode" type="radio" value="now" /> Hemen</label>
+      <label class="choice"><input v-model="store.sendMode" type="radio" value="later" /> Zamanla</label>
+      <template v-if="store.sendMode === 'later'">
+        <input
+          v-model="store.scheduledFor"
+          type="datetime-local"
+          :min="earliest"
+          aria-label="Gönderim tarihi ve saati"
+          :aria-invalid="store.scheduleProblem !== null && store.scheduledFor !== ''"
+        />
+        <p v-if="store.scheduleProblem && store.scheduledFor !== ''" class="field-error">{{ store.scheduleProblem }}</p>
+        <p class="hint tight">
+          Alıcılar şimdi belirlenir; o saate kadar izni kalkan olursa atlanır. Gönderim başlayana kadar iptal edebilirsin.
+        </p>
+      </template>
+    </fieldset>
+
     <div class="actions">
       <button type="button" :disabled="store.streaming || store.approving" @click="store.step = 'audience'">Geri</button>
       <button type="button" :disabled="store.streaming || store.approving" @click="store.generateContent()">Yeniden üret</button>
-      <button class="primary" type="button" :disabled="!store.contentValid || store.streaming || store.approving" @click="store.approve()">
-        {{ store.approving ? 'Kuyruğa alınıyor…' : 'Onayla ve gönder' }}
+      <button
+        class="primary"
+        type="button"
+        :disabled="!store.contentValid || store.streaming || store.approving || store.scheduleProblem !== null"
+        @click="store.approve()"
+      >
+        {{ store.approving ? 'Kuyruğa alınıyor…' : store.sendMode === 'later' ? 'Onayla ve zamanla' : 'Onayla ve gönder' }}
       </button>
     </div>
     <p v-if="audience && store.contentMeta" class="hint">

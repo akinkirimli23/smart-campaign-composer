@@ -20,12 +20,20 @@ import (
 
 // CampaignStore creates campaigns and reports their delivery progress.
 type CampaignStore interface {
-	Create(ctx context.Context, brief string, rule segment.Rule, c content.Content, asOf time.Time) (campaign.Created, error)
+	Create(ctx context.Context, brief string, rule segment.Rule, c content.Content, asOf, sendAt time.Time) (campaign.Created, error)
+	Cancel(ctx context.Context, id int64, now time.Time) (campaign.Status, error)
 	Status(ctx context.Context, id int64) (campaign.Status, error)
 	Totals(ctx context.Context) (campaign.Totals, error)
 }
 
-// POST /api/campaigns {"brief": "...", "rule": {...}, "content": {...}}
+// MaxScheduleAhead bounds how far in the future a campaign may be scheduled.
+// The audience is frozen at approval, so a distant send date means a stale
+// audience; a month is already generous.
+const MaxScheduleAhead = 30 * 24 * time.Hour
+
+// POST /api/campaigns {"brief": "...", "rule": {...}, "content": {...}, "send_at": "2026-11-14T09:00:00Z"}
+//
+// send_at is optional (RFC 3339); without it the campaign is sent at once.
 //
 // This is the approval. Whatever the marketer saw or edited in the browser,
 // the rule and the texts are validated again here, by the same code that
@@ -35,6 +43,7 @@ func (s *Server) handleCampaignCreate(w http.ResponseWriter, r *http.Request) {
 		Brief   string          `json:"brief"`
 		Rule    json.RawMessage `json:"rule"`
 		Content json.RawMessage `json:"content"`
+		SendAt  *time.Time      `json:"send_at"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -42,6 +51,20 @@ func (s *Server) handleCampaignCreate(w http.ResponseWriter, r *http.Request) {
 	if req.Rule == nil || req.Content == nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "rule ve content alanları zorunlu", nil)
 		return
+	}
+	now := s.now()
+	var sendAt time.Time
+	if req.SendAt != nil {
+		sendAt = *req.SendAt
+		switch {
+		// A minute of slack: the clock moved on while the marketer was reading.
+		case sendAt.Before(now.Add(-time.Minute)):
+			writeError(w, http.StatusUnprocessableEntity, "schedule_invalid", "Gönderim zamanı geçmişte olamaz", nil)
+			return
+		case sendAt.After(now.Add(MaxScheduleAhead)):
+			writeError(w, http.StatusUnprocessableEntity, "schedule_invalid", "Gönderim en fazla 30 gün sonrasına zamanlanabilir", nil)
+			return
+		}
 	}
 	brief := strings.TrimSpace(req.Brief)
 	if utf8.RuneCountInString(brief) > segment.MaxBriefRunes {
@@ -69,7 +92,7 @@ func (s *Server) handleCampaignCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := s.campaigns.Create(ctx, brief, rule, c, s.now())
+	created, err := s.campaigns.Create(ctx, brief, rule, c, now, sendAt)
 	switch {
 	case errors.Is(err, campaign.ErrEmptyAudience):
 		writeError(w, http.StatusUnprocessableEntity, "audience_empty", "Bu kurala uyan ve ulaşılabilen kimse yok", nil)
@@ -84,6 +107,28 @@ func (s *Server) handleCampaignCreate(w http.ResponseWriter, r *http.Request) {
 // GET /api/campaigns/{id}: message counts per channel and status.
 func (s *Server) handleCampaignStatus(w http.ResponseWriter, r *http.Request) {
 	if st, ok := s.campaignStatus(w, r); ok {
+		writeJSON(w, http.StatusOK, st)
+	}
+}
+
+// POST /api/campaigns/{id}/cancel: stops whatever has not been sent yet and
+// returns the campaign's status. Safe to repeat.
+func (s *Server) handleCampaignCancel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "geçersiz kampanya numarası", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	st, err := s.campaigns.Cancel(ctx, id, s.now())
+	switch {
+	case errors.Is(err, campaign.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Kampanya bulunamadı", nil)
+	case err != nil:
+		slog.Error("cancel campaign", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Kampanya iptal edilemedi", nil)
+	default:
 		writeJSON(w, http.StatusOK, st)
 	}
 }

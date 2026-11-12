@@ -664,3 +664,48 @@ kullanılabilir değildi.
 
 **Alternatif.** Düzenlemeyi tamamen kaldırmak; kitle beğenilmezse brief değiştirilip yeniden
 üretilir. En az iş ve en sade ekran; ama küçük bir değişiklik için modele yeniden sormak gerekir.
+
+---
+
+## 27. Zamanlanmış gönderim ve iptal: zamanlayıcı yok, kuyruk zaten bekletiyor
+
+**Karar.**
+- Onayda isteğe bağlı bir `send_at` verilir (en fazla 30 gün sonrası). Kampanya ve alıcıları yine
+  onay anında, tek transaction'da kuyruğa girer; yalnızca mesajların `next_attempt_at` değeri
+  `send_at` olur. Worker zamanı gelmemiş satırı zaten almadığı için ayrı bir zamanlayıcı, cron ya
+  da kampanya durumu yoktur.
+- **Kitle onay anında dondurulur**, gönderim anında yeniden hesaplanmaz.
+- Kampanya iptal edilebilir (`POST /api/campaigns/{id}/cancel`): bekleyen mesajlar `cancelled`
+  olur ve bir daha gönderilmez. Gönderim başladıktan sonra iptal yalnızca kalanları durdurur.
+
+**Neden kitle onayda dondurulur.**
+- Pazarlamacının onayladığı sayı ile gönderilen sayı aynıdır. Gönderim anında hesaplansaydı
+  onay ekranındaki sayı bir tahmin olurdu; "son kararı insan verir" ilkesi zayıflardı.
+- İzin zaten gönderim anında yeniden kontrol ediliyor (DECISIONS 22): arada izni ya da adresi
+  kalkan kişi atlanır. Yani en önemli tazelik kuralı korunuyor.
+- Mevcut kuyruk tasarımı aynen kullanılır: retry için var olan `next_attempt_at` alanı
+  zamanlamayı da taşır. Yeni bir hareketli parça yok.
+
+**İptal nasıl güvenli kalıyor.** Üç durum var ve üçü de testle sınanıyor:
+- *Bekleyen mesaj:* `Cancel` tek sorguyla `cancelled` yapar.
+- *O anda provider'a gönderilmekte olan mesaj:* geri çağrılamaz. Başarılı olursa `sent` kalır;
+  başarısız olup yeniden denenecekse worker onu kuyruğa geri koymak yerine `cancelled` yapar.
+- *Çökmüş bir worker'dan kalan, kirası dolmuş mesaj:* yeniden alındığında kampanyanın iptal
+  edildiği görülür ve gönderilmeden kapatılır.
+
+**Bedeli / sınırı.**
+- Kitle gönderim gününde eskimiş olabilir: onaydan sonra satın alan biri yine "sepetini
+  unutma" mesajı alır, sonradan kurala uyan biri almaz. Bu yüzden zamanlama 30 günle sınırlı.
+- İçerik de onay anındaki haliyle gider; zamanlanmış bir kampanyanın metni ya da saati
+  sonradan düzenlenemez. Değiştirmek için iptal edip yeniden oluşturmak gerekir.
+- Gönderim başladıktan sonra iptal edilen kampanyada mesajların bir kısmı gitmiş olur; pano
+  kaç mesajın gittiğini ve kaçının iptal edildiğini gösterir.
+- Saat dilimi tarayıcıdan gelir: pazarlamacı kendi yerel saatini seçer, arayüz bunu UTC'ye
+  çevirip yollar. "Alıcının yerel saatinde gönder" yok.
+- Sayfa yenilenince pano kaybolur (bilinen eksik); zamanlanmış bir kampanyanın panosuna
+  sonradan dönmenin yolu arayüzde yok, `GET /api/campaigns/{id}` ile bakılabilir.
+
+**Alternatif.** Kitleyi gönderim anında hesaplamak: onayda yalnızca kural ve içerik saklanır,
+zamanı gelince kitle o anki veriyle kuyruğa alınır. Kitle her zaman günceldir; ama pazarlamacı
+kaç kişiye gideceğini onaylarken bilemez ve zamanı gelen kampanyaları bulup kuyruğa alan ayrı
+bir zamanlayıcı ile kampanya durumu gerekir.

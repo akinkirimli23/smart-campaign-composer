@@ -145,11 +145,16 @@ export interface ChannelCounts {
   sent: number
   failed: number
   skipped: number
+  /** Not sent because the campaign was cancelled first. */
+  cancelled: number
 }
 
 export interface CampaignStatus {
   id: number
   created_at: string
+  /** When delivery starts (or started), RFC 3339. */
+  send_at: string
+  cancelled_at?: string
   channels: Record<Channel, ChannelCounts>
   done: boolean
 }
@@ -157,5 +162,6 @@ export interface CampaignStatus {
 export interface CampaignCreated {
   id: number
   as_of: string
+  send_at: string
   queued: Record<Channel, number>
 }

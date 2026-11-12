@@ -75,8 +75,11 @@ export const api = {
   countSegment: (rule: unknown) => postJSON<SegmentResponse>('/api/segments/count', { rule }),
 
   /** The approval: the backend validates rule and content again before queueing. */
-  createCampaign: (brief: string, rule: Rule, content: Content) =>
-    postJSON<CampaignCreated>('/api/campaigns', { brief, rule, content }),
+  createCampaign: (brief: string, rule: Rule, content: Content, sendAt?: string) =>
+    postJSON<CampaignCreated>('/api/campaigns', { brief, rule, content, ...(sendAt ? { send_at: sendAt } : {}) }),
+
+  /** Stops whatever has not been sent yet; returns the campaign's status. */
+  cancelCampaign: (id: number) => postJSON<CampaignStatus>(`/api/campaigns/${id}/cancel`, {}),
 
   /**
    * Streams content generation. Resolves when the stream ends; the final

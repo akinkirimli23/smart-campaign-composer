@@ -158,16 +158,16 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (26 kayıt) |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum; üçüncüsü 12 Kasım'daki haliyle (sonrasında çalışılırsa yeniden alınmalı) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (27 kayıt) |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. **Üçüncü export eskidi:** alındıktan sonra arayüz yenilendi ve zamanlanmış gönderim eklendi; teslimden önce yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
 
 | Gereksinim | Aşama |
 |---|---|
-| Zamanlanmış gönderim | planda yok |
-| A/B varyantları | planda yok |
+| Zamanlanmış gönderim | ✅ iptal ile birlikte (DECISIONS 27) |
+| A/B varyantları | yapılmadı; nedeni README "Bonuslar"da |
 | Kullanıcının diline göre içerik | yapılmadı (DECISIONS 17); zaman kalırsa aşama 5'ten sonra |
 | CI pipeline | 6 ✅ |
 
@@ -221,8 +221,13 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 - `internal/delivery`: `Worker` (kanal başına bir döngü; `FOR UPDATE SKIP LOCKED` ile kiralama,
   gönderimde şablon doldurma ve izin kontrolü, sonuç yazarken `status = 'sending' AND attempts = N`
   koşulu), `Limiter` (eşit aralıklı slot, burst yok, `PauseUntil` ile 429), `HTTPProvider`.
-- Mesaj durumları: `pending` → `sending` → `sent` / `failed` / `skipped`. Retry durumu satırda
-  (`attempts`, `next_attempt_at`); 429 deneme hakkı harcamaz.
+- Mesaj durumları: `pending` → `sending` → `sent` / `failed` / `skipped` / `cancelled`. Retry
+  durumu satırda (`attempts`, `next_attempt_at`); 429 deneme hakkı harcamaz.
+- Zamanlama (DECISIONS 27): `Store.Create(…, asOf, sendAt)`; mesajların `next_attempt_at` değeri
+  `sendAt` olur, ayrı zamanlayıcı yok. Kitle onayda dondurulur. `Store.Cancel` bekleyenleri
+  `cancelled` yapar; worker iptal edilmiş kampanyanın mesajını ne yeniden dener ne gönderir
+  (`retry` içindeki CASE ve `deliver` başındaki kontrol). Worker'a yeni bir "kuyruğa geri koy"
+  yolu eklersen iptali orada da kontrol et.
 - Idempotency key: `campaign-<id>-user-<id>-<kanal>`; her denemede aynı.
 - `POST /api/campaigns` onaydır: kural `segment.Parse`, içerik `content.Parse` ile yeniden
   doğrulanır. Aşama 5'teki arayüz bunu çağırır; ayrı bir doğrulama endpoint'i yok.
@@ -249,6 +254,9 @@ Kararlar DECISIONS 23–24'te. Kısaca:
   26). Seçenekler `GET /api/segments/options`'tan gelir; arayüze değer listesi gömme. Geçerlilik
   kararı backend'de: taslak `applyRule` ile gider, hatalar satırın altında gösterilir. JSON
   görünümü yalnızca `?debug` ile.
+- Onay ekranında "Hemen / Zamanla" seçimi; pano zamanlanmış kampanyada başlangıç saatini ve
+  iptal butonunu gösterir. İptal iki tıklamadır ve sayfanın içinde sorulur (tarayıcı penceresi
+  değil).
 - Backend: `GET /api/campaigns/{id}/events` (SSE) ve `GET /metrics` (`internal/metrics`).
 - Compose'ta `web` servisi (nginx, `:3000`). Yerel geliştirme: `cd frontend && npm install &&
   npm run dev` (Vite `/api`'yi `:8080`'e iletir).

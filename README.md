@@ -59,9 +59,12 @@ docker compose --profile test run --rm --build web-test
    "Koşulları düzenle" bir form açar: koşullar listeden seçilerek değiştirilir, eklenir ya da
    kaldırılır; uygulandığında kural yeniden doğrulanır ve sayılar güncellenir.
 3. **İçerik ve onay.** SMS ve email metinleri ekrana akar. Bittikten sonra düzenlenebilir;
-   sayaçlar değişkenler doldurulmuş halini ölçer. "Onayla ve gönder" sunucuda yeniden doğrular.
+   sayaçlar değişkenler doldurulmuş halini ölçer, yanda örnek bir alıcı için önizleme durur.
+   Gönderim hemen yapılabilir ya da ileri bir tarihe zamanlanabilir. Onay sunucuda yeniden
+   doğrular.
 4. **Gönderim.** Kanal başına bekleyen / gönderilen / teslim edilen / başarısız / atlanan
-   sayıları canlı güncellenir.
+   sayıları canlı güncellenir. Zamanlanmış kampanya başlayacağı saati gösterir; kampanya
+   bitene kadar iptal edilebilir.
 
 Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
 tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır; içerik için brief'teki
@@ -86,8 +89,9 @@ deneme ekranda görülür.
 | `POST /api/segments/count` | `{"rule": {...}}` → elle düzenlenmiş bir kuralı aynı doğrulayıcıdan geçirir ve yeniden sayar; geçersizse 422 ve `{path, message}` listesi |
 | `GET /api/segments/options` | Kural düzenleyicisi için izinli değerler (şehirler, kategoriler, olaylar, metrikler) ve sınırlar; doğrulayıcının kendi tablolarından |
 | `POST /api/content/generate` | `{"brief": "..."}` → SMS ve email içeriği, SSE akışı olarak. Olaylar: `attempt`, `delta` (alan bazlı metin), `rejected` (doğrulama hataları), `result` (doğrulanmış içerik, ölçülen uzunluklar, limitler), `error`. İstek hataları (boş brief vb.) normal JSON hata yanıtıdır |
-| `POST /api/campaigns` | Onay: `{"brief", "rule", "content"}`. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
-| `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` sayıları ve `done` |
+| `POST /api/campaigns` | Onay: `{"brief", "rule", "content", "send_at"?}`. `send_at` (RFC 3339, en fazla 30 gün sonrası) verilirse gönderim o saatte başlar. Kural ve içerik (elle düzenlenmiş olsa da) yeniden doğrulanır; geçerliyse kampanya ve alıcıları kuyruğa girer. `201` ve kanal başına kuyruğa giren mesaj sayısı; geçersizse `422` ve `{path, message}` listesi |
+| `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at` ve `done` |
+| `POST /api/campaigns/{id}/cancel` | Henüz gönderilmemiş mesajları iptal eder; gönderilenler kalır. Tekrarlanabilir |
 | `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
 | `GET /metrics` | Prometheus metin formatı: `scc_campaigns`, `scc_messages{channel,status}`, `scc_provider_requests_total{channel,outcome}` |
 
@@ -207,9 +211,10 @@ ai-sessions/       Claude oturum export'ları
 - **users**: ad, soyad, email, telefon, şehir, dil (`tr` / `en`), cinsiyet, doğum yılı,
   kayıt tarihi, kanal izinleri (`email_opt_in`, `sms_opt_in`).
 - **events**: `cart_add` ve `purchase` olayları; kategori, tutar, zaman.
-- **campaigns**: brief, onaylanan kural ve içerik (JSON), kitlenin hesaplandığı an.
+- **campaigns**: brief, onaylanan kural ve içerik (JSON), kitlenin hesaplandığı an, gönderimin
+  başlayacağı an, iptal edildiyse iptal anı.
 - **messages**: kampanya × kullanıcı × kanal; durum (`pending`, `sending`, `sent`, `failed`,
-  `skipped`), deneme sayısı, bir sonraki deneme zamanı. `UNIQUE (campaign_id, user_id, channel)`.
+  `skipped`, `cancelled`), deneme sayısı, bir sonraki deneme zamanı. `UNIQUE (campaign_id, user_id, channel)`.
 
 Seed deterministiktir: aynı `SEED_USERS` / `SEED_RANDOM` her makinede aynı veriyi üretir. Olay
 zamanları seed'in yüklendiği ana göredir.
@@ -221,7 +226,7 @@ zamanları seed'in yüklendiği ana göredir.
 | Kural doğrulama, SQL derleme, enjeksiyon denemeleri | `backend/internal/segment` |
 | Derlenen SQL'in Go'da yazılmış referans hesapla karşılaştırılması; 381 / 222 / 254 / 58 | `backend/internal/audience` |
 | İçerik limitleri, şablonlar, akış çözücü, yeniden deneme (bozuk JSON, uzun SMS, bilinmeyen değişken) | `backend/internal/content` |
-| Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After` | `backend/internal/delivery` |
+| Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After`; zamanı gelmeden gönderilmeme, iptalden sonra hiçbir şeyin gitmemesi | `backend/internal/delivery` |
 | Claude istemcisi (yerel bir SSE sunucusuna karşı, key olmadan) | `backend/internal/llm/anthropicllm` |
 | HTTP uçları, SSE akışları, onayda yeniden doğrulama | `backend/internal/httpapi` |
 | Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, kural düzenleyicisinin mantığı, akışın durumu | `frontend/src/**/*.test.ts` |
@@ -257,6 +262,15 @@ kurulumun kendisi.
 Formatın ifade edemediği bir istekte kural üretilmez; arayüz neyin desteklenmediğini gösterir.
 Eksik koşullu bir kural daha geniş bir kitle demek olurdu.
 
+## Bonuslar
+
+| Bonus | Durum |
+|---|---|
+| CI pipeline | Yapıldı (GitHub Actions: backend, frontend, `docker compose up`) |
+| Zamanlanmış gönderim | Yapıldı; iptal edilebilir (DECISIONS 27) |
+| Kullanıcının diline göre içerik | Yapılmadı (DECISIONS 17) |
+| A/B varyantları | Yapılmadı. A/B'nin anlamı kazananı seçmektir; bunun için açılma ya da tıklama verisi gerekir ve mock provider'da yok. Uydurma veriyle yapmak yerine dışarıda bırakıldı |
+
 ## Sonraya bırakılanlar
 
 Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
@@ -268,5 +282,6 @@ Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
 | Kesin "büyüktür", "en fazla N kez", kategori bazında harcama | Karşılaştırmalar kapsayıcı; ayrıntılar DECISIONS 25 |
 | Ülke, sadakat seviyesi, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
 | Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
+| Zamanlanmış kampanyayı düzenleme, alıcının yerel saatinde gönderim | Zamanlanan kampanya yalnızca iptal edilebilir; saat pazarlamacının saat dilimindedir (DECISIONS 27) |
 | Gönderilen metnin saklanması | Şablon ve kullanıcıdan yeniden üretilebilir; satırda tutulmuyor (DECISIONS 22) |
 | Kullanıcının diline göre içerik (bonus) | Kampanya başına tek içerik seti var; `en` kullanıcılar da aynı metni alır (DECISIONS 17) |

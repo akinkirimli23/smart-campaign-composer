@@ -42,6 +42,7 @@ type Store struct{ DB DB }
 type Created struct {
 	ID     int64          `json:"id"`
 	AsOf   time.Time      `json:"as_of"`
+	SendAt time.Time      `json:"send_at"`
 	Queued map[string]int `json:"queued"` // messages per channel
 }
 
@@ -49,10 +50,18 @@ type Created struct {
 // recipient and channel, all in one transaction: either the whole audience is
 // queued or nothing is.
 //
-// The recipients are frozen here, as of asOf. Texts are not: the worker fills
-// the templates at send time (DECISIONS 22). rule and c must already be
-// validated; Compile validates the rule again.
-func (s Store) Create(ctx context.Context, brief string, rule segment.Rule, c content.Content, asOf time.Time) (Created, error) {
+// The recipients are frozen here, as of asOf, also for a campaign that is sent
+// later (DECISIONS 27). Texts are not: the worker fills the templates at send
+// time (DECISIONS 22). rule and c must already be validated; Compile validates
+// the rule again.
+//
+// sendAt is when delivery may start; the zero value, or a time before asOf,
+// means at once. Scheduling needs no scheduler: the queue already holds every
+// message back until its next_attempt_at.
+func (s Store) Create(ctx context.Context, brief string, rule segment.Rule, c content.Content, asOf, sendAt time.Time) (Created, error) {
+	if sendAt.Before(asOf) {
+		sendAt = asOf
+	}
 	q, err := segment.Compile(rule, asOf)
 	if err != nil {
 		return Created{}, err
@@ -66,17 +75,17 @@ func (s Store) Create(ctx context.Context, brief string, rule segment.Rule, c co
 		return Created{}, err
 	}
 
-	created := Created{AsOf: asOf.UTC(), Queued: map[string]int{}}
+	created := Created{AsOf: asOf.UTC(), SendAt: sendAt.UTC(), Queued: map[string]int{}}
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO campaigns (brief, rule, content, as_of) VALUES ($1, $2, $3, $4) RETURNING id`,
-			brief, ruleJSON, contentJSON, created.AsOf).Scan(&created.ID); err != nil {
+			`INSERT INTO campaigns (brief, rule, content, as_of, send_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			brief, ruleJSON, contentJSON, created.AsOf, created.SendAt).Scan(&created.ID); err != nil {
 			return fmt.Errorf("insert campaign: %w", err)
 		}
 
 		// The compiled WHERE uses $1..$n; the campaign id and the time follow.
 		// Only package constants and the compiled fragment are concatenated.
-		args := append(append([]any{}, q.Args...), created.ID, created.AsOf)
+		args := append(append([]any{}, q.Args...), created.ID, created.SendAt)
 		idArg, nowArg := fmt.Sprintf("$%d", len(q.Args)+1), fmt.Sprintf("$%d", len(q.Args)+2)
 		total := 0
 		for channel, reachable := range map[string]string{
@@ -112,20 +121,27 @@ type Counts struct {
 	Sent    int `json:"sent"`
 	Failed  int `json:"failed"`
 	Skipped int `json:"skipped"`
+	// Cancelled: not sent because the campaign was cancelled first.
+	Cancelled int `json:"cancelled"`
 }
 
 // Status is the delivery progress of a campaign.
 type Status struct {
-	ID        int64             `json:"id"`
-	CreatedAt time.Time         `json:"created_at"`
-	Channels  map[string]Counts `json:"channels"`
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	// SendAt is when delivery starts (or started).
+	SendAt time.Time `json:"send_at"`
+	// CancelledAt is set once the campaign was cancelled.
+	CancelledAt *time.Time        `json:"cancelled_at,omitempty"`
+	Channels    map[string]Counts `json:"channels"`
 	// Done: no message is waiting or in flight.
 	Done bool `json:"done"`
 }
 
 func (s Store) Status(ctx context.Context, id int64) (Status, error) {
 	st := Status{ID: id, Channels: map[string]Counts{}}
-	err := s.DB.QueryRow(ctx, `SELECT created_at FROM campaigns WHERE id = $1`, id).Scan(&st.CreatedAt)
+	err := s.DB.QueryRow(ctx, `SELECT created_at, send_at, cancelled_at FROM campaigns WHERE id = $1`, id).
+		Scan(&st.CreatedAt, &st.SendAt, &st.CancelledAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Status{}, ErrNotFound
 	}
@@ -164,10 +180,41 @@ func (s Store) Status(ctx context.Context, id int64) (Status, error) {
 			c.Failed = n
 		case "skipped":
 			c.Skipped = n
+		case "cancelled":
+			c.Cancelled = n
 		}
 		st.Channels[channel] = c
 	}
 	return st, rows.Err()
+}
+
+// Cancel stops a campaign: every message still waiting becomes "cancelled"
+// and will never be sent. Messages already sent stay sent; one that is with
+// the provider right now finishes, and if it has to be retried the worker
+// cancels it instead (see delivery.Worker). Cancelling twice is harmless.
+func (s Store) Cancel(ctx context.Context, id int64, now time.Time) (Status, error) {
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE campaigns SET cancelled_at = COALESCE(cancelled_at, $2) WHERE id = $1`, id, now.UTC())
+		if err != nil {
+			return fmt.Errorf("cancel campaign: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		// Only rows nobody holds. A row a worker has leased is left to that
+		// worker, which sees cancelled_at when it records the outcome.
+		if _, err := tx.Exec(ctx,
+			`UPDATE messages SET status = 'cancelled', updated_at = $2 WHERE campaign_id = $1 AND status = 'pending'`,
+			id, now.UTC()); err != nil {
+			return fmt.Errorf("cancel messages: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Status{}, err
+	}
+	return s.Status(ctx, id)
 }
 
 // Totals is the state of the whole queue, across campaigns.
@@ -177,7 +224,7 @@ type Totals struct {
 }
 
 // Statuses a message can be in, in lifecycle order.
-var Statuses = []string{"pending", "sending", "sent", "failed", "skipped"}
+var Statuses = []string{"pending", "sending", "sent", "failed", "skipped", "cancelled"}
 
 // Totals counts every message by channel and status. It reads the same rows
 // Status does, so per-campaign numbers add up to these.

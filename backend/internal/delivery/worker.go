@@ -174,6 +174,7 @@ type claimed struct {
 	city                   string
 	email, phone           *string
 	reachable              bool
+	cancelled              bool // the campaign was cancelled
 	content                content.Content
 }
 
@@ -204,7 +205,8 @@ WITH due AS (
     RETURNING m.id, m.campaign_id, m.user_id, m.attempts
 )
 SELECT l.id, l.campaign_id, l.user_id, l.attempts,
-       u.first_name, u.last_name, u.city, u.email, u.phone, `+reachable+`, c.content
+       u.first_name, u.last_name, u.city, u.email, u.phone, `+reachable+`, c.content,
+       c.cancelled_at IS NOT NULL
 FROM leased l
 JOIN users u ON u.id = l.user_id
 JOIN campaigns c ON c.id = l.campaign_id
@@ -219,7 +221,7 @@ ORDER BY l.id`, channel, now, w.BatchSize, lease)
 		m := claimed{channel: channel, leaseUntil: lease}
 		var raw []byte
 		if err := rows.Scan(&m.id, &m.campaignID, &m.userID, &m.attempts,
-			&m.firstName, &m.lastName, &m.city, &m.email, &m.phone, &m.reachable, &raw); err != nil {
+			&m.firstName, &m.lastName, &m.city, &m.email, &m.phone, &m.reachable, &raw, &m.cancelled); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(raw, &m.content); err != nil {
@@ -267,6 +269,12 @@ func (w *Worker) deliver(ctx context.Context, limiter Waiter, m claimed) {
 	if m.attempts > w.MaxAttempts {
 		// Only reachable through repeated lease expiry (a worker that keeps dying).
 		w.finish(m, "failed", "", "gave up: lease expired repeatedly")
+		return
+	}
+	if m.cancelled {
+		// Normally Cancel has already moved waiting rows; this catches a row
+		// reclaimed from a dead worker after the campaign was cancelled.
+		w.finish(m, "cancelled", "", "")
 		return
 	}
 	if !m.reachable {
@@ -331,11 +339,15 @@ WHERE id = $1 AND status = 'sending' AND attempts = $2`,
 		m.id, m.attempts, status, providerID, lastError, sentAt, now)
 }
 
-// retry puts the message back in the queue for a later attempt.
+// retry puts the message back in the queue for a later attempt, unless the
+// campaign was cancelled while this attempt was in flight: then there is no
+// later attempt and the message ends as cancelled.
 func (w *Worker) retry(m claimed, at time.Time, attempts int, lastError string) {
 	w.update(m, `
 UPDATE messages
-SET status = 'pending', attempts = $3, next_attempt_at = $4, last_error = $5,
+SET status = CASE WHEN (SELECT cancelled_at FROM campaigns WHERE id = messages.campaign_id) IS NULL
+                  THEN 'pending' ELSE 'cancelled' END,
+    attempts = $3, next_attempt_at = $4, last_error = $5,
     locked_until = NULL, updated_at = $6
 WHERE id = $1 AND status = 'sending' AND attempts = $2`,
 		m.id, m.attempts, attempts, at.UTC(), lastError, w.Now().UTC())

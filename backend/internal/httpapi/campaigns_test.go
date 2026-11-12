@@ -21,16 +21,27 @@ type fakeCampaigns struct {
 	rule    segment.Rule
 	content content.Content
 	asOf    time.Time
+	sendAt  time.Time
 	err     error
+
+	cancelled int
 }
 
-func (f *fakeCampaigns) Create(_ context.Context, _ string, rule segment.Rule, c content.Content, asOf time.Time) (campaign.Created, error) {
+func (f *fakeCampaigns) Create(_ context.Context, _ string, rule segment.Rule, c content.Content, asOf, sendAt time.Time) (campaign.Created, error) {
 	if f.err != nil {
 		return campaign.Created{}, f.err
 	}
 	f.created++
-	f.rule, f.content, f.asOf = rule, c, asOf
-	return campaign.Created{ID: 7, AsOf: asOf, Queued: map[string]int{"sms": 222, "email": 254}}, nil
+	f.rule, f.content, f.asOf, f.sendAt = rule, c, asOf, sendAt
+	return campaign.Created{ID: 7, AsOf: asOf, SendAt: sendAt, Queued: map[string]int{"sms": 222, "email": 254}}, nil
+}
+
+func (f *fakeCampaigns) Cancel(_ context.Context, id int64, now time.Time) (campaign.Status, error) {
+	if id != 7 {
+		return campaign.Status{}, campaign.ErrNotFound
+	}
+	f.cancelled++
+	return campaign.Status{ID: 7, CancelledAt: &now, Done: true, Channels: map[string]campaign.Counts{"sms": {Total: 222, Cancelled: 222}}}, nil
 }
 
 func (f *fakeCampaigns) Status(_ context.Context, id int64) (campaign.Status, error) {
@@ -261,6 +272,66 @@ func TestMetricsEndpoint(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
 		if !strings.HasPrefix(line, "#") && len(strings.Fields(line)) != 2 {
 			t.Errorf("malformed sample line %q", line)
+		}
+	}
+}
+
+// Scheduling: the time travels to the store; times in the past or too far
+// ahead are refused before anything is queued.
+func TestCampaignCreateScheduled(t *testing.T) {
+	scheduled := func(sendAt string) string {
+		return `{"brief":"b","rule":` + okRule + `,"content":` + okContent + `,"send_at":` + sendAt + `}`
+	}
+	store := &fakeCampaigns{}
+	when := fixedNow.Add(48 * time.Hour)
+	rec, body := campaignRequest(t, store, http.MethodPost, "/api/campaigns", scheduled(`"`+when.Format(time.RFC3339)+`"`))
+	if rec.Code != http.StatusCreated || !store.sendAt.Equal(when) || body["send_at"] != when.Format(time.RFC3339) {
+		t.Fatalf("status %d, sendAt %v, body %v", rec.Code, store.sendAt, body)
+	}
+
+	// No send_at, or null: at once (the store treats the zero time as "now").
+	for _, payload := range []string{approve(okRule, okContent), scheduled(`null`)} {
+		store := &fakeCampaigns{}
+		if rec, _ := campaignRequest(t, store, http.MethodPost, "/api/campaigns", payload); rec.Code != http.StatusCreated || !store.sendAt.IsZero() {
+			t.Errorf("immediate: status %d, sendAt %v", rec.Code, store.sendAt)
+		}
+	}
+
+	for name, tt := range map[string]struct {
+		sendAt string
+		status int
+		want   string
+	}{
+		"in the past":        {`"` + fixedNow.Add(-time.Hour).Format(time.RFC3339) + `"`, 422, "geçmişte"},
+		"too far ahead":      {`"` + fixedNow.Add(31*24*time.Hour).Format(time.RFC3339) + `"`, 422, "30 gün"},
+		"not a time":         {`"yarın sabah"`, 400, ""},
+		"a few seconds late": {`"` + fixedNow.Add(-20*time.Second).Format(time.RFC3339) + `"`, 201, ""},
+	} {
+		store := &fakeCampaigns{}
+		rec, body := campaignRequest(t, store, http.MethodPost, "/api/campaigns", scheduled(tt.sendAt))
+		if rec.Code != tt.status {
+			t.Errorf("%s: status %d, want %d (%v)", name, rec.Code, tt.status, body)
+			continue
+		}
+		if tt.status >= 400 && store.created != 0 {
+			t.Errorf("%s: a campaign was created", name)
+		}
+		if tt.want != "" && !strings.Contains(body["error"].(map[string]any)["message"].(string), tt.want) {
+			t.Errorf("%s: body %v", name, body)
+		}
+	}
+}
+
+func TestCampaignCancel(t *testing.T) {
+	store := &fakeCampaigns{}
+	rec, body := campaignRequest(t, store, http.MethodPost, "/api/campaigns/7/cancel", "")
+	if rec.Code != http.StatusOK || store.cancelled != 1 || body["cancelled_at"] == nil ||
+		body["channels"].(map[string]any)["sms"].(map[string]any)["cancelled"] != float64(222) {
+		t.Fatalf("status %d, body %v", rec.Code, body)
+	}
+	for path, want := range map[string]int{"/api/campaigns/8/cancel": 404, "/api/campaigns/x/cancel": 400} {
+		if rec, _ := campaignRequest(t, store, http.MethodPost, path, ""); rec.Code != want {
+			t.Errorf("%s: status %d, want %d", path, rec.Code, want)
 		}
 	}
 }

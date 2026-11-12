@@ -450,3 +450,34 @@ button.danger:hover:not(:disabled) { background: var(--error-soft); }
 .swatch.sent { background: var(--ok); }
 .swatch.failed { background: var(--error); }
 .swatch.skipped { background: var(--neutral-fill); }
+
+/* --- schedule --- */
+.schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 22px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.schedule legend { padding: 0 8px; font-weight: 600; }
+.schedule label { font-weight: 400; margin: 0; }
+.schedule .hint, .schedule .field-error { flex-basis: 100%; }
+input[type='datetime-local'] {
+  padding: 7px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.bar .cancelled { background: var(--border-strong); }
+.swatch.cancelled { background: var(--border-strong); border: 1px solid var(--muted); }
+.alert.info { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
+.alert .row { justify-content: space-between; flex-wrap: wrap; }
+.alert .confirm { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }

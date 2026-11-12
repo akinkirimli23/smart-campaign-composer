@@ -220,6 +220,26 @@ export const useCampaignStore = defineStore('campaign', () => {
   })
 
   // --- approval and delivery ----------------------------------------------------
+  // "now": send at once. "later": start at scheduledFor, a local date-time as
+  // an <input type="datetime-local"> holds it ("2026-11-14T09:30").
+  const sendMode = ref<'now' | 'later'>('now')
+  const scheduledFor = ref('')
+
+  /** The chosen start as an instant, or null when it is missing or not a date. */
+  const scheduledAt = computed<Date | null>(() => {
+    if (sendMode.value !== 'later' || scheduledFor.value === '') return null
+    const at = new Date(scheduledFor.value) // parsed in the marketer's time zone
+    return Number.isNaN(at.getTime()) ? null : at
+  })
+
+  /** Why the schedule cannot be used, or null when it can. */
+  const scheduleProblem = computed<string | null>(() => {
+    if (sendMode.value !== 'later') return null
+    if (!scheduledAt.value) return 'Gönderim tarihini ve saatini seç'
+    if (scheduledAt.value.getTime() <= Date.now()) return 'Gönderim zamanı geçmişte olamaz'
+    return null
+  })
+
   const approving = ref(false)
   const approveError = ref<{ message: string; details: FieldError[] } | null>(null)
   const campaign = ref<CampaignCreated | null>(null)
@@ -236,10 +256,12 @@ export const useCampaignStore = defineStore('campaign', () => {
     try {
       // Whatever the counters above say, the backend validates the rule and
       // the edited texts again here and may still refuse.
-      campaign.value = await api.createCampaign(brief.value, rule, {
-        sms: content.sms,
-        email: { subject: content.email.subject, body: content.email.body },
-      })
+      campaign.value = await api.createCampaign(
+        brief.value,
+        rule,
+        { sms: content.sms, email: { subject: content.email.subject, body: content.email.body } },
+        scheduledAt.value?.toISOString(),
+      )
       step.value = 'dashboard'
       watch(campaign.value.id)
     } catch (err) {
@@ -261,6 +283,24 @@ export const useCampaignStore = defineStore('campaign', () => {
     })
   }
 
+  const cancelling = ref(false)
+
+  /** Stops the campaign: nothing that is still waiting will be sent. */
+  async function cancelCampaign() {
+    if (!campaign.value) return
+    cancelling.value = true
+    statusError.value = null
+    try {
+      // The live stream reports the same thing a moment later; showing the
+      // answer at once keeps the button from looking ignored.
+      status.value = await api.cancelCampaign(campaign.value.id)
+    } catch (err) {
+      statusError.value = describe(err).message
+    } finally {
+      cancelling.value = false
+    }
+  }
+
   function reset() {
     abortContent?.abort()
     stopWatching?.()
@@ -276,6 +316,8 @@ export const useCampaignStore = defineStore('campaign', () => {
     contentMeta.value = null
     contentError.value = null
     approveError.value = null
+    sendMode.value = 'now'
+    scheduledFor.value = ''
     campaign.value = null
     status.value = null
     done.value = false
@@ -288,7 +330,9 @@ export const useCampaignStore = defineStore('campaign', () => {
     ruleOptions, loadRuleOptions, applyRule,
     content, streaming, attempt, rejections, contentMeta, contentError, generateContent,
     measured, limits, contentValid,
+    sendMode, scheduledFor, scheduleProblem,
     approving, approveError, campaign, status, done, statusError, approve,
+    cancelling, cancelCampaign,
     reset,
   }
 })
