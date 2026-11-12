@@ -847,8 +847,8 @@ sayısının ve maliyetin de artacağı gerekçesiyle reddedildi.
   uzar. O noktada diller birkaç gruba bölünür.
 - Ana metin çeviriden sonra değiştirilirse diğer diller eskir. Arayüz bunu fark edip uyarır
   ("yeniden yaz"), ama zorlamaz; backend bu ilişkiyi bilmez.
-- Diğer diller yazdırılmadan da onaylanabilir; o alıcılar ana dildeki metni alır. Arayüz kaç
-  kişi olduğunu onaydan önce söyler.
+- Diğer diller yazdırılmadan da gönderilebilir; o alıcılar ana dildeki metni alır. Bu artık
+  yalnızca bilinçli bir seçimle olur (aşağıdaki güncelleme).
 - Doğrulama limiti ve değişkenleri kontrol eder, anlamı değil: pazarlamacı okuyamadığı bir
   dildeki metni onaylıyor olabilir.
 - Mock LLM çeviri yapmaz; her dil için brief'ten sabit metnini yazar. Ana metne elle yapılan
@@ -865,3 +865,27 @@ sayısının ve maliyetin de artacağı gerekçesiyle reddedildi.
   yanıt ise uzar ve akışı izlemek zorlaşır.
 - *Onaydan sonra arka planda çeviri.* Pazarlamacının görmediği bir metin gönderilmiş olurdu;
   "insan düzenler ve onaylar" akışına aykırı.
+
+**Güncelleme (12 Kasım): eksik dil varken onay kapalı.** İlk halinde diğer dilleri yazdırmayı
+unutan pazarlamacı yalnızca bir uyarı görüyor, onay butonu açık kalıyordu; o durumda örneğin
+İngilizce okuyan alıcılar sessizce Türkçe metni alırdı.
+
+- **Karar.** Kitlenin bir dili için metin yokken "Onayla ve gönder" kapalıdır. Açmanın iki yolu
+  var: "… metnini yaz" ile eksik dillerin hepsini yazdırmak ya da tek bir kutuyu işaretlemek:
+  "Yalnızca Türkçe gönder". Kutu ana metin yeniden üretildiğinde sıfırlanır.
+- **Neden.**
+  - Hatanın bedeli asimetrik: yanlışlıkla kapalı kalan onayın bedeli bir tıklama; yanlışlıkla
+    açık kalanın bedeli, bir grup müşteriye okuyamadığı dilde ve geri alınamayan bir mesaj.
+  - Bonusun vaadi herkesin kendi dilinde almasıdır; bunun bozulduğu durum sessiz bir varsayılan
+    değil, pazarlamacının kararı olmalı.
+  - Dil sayısıyla büyümez: kitlede 2 dil de olsa 12 dil de olsa tek yazdırma butonu, tek onay
+    butonu ve gerekirse tek kutu vardır. Dil başına onay yok; her dil doğrulamadan kendiliğinden
+    geçer ve sorunlu olan sekmesinde işaretlenir.
+  - Tek dilde gönderim hâlâ mümkün; yalnızca açıkça seçilmesi gerekiyor.
+- **Seçilmeyen: ikinci çağrıyı otomatik yapmak.** Ana metin biter bitmez diğer diller
+  kendiliğinden yazdırılsa unutma ihtimali kalmazdı; ama pazarlamacı ana metni her yeniden
+  ürettiğinde ya da düzelttiğinde bir çağrı boşa giderdi. Bu, kararın çıkış noktası olan
+  maliyet gerekçesine ters.
+- **Sınırı.** Kural arayüzdedir. `POST /api/campaigns` eksik dille gelen bir kampanyayı
+  reddetmez, varsayılan dile düşer; API'yi doğrudan çağıran biri tek dilde gönderebilir. Dil
+  sayısı çok artarsa tek çağrı yine dil gruplarına bölünmelidir (yukarıdaki sınır).

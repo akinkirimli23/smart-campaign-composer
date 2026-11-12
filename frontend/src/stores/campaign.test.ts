@@ -609,13 +609,35 @@ describe('content per language', () => {
     })
   })
 
-  it('can be approved with the main language only; the others are reported as missing', async () => {
+  it('does not send while a language of the audience has no text, unless the marketer says so', async () => {
     const store = await bilingualAtContent()
-    expect(store.contentValid).toBe(true)
     fake.createCampaign.mockResolvedValue({ id: 7, as_of: 'now', send_at: 'now', queued: { sms: 1, email: 1 } })
     fake.watchCampaign.mockReturnValue(() => {})
+
+    // Forgetting the other languages cannot send the campaign by accident.
+    expect(store.languagesResolved).toBe(false)
+    await store.approve()
+    expect(fake.createCampaign).not.toHaveBeenCalled()
+    expect(store.step).toBe('content')
+
+    // One box, however many languages are missing: a deliberate choice.
+    store.mainLanguageOnly = true
+    expect(store.languagesResolved).toBe(true)
     await store.approve()
     expect(fake.createCampaign.mock.calls[0]?.[2]).toEqual({ default: 'tr', variants: { tr: result.content } })
+  })
+
+  it('opens approval once every language has a text, and asks again after a regeneration', async () => {
+    const store = await bilingualAtContent()
+    scriptLocalize(localized)
+    await store.localize()
+    expect(store.languagesResolved).toBe(true)
+    expect(store.mainLanguageOnly).toBe(false)
+
+    store.mainLanguageOnly = true
+    await store.generateContent() // new main text: the earlier choice does not carry over
+    expect(store.mainLanguageOnly).toBe(false)
+    expect(store.languagesResolved).toBe(false)
   })
 
   it('blocks approval while any language is over a limit, not only the visible one', async () => {

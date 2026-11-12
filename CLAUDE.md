@@ -278,7 +278,9 @@ Kararlar DECISIONS 23–24'te. Kısaca:
   listesi gömme). `store.content` ana dildeki metin, `store.variants` diğer diller,
   `store.activeLanguage` düzenlenen dil; `store.localize()` diğer dilleri tek istekte yazdırır.
   `contentValid` görünen dile değil bütün dillere bakar. `approve` her zaman
-  `{default, variants}` gönderir. Ana metin sonradan değişirse `translationsStale`.
+  `{default, variants}` gönderir. Ana metin sonradan değişirse `translationsStale`. Kitlenin bir
+  dili için metin yokken onay kapalıdır (`languagesResolved`); açmanın yolu dilleri yazdırmak ya
+  da tek kutu `mainLanguageOnly`. Bu kural arayüzde; backend varsayılan dile düşer.
 - Brief'ten okunan gönderim zamanı (`segment.schedule`) store'da `scheduleSuggestion` olur ve
   "Zamanla" alanını önceden doldurur; pazarlamacı değiştirebilir. Öneri tek başına hiçbir şeyi
   zamanlamaz.
