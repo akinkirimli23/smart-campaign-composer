@@ -3,6 +3,7 @@ import { onMounted, onUnmounted } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import type { CampaignState, CampaignSummary } from '../api/types'
 import { formatDateTime } from '../lib/time'
+import AppIcon from './AppIcon.vue'
 
 const store = useCampaignStore()
 
@@ -26,6 +27,10 @@ function progress(c: CampaignSummary): string {
   return parts.join(' · ')
 }
 
+function percent(c: CampaignSummary): number {
+  return c.messages.total ? (c.messages.sent / c.messages.total) * 100 : 0
+}
+
 // The list is where scheduled and running campaigns are watched, so it keeps
 // itself fresh while it is on screen.
 let timer: ReturnType<typeof setInterval> | undefined
@@ -37,23 +42,29 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
-  <section class="card">
-    <div class="card-head">
-      <div>
-        <h2>Kampanyalar</h2>
-        <p class="hint">Zamanlanmış, gönderilen ve tamamlanmış kampanyalar. Ayrıntı için birine tıkla.</p>
-      </div>
-      <button class="primary" type="button" @click="store.reset()">Yeni kampanya</button>
+  <div class="page-head">
+    <div>
+      <h1>Kampanyalar</h1>
+      <p class="lead">Zamanlanmış, gönderilen ve tamamlanmış kampanyalar. Ayrıntı için birine tıkla.</p>
     </div>
+    <button class="primary" type="button" @click="store.reset()"><AppIcon name="plus" :size="18" /> Yeni kampanya</button>
+  </div>
 
-    <p v-if="store.campaignsError" class="alert error" role="alert">{{ store.campaignsError }}</p>
+  <p v-if="store.campaignsError" class="alert error" role="alert">{{ store.campaignsError }}</p>
 
-    <p v-if="store.campaigns === null && !store.campaignsError" class="status" role="status">
-      <span class="spinner" aria-hidden="true" /> Yükleniyor…
-    </p>
-    <p v-else-if="store.campaigns && store.campaigns.length === 0" class="hint">Henüz kampanya yok.</p>
+  <p v-if="store.campaigns === null && !store.campaignsError" class="status" role="status">
+    <span class="spinner" aria-hidden="true" /> Yükleniyor…
+  </p>
 
-    <ul v-else-if="store.campaigns" class="campaign-list">
+  <section v-else-if="store.campaigns && store.campaigns.length === 0" class="card empty">
+    <span class="icon"><AppIcon name="megaphone" :size="24" /></span>
+    <strong>Henüz kampanya yok</strong>
+    <p>İlk kampanyanı bir brief yazarak oluştur.</p>
+    <button class="primary" type="button" @click="store.reset()">Kampanya oluştur</button>
+  </section>
+
+  <section v-else-if="store.campaigns" class="card flush">
+    <ul class="campaign-list">
       <li v-for="c in store.campaigns" :key="c.id">
         <button type="button" class="campaign-row" @click="store.openCampaign(c.id)">
           <span class="badge" :class="c.state">{{ stateLabels[c.state] }}</span>
@@ -61,7 +72,10 @@ onUnmounted(() => clearInterval(timer))
             <span class="campaign-brief">{{ c.brief || 'Brief girilmemiş' }}</span>
             <span class="campaign-meta">#{{ c.id }} · {{ when(c) }}</span>
           </span>
-          <span class="campaign-progress">{{ progress(c) }}</span>
+          <span class="campaign-progress">
+            <span class="meter" style="display: block"><span :style="{ width: percent(c) + '%' }" /></span>
+            {{ progress(c) }}
+          </span>
         </button>
       </li>
     </ul>

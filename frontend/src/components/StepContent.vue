@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import { renderSample, SAMPLE_RECIPIENT } from '../lib/template'
 import type { FieldError } from '../api/types'
+import AppIcon from './AppIcon.vue'
 import ErrorBox from './ErrorBox.vue'
 
 const store = useCampaignStore()
@@ -79,82 +80,92 @@ const otherApproveErrors = computed<FieldError[]>(() =>
 </script>
 
 <template>
-  <section class="card">
-    <h2>İçerik</h2>
-
-    <p v-if="store.streaming" class="status" role="status">
-      <span class="spinner" aria-hidden="true" />
-      {{ store.attempt > 1 ? `${store.attempt}. deneme yazılıyor…` : multilingual ? `${mainLabel} metinler yazılıyor…` : 'Metinler yazılıyor…' }}
-    </p>
-    <p v-else-if="store.contentMeta" class="hint">
-      Metinleri düzenleyebilirsin. Sayaçlar, değişkenler en uzun değerleriyle doldurulmuş halini ölçer; onayda sunucu aynı kontrolü yeniden yapar.
-    </p>
-
-    <!-- A rejected attempt is shown, not hidden: it explains the wait. -->
-    <div v-for="r in store.rejections" :key="r.attempt" class="alert warn">
-      <strong>{{ r.attempt }}. deneme doğrulamadan geçemedi{{ store.streaming || store.contentMeta ? ', yeniden yazdırıldı' : '' }}</strong>
-      <ul>
-        <li v-for="(e, i) in r.errors" :key="i"><code>{{ e.path }}</code> {{ e.message }}</li>
-      </ul>
+  <div class="page-head">
+    <div>
+      <h1>Mesajlar</h1>
+      <p class="lead">
+        Metinleri oku, istediğin gibi düzenle ve ne zaman gideceğini seç. Sayaçlar, değişkenler en uzun değerleriyle doldurulmuş halini ölçer.
+      </p>
     </div>
+  </div>
 
-    <ErrorBox v-if="store.contentError" :message="store.contentError.message" :details="store.contentError.details" />
+  <!-- A rejected attempt is shown, not hidden: it explains the wait. -->
+  <div v-for="r in store.rejections" :key="r.attempt" class="alert warn">
+    <strong>{{ r.attempt }}. deneme doğrulamadan geçemedi{{ store.streaming || store.contentMeta ? ', yeniden yazdırıldı' : '' }}</strong>
+    <ul>
+      <li v-for="(e, i) in r.errors" :key="i"><code>{{ e.path }}</code> {{ e.message }}</li>
+    </ul>
+  </div>
 
-    <!-- One tab per language of the audience. Each recipient gets their own. -->
-    <template v-if="multilingual && store.contentMeta && !store.contentError">
-      <div class="languages">
-        <div class="tabs" role="tablist" aria-label="Metnin dili">
-          <button
-            v-for="l in store.languages"
-            :key="l.language"
-            type="button"
-            role="tab"
-            class="tab"
-            :class="{ active: store.activeLanguage === l.language }"
-            :aria-selected="store.activeLanguage === l.language"
-            :disabled="!store.hasText(l.language)"
-            @click="store.activeLanguage = l.language"
-          >
-            {{ l.label }}
-            <span class="muted">· {{ l.reachable }} kişi</span>
-            <span v-if="!store.hasText(l.language)" class="tag">metin yok</span>
-            <span v-else-if="!busy && store.invalidLanguages.includes(l.language)" class="tag bad">düzeltilmeli</span>
-          </button>
-        </div>
-        <button v-if="!store.localizing && store.missingLanguages.length" type="button" :disabled="busy" @click="store.localize()">
-          {{ missing }} metnini yaz
-        </button>
-        <button v-else-if="!store.localizing && store.translationsStale" type="button" :disabled="busy" @click="store.localize()">
-          {{ written }} metnini yeniden yaz
+  <ErrorBox v-if="store.contentError" :message="store.contentError.message" :details="store.contentError.details" />
+
+  <section v-if="!store.contentError" class="card">
+    <div class="card-head">
+      <!-- One tab per language of the audience. Each recipient gets their own. -->
+      <div v-if="multilingual && store.contentMeta" class="tabs" role="tablist" aria-label="Metnin dili">
+        <button
+          v-for="l in store.languages"
+          :key="l.language"
+          type="button"
+          role="tab"
+          class="tab"
+          :class="{ active: store.activeLanguage === l.language }"
+          :aria-selected="store.activeLanguage === l.language"
+          :disabled="!store.hasText(l.language)"
+          @click="store.activeLanguage = l.language"
+        >
+          {{ l.label }}
+          <span class="count">{{ l.reachable }} kişi</span>
+          <span v-if="!store.hasText(l.language)" class="tag">metin yok</span>
+          <span v-else-if="!busy && store.invalidLanguages.includes(l.language)" class="tag bad">düzeltilmeli</span>
         </button>
       </div>
+      <h2 v-else class="card-title"><span class="icon"><AppIcon name="edit" /></span> Metinler</h2>
 
-      <p v-if="store.localizing" class="status" role="status">
+      <p v-if="store.streaming" class="status" style="margin: 0" role="status">
+        <span class="spinner" aria-hidden="true" />
+        {{ store.attempt > 1 ? `${store.attempt}. deneme yazılıyor…` : multilingual ? `${mainLabel} metinler yazılıyor…` : 'Metinler yazılıyor…' }}
+      </p>
+      <p v-else-if="store.localizing" class="status" style="margin: 0" role="status">
         <span class="spinner" aria-hidden="true" />
         {{ store.localizeAttempt > 1 ? `${store.localizeAttempt}. deneme: ` : '' }}{{ mainLabel }} metinden diğer diller yazılıyor…
       </p>
-      <p v-else-if="store.missingLanguages.length" class="alert info">
-        Kitlede {{ missing }} okuyan {{ missingReaders }} kişi var. Önce {{ mainLabel }} metni son haline getir, sonra “{{ missing }} metnini yaz”
-        ile onlara kendi dillerinde metin yazdır. Onay, bütün dillerin metni olunca açılır.
-        Kampanya yalnızca {{ mainLabel }} okuyanlara gidecekse “Geri” ile kitleye dön ve “Dil: {{ mainLabel }}” koşulunu ekle.
+      <button
+        v-else-if="multilingual && store.contentMeta && store.missingLanguages.length"
+        class="primary small"
+        type="button"
+        @click="store.localize()"
+      >
+        <AppIcon name="globe" :size="16" /> {{ missing }} metnini yaz
+      </button>
+      <button v-else-if="multilingual && store.contentMeta && store.translationsStale" class="small with-icon" type="button" @click="store.localize()">
+        <AppIcon name="globe" :size="16" /> {{ written }} metnini yeniden yaz
+      </button>
+    </div>
+
+    <template v-if="multilingual && store.contentMeta && !busy">
+      <p v-if="store.missingLanguages.length" class="alert info">
+        Kitlede <strong>{{ missing }}</strong> okuyan <strong>{{ missingReaders }} kişi</strong> var. Önce {{ mainLabel }} metni son haline getir, sonra
+        “{{ missing }} metnini yaz” ile onlara kendi dillerinde metin yazdır. Kampanya yalnızca {{ mainLabel }} okuyanlara gidecekse kitle adımına dön ve
+        “Dil: {{ mainLabel }}” koşulunu ekle.
       </p>
       <p v-else-if="store.translationsStale" class="alert warn">
         {{ mainLabel }} metin değişti; {{ written }} metin önceki halinden yazılmıştı. Yeniden yazdırabilir ya da elle güncelleyebilirsin.
       </p>
-
-      <div v-for="r in store.localizeRejections" :key="'l' + r.attempt" class="alert warn">
-        <strong>Diğer diller: {{ r.attempt }}. deneme doğrulamadan geçemedi{{ store.localizing || !store.localizeError ? ', yeniden yazdırıldı' : '' }}</strong>
-        <ul>
-          <li v-for="(e, i) in r.errors" :key="i"><code>{{ e.path }}</code> {{ e.message }}</li>
-        </ul>
-      </div>
-      <ErrorBox v-if="store.localizeError" :message="store.localizeError.message" :details="store.localizeError.details" />
     </template>
 
-    <div v-if="!store.contentError" class="compose">
+    <div v-for="r in store.localizeRejections" :key="'l' + r.attempt" class="alert warn">
+      <strong>Diğer diller: {{ r.attempt }}. deneme doğrulamadan geçemedi{{ store.localizing || !store.localizeError ? ', yeniden yazdırıldı' : '' }}</strong>
+      <ul>
+        <li v-for="(e, i) in r.errors" :key="i"><code>{{ e.path }}</code> {{ e.message }}</li>
+      </ul>
+    </div>
+    <ErrorBox v-if="store.localizeError" :message="store.localizeError.message" :details="store.localizeError.details" />
+
+    <div class="compose">
       <div>
         <div class="field">
-          <div class="row between">
+          <div class="label-row">
             <label for="sms">SMS</label>
             <span
               v-if="store.contentMeta"
@@ -175,7 +186,7 @@ const otherApproveErrors = computed<FieldError[]>(() =>
         </div>
 
         <div class="field">
-          <div class="row between">
+          <div class="label-row">
             <label for="subject">Email konusu</label>
             <span
               v-if="store.contentMeta"
@@ -209,7 +220,7 @@ const otherApproveErrors = computed<FieldError[]>(() =>
         </div>
 
         <template v-if="variables.length">
-          <p class="hint tight">Kullanılabilir değişkenler (en uzun değerleriyle sayılır):</p>
+          <p class="hint tight">Kişiye özel alanlar (en uzun değerleriyle sayılır):</p>
           <div class="variables">
             <span v-for="[name, length] in variables" :key="name">
               <code v-text="'{{' + name + '}}'" /> · {{ length }} karakter
@@ -220,7 +231,8 @@ const otherApproveErrors = computed<FieldError[]>(() =>
 
       <aside class="preview" aria-label="Önizleme">
         <p class="who">
-          Önizleme<template v-if="multilingual"> · {{ store.languageLabel(store.activeLanguage) }}</template> · örnek alıcı: {{ sampleName }}
+          <strong>Önizleme<template v-if="multilingual"> · {{ store.languageLabel(store.activeLanguage) }}</template></strong>
+          Örnek alıcı: {{ sampleName }}
         </p>
 
         <h3>SMS</h3>
@@ -245,11 +257,13 @@ const otherApproveErrors = computed<FieldError[]>(() =>
         </div>
       </aside>
     </div>
+  </section>
 
-    <ErrorBox v-if="store.approveError" :message="store.approveError.message" :details="otherApproveErrors" />
-
-    <fieldset v-if="store.contentMeta" class="schedule">
-      <legend>Ne zaman gönderilsin?</legend>
+  <section v-if="store.contentMeta" class="card" style="margin-top: 20px">
+    <div class="card-head">
+      <h2 class="card-title"><span class="icon"><AppIcon name="clock" /></span> Ne zaman gönderilsin?</h2>
+    </div>
+    <fieldset class="schedule">
       <label class="choice"><input v-model="store.sendMode" type="radio" value="now" /> Hemen</label>
       <label class="choice"><input v-model="store.sendMode" type="radio" value="later" /> Zamanla</label>
       <template v-if="store.sendMode === 'later'">
@@ -271,8 +285,20 @@ const otherApproveErrors = computed<FieldError[]>(() =>
         </p>
       </template>
     </fieldset>
+  </section>
 
-    <div class="actions">
+  <ErrorBox v-if="store.approveError" style="margin-top: 20px" :message="store.approveError.message" :details="otherApproveErrors" />
+
+  <div class="actionbar">
+    <p class="actionbar-info">
+      <template v-if="audience && store.contentMeta">
+        <strong>{{ audience.sms }} SMS</strong> ve <strong>{{ audience.email }} email</strong> kuyruğa alınacak.
+        <template v-if="multilingual && !store.missingLanguages.length">Her alıcı kendi dilindeki metni alır.</template>
+        <template v-else-if="multilingual">Onaylamak için önce {{ missing }} metnini yazdır.</template>
+      </template>
+      <template v-else-if="busy">Metinler hazırlanıyor…</template>
+    </p>
+    <div class="actionbar-buttons">
       <button type="button" :disabled="busy || store.approving" @click="store.step = 'audience'">Geri</button>
       <button type="button" :disabled="busy || store.approving" @click="store.generateContent()">Yeniden üret</button>
       <button
@@ -281,14 +307,10 @@ const otherApproveErrors = computed<FieldError[]>(() =>
         :disabled="!store.contentValid || !store.languagesResolved || busy || store.approving || store.scheduleProblem !== null"
         @click="store.approve()"
       >
+        <span v-if="store.approving" class="spinner" aria-hidden="true" />
+        <AppIcon v-else name="send" :size="18" />
         {{ store.approving ? 'Kuyruğa alınıyor…' : store.sendMode === 'later' ? 'Onayla ve zamanla' : 'Onayla ve gönder' }}
       </button>
     </div>
-    <p v-if="audience && store.contentMeta" class="hint">
-      Onaylarsan {{ audience.sms }} SMS ve {{ audience.email }} email kuyruğa alınır.
-      <template v-if="multilingual && !store.missingLanguages.length">Her alıcı kendi dilindeki metni alır.</template>
-      <template v-else-if="multilingual">Onaylamak için önce {{ missing }} metnini yazdır.</template>
-      Gönderim test sağlayıcısına yapılır; gerçek kimseye mesaj gitmez.
-    </p>
-  </section>
+  </div>
 </template>

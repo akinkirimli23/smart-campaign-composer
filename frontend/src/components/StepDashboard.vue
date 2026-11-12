@@ -29,7 +29,7 @@ function percent(part: number, total: number): number {
 }
 
 const totals = computed(() => {
-  const sum = { total: 0, sent: 0, failed: 0, skipped: 0, cancelled: 0, started: 0 }
+  const sum = { total: 0, sent: 0, failed: 0, skipped: 0, cancelled: 0, started: 0, waiting: 0 }
   for (const { id } of channels) {
     const c = counts(id)
     if (!c) continue
@@ -39,6 +39,7 @@ const totals = computed(() => {
     sum.skipped += c.skipped
     sum.cancelled += c.cancelled
     sum.started += c.total - c.pending - c.cancelled
+    sum.waiting += c.pending + c.sending
   }
   return sum
 })
@@ -67,67 +68,91 @@ async function cancel() {
 </script>
 
 <template>
-  <section class="card">
-    <button v-if="store.standalone" class="ghost back" type="button" @click="store.showCampaigns()">← Kampanyalar</button>
-    <h2>Gönderim <span v-if="store.campaign" class="muted">· kampanya #{{ store.campaign.id }}</span></h2>
-    <p v-if="store.status?.brief" class="brief-quote">{{ store.status.brief }}</p>
-    <p v-if="store.status?.languages && store.status.languages.length > 1" class="hint tight">
-      Metin dilleri: {{ store.status.languages.map((code) => code.toUpperCase()).join(' · ') }}. Her alıcı kendi dilindeki metni alır.
-    </p>
-
-    <p v-if="store.statusError" class="alert error" role="alert">{{ store.statusError }}</p>
-
-    <div v-if="cancelled" class="alert warn" role="status">
-      <strong>Kampanya iptal edildi.</strong>
-      {{ totals.cancelled }} mesaj gönderilmedi<template v-if="totals.sent">; iptalden önce {{ totals.sent }} mesaj teslim edilmişti</template>.
+  <button v-if="store.standalone" class="ghost back with-icon" type="button" @click="store.showCampaigns()">
+    <AppIcon name="arrow-left" :size="16" /> Kampanyalar
+  </button>
+  <div class="page-head">
+    <div>
+      <h1>Gönderim <span v-if="store.campaign" class="muted">· kampanya #{{ store.campaign.id }}</span></h1>
+      <p v-if="store.status?.brief" class="brief-quote">{{ store.status.brief }}</p>
+      <p v-if="store.status?.languages && store.status.languages.length > 1" class="hint tight" style="margin-top: 8px">
+        Metin dilleri: {{ store.status.languages.map((code) => code.toUpperCase()).join(' · ') }}. Her alıcı kendi dilindeki metni alır.
+      </p>
     </div>
-    <p v-else-if="store.done" class="alert ok" role="status">
-      Gönderim tamamlandı: {{ totals.sent }} / {{ totals.total }} mesaj teslim edildi<template v-if="totals.failed">, {{ totals.failed }} başarısız</template><template v-if="totals.skipped">, {{ totals.skipped }} atlandı</template>.
-    </p>
-    <div v-else-if="waiting" class="alert info" role="status">
-      <div class="row">
-        <span><strong>Zamanlandı.</strong> Gönderim {{ startsAt }} tarihinde başlayacak.</span>
-        <button v-if="!confirming" class="danger" type="button" :disabled="store.cancelling" @click="confirming = true">
-          {{ store.cancelling ? 'İptal ediliyor…' : 'Kampanyayı iptal et' }}
-        </button>
-      </div>
-      <div v-if="confirming" class="row confirm">
-        <span>Kampanya iptal edilsin mi? Hiçbir mesaj gönderilmeyecek ve bu geri alınamaz.</span>
-        <span class="row">
-          <button type="button" @click="confirming = false">Vazgeç</button>
-          <button class="danger" type="button" @click="cancel">Evet, iptal et</button>
-        </span>
-      </div>
-    </div>
-    <template v-else-if="store.status">
-      <div class="row between">
-        <p class="status" role="status"><span class="spinner" aria-hidden="true" /> Gönderiliyor… sayılar canlı güncellenir.</p>
-        <button v-if="!confirming" class="ghost danger" type="button" :disabled="store.cancelling" @click="confirming = true">
-          {{ store.cancelling ? 'Durduruluyor…' : 'Gönderimi durdur' }}
-        </button>
-      </div>
-      <div v-if="confirming" class="alert warn">
-        <div class="row">
-          <span>Gönderim durdurulsun mu? Henüz gönderilmemiş mesajlar iptal edilir; gönderilenler geri alınamaz.</span>
-          <span class="row">
-            <button type="button" @click="confirming = false">Vazgeç</button>
-            <button class="danger" type="button" @click="cancel">Evet, durdur</button>
-          </span>
-        </div>
-      </div>
-    </template>
+    <button class="primary" type="button" @click="store.reset()"><AppIcon name="plus" :size="18" /> Yeni kampanya</button>
+  </div>
 
-    <p v-if="!store.status && !store.statusError" class="status" role="status">
-      <span class="spinner" aria-hidden="true" /> Yükleniyor…
-    </p>
+  <p v-if="store.statusError" class="alert error" role="alert">{{ store.statusError }}</p>
+
+  <div v-if="cancelled" class="alert warn" role="status">
+    <strong>Kampanya iptal edildi.</strong>
+    {{ totals.cancelled }} mesaj gönderilmedi<template v-if="totals.sent">; iptalden önce {{ totals.sent }} mesaj teslim edilmişti</template>.
+  </div>
+  <p v-else-if="store.done" class="alert ok" role="status">
+    Gönderim tamamlandı: {{ totals.sent }} / {{ totals.total }} mesaj teslim edildi<template v-if="totals.failed">, {{ totals.failed }} başarısız</template><template v-if="totals.skipped">, {{ totals.skipped }} atlandı</template>.
+  </p>
+  <div v-else-if="waiting" class="alert info" role="status">
+    <div class="row">
+      <span><strong>Zamanlandı.</strong> Gönderim {{ startsAt }} tarihinde başlayacak.</span>
+      <button v-if="!confirming" class="danger small" type="button" :disabled="store.cancelling" @click="confirming = true">
+        {{ store.cancelling ? 'İptal ediliyor…' : 'Kampanyayı iptal et' }}
+      </button>
+    </div>
+    <div v-if="confirming" class="row confirm">
+      <span>Kampanya iptal edilsin mi? Hiçbir mesaj gönderilmeyecek ve bu geri alınamaz.</span>
+      <span class="row">
+        <button class="small" type="button" @click="confirming = false">Vazgeç</button>
+        <button class="danger small" type="button" @click="cancel">Evet, iptal et</button>
+      </span>
+    </div>
+  </div>
+  <div v-else-if="store.status" class="alert info" role="status">
+    <div class="row">
+      <span class="row"><span class="spinner" aria-hidden="true" /> Gönderiliyor… sayılar canlı güncellenir.</span>
+      <button v-if="!confirming" class="danger small" type="button" :disabled="store.cancelling" @click="confirming = true">
+        {{ store.cancelling ? 'Durduruluyor…' : 'Gönderimi durdur' }}
+      </button>
+    </div>
+    <div v-if="confirming" class="row confirm">
+      <span>Gönderim durdurulsun mu? Henüz gönderilmemiş mesajlar iptal edilir; gönderilenler geri alınamaz.</span>
+      <span class="row">
+        <button class="small" type="button" @click="confirming = false">Vazgeç</button>
+        <button class="danger small" type="button" @click="cancel">Evet, durdur</button>
+      </span>
+    </div>
+  </div>
+
+  <p v-if="!store.status && !store.statusError" class="status" role="status">
+    <span class="spinner" aria-hidden="true" /> Yükleniyor…
+  </p>
+
+  <template v-if="store.status">
+    <dl class="tiles">
+      <div class="tile">
+        <dt>Toplam mesaj</dt>
+        <dd>{{ totals.total }}</dd>
+      </div>
+      <div class="tile ok">
+        <dt>Teslim edildi</dt>
+        <dd>{{ totals.sent }}</dd>
+      </div>
+      <div class="tile">
+        <dt>Sırada</dt>
+        <dd>{{ totals.waiting }}</dd>
+      </div>
+      <div class="tile" :class="{ bad: totals.failed > 0 }">
+        <dt>Başarısız</dt>
+        <dd>{{ totals.failed }}</dd>
+      </div>
+    </dl>
 
     <div class="channels">
       <template v-for="ch in channels" :key="ch.id">
-        <div v-if="counts(ch.id)" class="channel" :class="ch.id">
+        <section v-if="counts(ch.id)" class="card channel" :class="ch.id">
           <div class="channel-head">
             <span class="icon"><AppIcon :name="ch.id" /></span>
             <div>
-              <h3>{{ ch.label }}</h3>
+              <h2>{{ ch.label }}</h2>
               <p class="muted">{{ counts(ch.id)!.sent }} / {{ counts(ch.id)!.total }} teslim edildi</p>
             </div>
             <span class="percent">{{ Math.floor(percent(counts(ch.id)!.sent, counts(ch.id)!.total)) }}%</span>
@@ -155,15 +180,12 @@ async function cancel() {
               </div>
             </template>
           </dl>
-        </div>
+        </section>
       </template>
     </div>
 
-    <p class="hint">
+    <p class="hint" style="margin-top: 16px">
       “Bekliyor” yeniden denenecek mesajları da içerir. “Atlandı”, onaydan sonra izni ya da adresi kalkan alıcılardır.
     </p>
-    <div class="actions">
-      <button class="primary" type="button" @click="store.reset()">Yeni kampanya</button>
-    </div>
-  </section>
+  </template>
 </template>

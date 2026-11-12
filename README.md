@@ -54,7 +54,11 @@ docker compose --profile test run --rm --build web-test
 
 `docker compose up --build` bittikten sonra arayüz **http://localhost:3000** adresindedir.
 
-1. **Brief.** Kampanyayı kendi cümlelerinle yaz ("Örnek brief'i kullan" hazır bir metin koyar).
+Üst menüde iki bölüm var: **Kampanya oluştur** (dört adımlı akış) ve **Kampanyalar** (liste).
+Adım çubuğundan tamamlanmış bir adıma geri dönülebilir; her adımın ana düğmeleri ekranın altında
+sabit durur.
+
+1. **Brief.** Kampanyayı kendi cümlelerinle yaz ya da hazır örneklerden birini seç.
 2. **Kitle.** Kuraldan türetilen açıklama, modelin yorumları ve kanal bazlı kişi sayıları.
    "Koşulları düzenle" bir form açar: koşullar listeden seçilerek değiştirilir, eklenir ya da
    kaldırılır; uygulandığında kural yeniden doğrulanır ve sayılar güncellenir.
@@ -269,7 +273,9 @@ kurulumun kendisi.
 - **Gerçek Claude ile uçtan uca deneme yapılmadı.** Geliştirme boyunca mock LLM kullanıldı.
   İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
   gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
-- Arayüz masaüstü genişliğinde ve koyu temada denendi; dar ekran ve açık tema denenmedi.
+- Arayüz masaüstü genişliğinde denendi; dar ekran düzeni yazıldı ama denenmedi. Açık ve koyu
+  tema var (üst menüdeki düğme; seçim yapılmazsa sistem ayarı izlenir); son tasarımda koyu tema
+  gözle, açık tema yalnızca çalışırlık açısından kontrol edildi.
 - Ekran bileşenleri için otomatik test yok; mantık ve durum birim testleriyle, ekranlar tarayıcıda
   elle denendi.
 - Oluşturma adımlarındayken (brief, kitle, içerik) sayfa yenilenirse akış baştan başlar.

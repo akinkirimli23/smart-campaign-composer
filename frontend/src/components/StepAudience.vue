@@ -51,114 +51,151 @@ const suggestedAt = computed(() => {
 })
 
 const reachable = computed(() => (audience.value ? audience.value.sms + audience.value.email > 0 : false))
+
+// Share of each language among the reachable audience, for the bars.
+const languageShares = computed(() => {
+  const languages = segment.value?.languages ?? []
+  const total = languages.reduce((sum, l) => sum + l.reachable, 0)
+  return languages.map((l) => ({ ...l, percent: total ? Math.round((l.reachable / total) * 100) : 0 }))
+})
 </script>
 
 <template>
-  <section v-if="segment?.status === 'unsupported'" class="card">
-    <h2>Bu brief için kitle kuralı çıkarılamadı</h2>
-    <div class="alert warn" role="alert">
-      <strong>{{ segment.unsupported?.reason }}</strong>
-      <ul v-if="segment.unsupported?.phrases.length">
-        <li v-for="p in segment.unsupported.phrases" :key="p">“{{ p }}”</li>
-      </ul>
-    </div>
-    <p class="hint">Eksik koşullu bir kural daha geniş bir kitleye gönderim demek olurdu, bu yüzden kısmi bir kural önermiyoruz. Brief'i sadeleştirip yeniden deneyebilirsin.</p>
-    <div class="actions">
-      <button class="primary" type="button" @click="store.step = 'brief'">Brief'i düzenle</button>
-    </div>
-  </section>
-
-  <section v-else-if="segment && segment.rule && audience" class="card">
-    <h2>Kitle</h2>
-
-    <template v-if="editing && store.ruleOptions">
-      <p class="hint">Koşulları değiştir, ekle ya da kaldır. Uyguladığında kural yeniden doğrulanır ve kişi sayıları güncellenir.</p>
-      <RuleEditor
-        :rule="segment.rule"
-        :options="store.ruleOptions"
-        :busy="store.segmentLoading"
-        :errors="store.segmentError?.details ?? []"
-        @apply="apply"
-        @cancel="cancel"
-      />
-      <p v-if="store.segmentError && !store.segmentError.details.length" class="alert error" role="alert">{{ store.segmentError.message }}</p>
-    </template>
-
-    <template v-else>
-      <p class="hint">Bu açıklama kuraldan türetilir; gönderimde tam olarak bu kitle kullanılır.</p>
-
-      <div class="row between">
-        <p class="summary">{{ segment.description?.summary }}</p>
-        <button class="ghost" type="button" :disabled="!store.ruleOptions" @click="startEditing">Koşulları düzenle</button>
+  <template v-if="segment?.status === 'unsupported'">
+    <div class="page-head">
+      <div>
+        <h1>Bu brief için kitle çıkarılamadı</h1>
+        <p class="lead">Brief'teki bir istek, kitle kurallarıyla ifade edilemiyor.</p>
       </div>
-      <ul class="conditions">
-        <li v-for="(line, i) in segment.description?.conditions ?? []" :key="i">
-          {{ line }}
-          <p v-for="a in assumptionsFor(i)" :key="a.phrase" class="assumption">
-            <span class="tag">Yorum</span> “{{ a.phrase }}” → {{ a.interpretation }}
-          </p>
-        </li>
-      </ul>
-
-      <dl class="stats">
-        <div class="stat">
-          <span class="icon"><AppIcon name="users" /></span>
-          <div>
-            <dt>Kurala uyan</dt>
-            <dd>{{ audience.total }}</dd>
-          </div>
-        </div>
-        <div class="stat sms">
-          <span class="icon"><AppIcon name="sms" /></span>
-          <div>
-            <dt>SMS gidecek</dt>
-            <dd>{{ audience.sms }}</dd>
-          </div>
-        </div>
-        <div class="stat email">
-          <span class="icon"><AppIcon name="email" /></span>
-          <div>
-            <dt>Email gidecek</dt>
-            <dd>{{ audience.email }}</dd>
-          </div>
-        </div>
-        <div class="stat off">
-          <span class="icon"><AppIcon name="user-off" /></span>
-          <div>
-            <dt>Ulaşılamayan</dt>
-            <dd>{{ audience.unreachable }}</dd>
-          </div>
-        </div>
-      </dl>
-      <p class="hint">Bir kanaldan gönderim için hem izin hem adres gerekir. Ulaşılamayanlar iki kanalda da bunlardan birine sahip değil.</p>
-      <p v-if="segment.languages && segment.languages.length > 1" class="hint">
-        Ulaşılabilenlerin dili:
-        <template v-for="(l, i) in segment.languages" :key="l.language">{{ i ? ' · ' : ' ' }}{{ l.label }} {{ l.reachable }} kişi</template>.
-        İçerik önce {{ segment.languages[0]?.label }} yazılır; diğer diller içerik adımında tek seferde eklenir ve herkes kendi dilindeki metni alır.
-      </p>
-
-      <details v-if="debug" class="advanced">
-        <summary>Geliştirici görünümü: kural (JSON)</summary>
-        <textarea v-model="ruleDraft" rows="12" spellcheck="false" class="mono" aria-label="Kural JSON" />
-        <button type="button" :disabled="store.segmentLoading" @click="store.recountSegment(ruleDraft)">
-          {{ store.segmentLoading ? 'Doğrulanıyor…' : 'Doğrula ve yeniden say' }}
-        </button>
-      </details>
-
-      <p v-if="store.scheduleSuggestion" class="alert info">
-        <strong>Gönderim zamanı önerisi:</strong> {{ suggestedAt }}
-        (brief'teki “{{ store.scheduleSuggestion.phrase }}”). Onay adımında görür ve değiştirebilirsin.
-      </p>
-
-      <ErrorBox v-if="store.segmentError" :message="store.segmentError.message" :details="store.segmentError.details" />
-
+    </div>
+    <section class="card">
+      <div class="alert warn" role="alert">
+        <strong>{{ segment.unsupported?.reason }}</strong>
+        <ul v-if="segment.unsupported?.phrases.length">
+          <li v-for="p in segment.unsupported.phrases" :key="p">“{{ p }}”</li>
+        </ul>
+      </div>
+      <p class="hint tight">Eksik koşullu bir kural daha geniş bir kitleye gönderim demek olurdu, bu yüzden kısmi bir kural önermiyoruz. Brief'i sadeleştirip yeniden deneyebilirsin.</p>
       <div class="actions">
+        <button class="primary" type="button" @click="store.step = 'brief'"><AppIcon name="arrow-left" :size="18" /> Brief'i düzenle</button>
+      </div>
+    </section>
+  </template>
+
+  <template v-else-if="segment && segment.rule && audience">
+    <div class="page-head">
+      <div>
+        <h1>Hedef kitle</h1>
+        <p class="lead">Brief'inden çıkardığımız kitle bu. Uygun değilse koşulları düzenleyebilirsin; gönderimde tam olarak bu kitle kullanılır.</p>
+      </div>
+    </div>
+
+    <div class="layout">
+      <section class="card">
+        <template v-if="editing && store.ruleOptions">
+          <div class="card-head">
+            <h2 class="card-title"><span class="icon"><AppIcon name="edit" /></span> Koşulları düzenle</h2>
+          </div>
+          <p class="hint">Koşulları değiştir, ekle ya da kaldır. Uyguladığında kural yeniden doğrulanır ve kişi sayıları güncellenir.</p>
+          <RuleEditor
+            :rule="segment.rule"
+            :options="store.ruleOptions"
+            :busy="store.segmentLoading"
+            :errors="store.segmentError?.details ?? []"
+            @apply="apply"
+            @cancel="cancel"
+          />
+          <p v-if="store.segmentError && !store.segmentError.details.length" class="alert error" role="alert">{{ store.segmentError.message }}</p>
+        </template>
+
+        <template v-else>
+          <div class="card-head">
+            <h2 class="card-title"><span class="icon"><AppIcon name="users" /></span> Kimlere gidecek?</h2>
+            <button class="small with-icon" type="button" :disabled="!store.ruleOptions" @click="startEditing">
+              <AppIcon name="edit" :size="16" /> Koşulları düzenle
+            </button>
+          </div>
+
+          <p class="summary">{{ segment.description?.summary }}</p>
+          <ul class="conditions">
+            <li v-for="(line, i) in segment.description?.conditions ?? []" :key="i">
+              <span class="check"><AppIcon name="check" :size="14" /></span>
+              <div>
+                {{ line }}
+                <p v-for="a in assumptionsFor(i)" :key="a.phrase" class="assumption">
+                  <span class="tag">Yorum</span> “{{ a.phrase }}” → {{ a.interpretation }}
+                </p>
+              </div>
+            </li>
+          </ul>
+
+          <details v-if="debug" class="advanced">
+            <summary>Geliştirici görünümü: kural (JSON)</summary>
+            <textarea v-model="ruleDraft" rows="12" spellcheck="false" class="mono" aria-label="Kural JSON" />
+            <button type="button" :disabled="store.segmentLoading" @click="store.recountSegment(ruleDraft)">
+              {{ store.segmentLoading ? 'Doğrulanıyor…' : 'Doğrula ve yeniden say' }}
+            </button>
+          </details>
+
+          <ErrorBox v-if="store.segmentError" style="margin-top: 16px" :message="store.segmentError.message" :details="store.segmentError.details" />
+        </template>
+      </section>
+
+      <aside class="stack">
+        <section class="card">
+          <h2>Kitle büyüklüğü</h2>
+          <p class="big-number" style="margin-top: 10px">{{ audience.total }}</p>
+          <p class="muted">kişi kurala uyuyor</p>
+          <ul class="reach">
+            <li class="sms">
+              <span class="icon"><AppIcon name="sms" /></span> SMS gidecek
+              <span class="value">{{ audience.sms }}</span>
+            </li>
+            <li class="email">
+              <span class="icon"><AppIcon name="email" /></span> Email gidecek
+              <span class="value">{{ audience.email }}</span>
+            </li>
+            <li class="off">
+              <span class="icon"><AppIcon name="user-off" /></span> Ulaşılamayan
+              <span class="value">{{ audience.unreachable }}</span>
+            </li>
+          </ul>
+          <p class="hint tight">Bir kanaldan gönderim için hem izin hem adres gerekir.</p>
+        </section>
+
+        <section v-if="languageShares.length > 1" class="card">
+          <h2 class="card-title"><span class="icon"><AppIcon name="globe" /></span> Diller</h2>
+          <div class="language-bars">
+            <div v-for="l in languageShares" :key="l.language" class="language-bar">
+              <div class="row">
+                <span>{{ l.label }}</span>
+                <span class="muted">{{ l.reachable }} kişi · %{{ l.percent }}</span>
+              </div>
+              <div class="meter"><span :style="{ width: l.percent + '%' }" /></div>
+            </div>
+          </div>
+          <p class="hint tight" style="margin-top: 12px">Herkes kendi dilindeki mesajı alır. Metin önce {{ languageShares[0]?.label }} yazılır, diğer diller sonraki adımda eklenir.</p>
+        </section>
+
+        <section v-if="store.scheduleSuggestion" class="card">
+          <h2 class="card-title"><span class="icon"><AppIcon name="clock" /></span> Gönderim zamanı önerisi</h2>
+          <p style="margin-top: 6px"><strong>{{ suggestedAt }}</strong></p>
+          <p class="hint tight">Brief'teki “{{ store.scheduleSuggestion.phrase }}” ifadesinden. Sonraki adımda değiştirebilirsin.</p>
+        </section>
+      </aside>
+    </div>
+
+    <div v-if="!editing" class="actionbar">
+      <p class="actionbar-info">
+        <template v-if="reachable"><strong>{{ audience.sms }} SMS</strong> ve <strong>{{ audience.email }} email</strong> gönderilecek.</template>
+        <template v-else>Bu kitlede ulaşılabilen kimse yok.</template>
+      </p>
+      <div class="actionbar-buttons">
         <button type="button" @click="store.step = 'brief'">Geri</button>
         <button class="primary" type="button" :disabled="!reachable || store.segmentLoading" @click="store.generateContent()">
-          İçerik üret
+          Mesajları yaz <AppIcon name="arrow-right" :size="18" />
         </button>
       </div>
-      <p v-if="!reachable" class="hint">Bu kitlede ulaşılabilen kimse yok.</p>
-    </template>
-  </section>
+    </div>
+  </template>
 </template>

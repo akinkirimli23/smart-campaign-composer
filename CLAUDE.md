@@ -292,6 +292,11 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Adres: `store.route` hesaplanır, `App.vue` hash ile iki yönlü eşitler; `store.navigate` hash'ten
   gelen adrese gider. Yeni bir ekran eklersen `lib/route.ts`, `route` ve `navigate` üçünü birlikte
   güncelle.
+- Sayfa düzeni (`App.vue`, `style.css`): yapışkan üst menü (Kampanya oluştur / Kampanyalar, tema
+  düğmesi), tıklanabilir adım çubuğu, her ekranda `.page-head` başlığı + kartlar, adımın ana
+  düğmeleri altta yapışkan `.actionbar` içinde. Renkler `style.css` başındaki token'lardan gelir;
+  koyu tema değerleri iki yerde durur (medya sorgusu ve `data-theme`), birini değiştirirsen
+  diğerini de değiştir. Tema seçimi `lib/theme.ts` (localStorage; seçim yoksa sistem ayarı).
 - Onay ekranında "Hemen / Zamanla" seçimi; pano zamanlanmış kampanyada başlangıç saatini ve
   iptal butonunu gösterir. İptal iki tıklamadır ve sayfanın içinde sorulur (tarayıcı penceresi
   değil).
