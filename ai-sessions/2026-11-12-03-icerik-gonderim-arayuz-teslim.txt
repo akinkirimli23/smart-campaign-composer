@@ -40,7 +40,7 @@ Bu dosya Claude masaüstü uygulamasının oturum dışa aktarımından (JSONL) 
 ● Read(C:\dev\smart-campaign-composer\ai-sessions\2026-11-11-030205-pastedcontent-id3558.txt)
 
   ⎿ 1	 ▐▛███▛█   Claude Code v2.1.322
-    2	▝▜██████▀  Opus 5.5 · Claude Max
+    2	▝▜██████▀  Opus 5.5
     3	 ▝▝   ▝▝   C:\dev\smart-campaign-composer
     4	
     5	  Fable 5.2 is here for your longest and toughest coding tasks. It draws down usage faster than Opus 5.5. Switch with /model.
@@ -386,7 +386,7 @@ Bu dosya Claude masaüstü uygulamasının oturum dışa aktarımından (JSONL) 
   | Email, telefon | Yok |
   | Windows kullanıcı adı | 1 yer: satır 1120'de `C:/Users/<user>/...` geçici dosya yolu. `C:/Users/<user>/` yaptım. |
   | GitHub kullanıcı adı (`akinkirimli23`) | Import yollarında geçiyor. Repo adresinde zaten açık olduğu için dokunmadım. |
-  | "Claude Max" (satır 2, abonelik türü) | Kişisel bilgi saymadım, duruyor. İstersen silerim. |
+  | "<abonelik>" (satır 2, abonelik türü) | Kişisel bilgi saymadım, duruyor. İstersen silerim. |
   
   - **Commit:** `b5014b2` olarak push'landı.
   - **Kökteki kopya:** Repo kökünde aynı export'un temizlenmemiş, birebir aynı bir kopyası vardı (untracked). İleride yanlışlıkla commit'lenmesin diye sildim.

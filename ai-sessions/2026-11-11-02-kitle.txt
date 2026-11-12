@@ -1,5 +1,5 @@
  ▐▛███▛█   Claude Code v2.1.322
-▝▜██████▀  Opus 5.5 · Claude Max
+▝▜██████▀  Opus 5.5
  ▝▝   ▝▝   C:\dev\smart-campaign-composer
 
   Fable 5.2 is here for your longest and toughest coding tasks. It draws down usage faster than Opus 5.5. Switch with /model.
