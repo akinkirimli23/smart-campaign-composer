@@ -80,7 +80,7 @@ sonrakine geçilir.
 | 3 | İçerik | Akışlı (SSE) SMS / email üretimi, değişkenler doldurulduktan sonra karakter limiti kontrolü, hatalı çıktıda hatayı Claude'a geri verip sınırlı sayıda yeniden deneme | Mock LLM'in bozuk JSON, limiti aşan SMS ve bilinmeyen değişken senaryoları testte doğru ele alınıyor | ✅ |
 | 4 | Gönderim | `campaigns` / `messages` tabloları, worker, kanal başına 100/sn, retry + backoff, 429'da `Retry-After`'a uyma; hata, gecikme ve 429 döndüren mock provider | Testte aynı kişiye iki kez mesaj gitmiyor ve hız limiti aşılmıyor; mock provider `docker compose up` ile kalkıyor | ✅ |
 | 5 | Frontend | Vue 3 + TS + Pinia: brief → kitle → içerik → onay → canlı pano akışı; metrics endpoint'i | Mock LLM ile tarayıcıda brief'ten canlı panoya uçtan uca bir kampanya gönderilebiliyor; panodaki sayılar metrics endpoint'iyle tutarlı; pazarlamacının elle düzenlediği metin onay anında backend'de yeniden doğrulanıyor (SMS 160, konu 80, yalnızca izinli değişkenler); arayüz karakter sayısını canlı gösteriyor | ✅ |
-| 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi, "Case gereksinimleri" listesinin madde madde kontrolü | Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş; gerçek Claude ile en az bir uçtan uca deneme yapıldı ya da yapılmadığı README'de yazıyor; "Case gereksinimleri" listesindeki her madde işaretli ya da README'de eksik olarak belirtilmiş | ⏳ |
+| 6 | Teslim | README, DECISIONS, CI (GitHub Actions), `ai-sessions/`, temiz kurulum denemesi, "Case gereksinimleri" listesinin madde madde kontrolü | Temiz bir clone'da README'deki adımlarla `docker compose up --build` ve testler çalışıyor; CI yeşil; `ai-sessions/` key ve kişisel bilgiden temizlenmiş; gerçek Claude ile en az bir uçtan uca deneme yapıldı ya da yapılmadığı README'de yazıyor; "Case gereksinimleri" listesindeki her madde işaretli ya da README'de eksik olarak belirtilmiş | ✅ |
 
 ### Sınırlar
 
@@ -159,7 +159,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
 | `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (26 kayıt) |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | 1–2. oturumlar ✅; aşama 3–6 oturumunun export'u **eksik** |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum; üçüncüsü 12 Kasım'daki haliyle (sonrasında çalışılırsa yeniden alınmalı) |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
@@ -254,7 +254,7 @@ Kararlar DECISIONS 23–24'te. Kısaca:
   npm run dev` (Vite `/api`'yi `:8080`'e iletir).
 - Tarayıcıda uçtan uca deneme mock LLM ile yapıldı; gerçek Claude key'i ile yapılmadı.
 
-## Teslim (aşama 6, sürüyor)
+## Teslim (aşama 6, tamam)
 
 Bitti ölçütlerinin durumu:
 
@@ -262,11 +262,12 @@ Bitti ölçütlerinin durumu:
 |---|---|
 | Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
 | CI yeşil | ✅ 12 Kasım: üç iş de (backend, frontend, compose) yeşil. İlk dört çalışma GitHub Actions arızası (11 Kasım 20:48 UTC) yüzünden kuyrukta kaldı; iptal edilebilir |
-| `ai-sessions/` temiz | ⏳ İlk iki export tarandı. Aşama 3–6'nın export'u kullanıcıdan bekleniyor; gelince taranacak |
+| `ai-sessions/` temiz | ✅ Üç export var ve tarandı. Üçüncüsü (aşama 3–6) masaüstü uygulamasının dışa aktarımından metne çevrildi; araç çıktıları kısaltıldı, yerel kullanıcı adı ve e-posta gizlendi. 12 Kasım'daki export anına kadarını içerir |
 | Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ Yapılmadı; README "Bilinen eksikler"de yazıyor. Key gelirse denenir ve README güncellenir |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
 
-Kalan işler bittiğinde yukarıdaki durum tablosunda aşama 6 ✅ yapılır.
+Bütün ölçütler sağlandı; aşama 6 tamam. Teslimden önce bu oturumda çalışmaya devam edilirse
+üçüncü export yeniden alınır.
 
 - CI üç iş çalıştırır: backend (gofmt, vet, `-race` ile testler, Postgres servisine karşı),
   frontend (`npm ci`, test, build), compose (README'deki kurulum + örnek brief'in kitle sayısı).
