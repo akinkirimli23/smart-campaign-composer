@@ -26,6 +26,23 @@ type fakeCampaigns struct {
 	err     error
 
 	cancelled int
+
+	recipientsStatus string
+	recipientsLimit  int
+	recipientsOffset int
+}
+
+func (f *fakeCampaigns) Recipients(_ context.Context, id int64, status string, limit, offset int) (campaign.RecipientPage, error) {
+	if id != 7 {
+		return campaign.RecipientPage{}, campaign.ErrNotFound
+	}
+	if status == "lost" {
+		return campaign.RecipientPage{}, campaign.ErrUnknownStatus
+	}
+	f.recipientsStatus, f.recipientsLimit, f.recipientsOffset = status, limit, offset
+	return campaign.RecipientPage{Total: 3, Offset: offset, Recipients: []campaign.Recipient{
+		{UserID: 12, Name: "Ayşe Yılmaz", Channel: "sms", Address: "+90••••••••12", Language: "tr", Status: "failed", Attempts: 5, Error: "gave up after 5 attempts"},
+	}}, nil
 }
 
 func (f *fakeCampaigns) Create(_ context.Context, _ string, rule segment.Rule, c content.Localized, asOf, sendAt time.Time) (campaign.Created, error) {
@@ -386,5 +403,41 @@ func TestCampaignCreateLocalized(t *testing.T) {
 		store.content.For("en").SMS != "Hi {{first_name}}, 30% off!" ||
 		store.content.For("tr").SMS != "Merhaba {{first_name}}, %30 indirim!" {
 		t.Errorf("store got %+v", store.content)
+	}
+}
+
+// The recipient list passes the filter and the page on to the store and
+// refuses what cannot be a filter or a page.
+func TestCampaignRecipients(t *testing.T) {
+	store := &fakeCampaigns{}
+	rec, body := campaignRequest(t, store, http.MethodGet, "/api/campaigns/7/recipients?status=failed&limit=20&offset=40", "")
+	if rec.Code != http.StatusOK || body["total"] != float64(3) || body["offset"] != float64(40) {
+		t.Fatalf("status %d, body %v", rec.Code, body)
+	}
+	first := body["recipients"].([]any)[0].(map[string]any)
+	if first["name"] != "Ayşe Yılmaz" || first["address"] != "+90••••••••12" || first["error"] != "gave up after 5 attempts" {
+		t.Errorf("recipient = %v", first)
+	}
+	if store.recipientsStatus != "failed" || store.recipientsLimit != 20 || store.recipientsOffset != 40 {
+		t.Errorf("store got status %q, limit %d, offset %d", store.recipientsStatus, store.recipientsLimit, store.recipientsOffset)
+	}
+
+	// No parameters: everything, from the start; the store picks the page size.
+	if rec, _ := campaignRequest(t, store, http.MethodGet, "/api/campaigns/7/recipients", ""); rec.Code != http.StatusOK ||
+		store.recipientsStatus != "" || store.recipientsLimit != 0 || store.recipientsOffset != 0 {
+		t.Errorf("defaults: status %d, store got %q %d %d", rec.Code, store.recipientsStatus, store.recipientsLimit, store.recipientsOffset)
+	}
+
+	for path, want := range map[string]int{
+		"/api/campaigns/8/recipients":             404,
+		"/api/campaigns/abc/recipients":           400,
+		"/api/campaigns/7/recipients?status=lost": 400,
+		"/api/campaigns/7/recipients?limit=-1":    400,
+		"/api/campaigns/7/recipients?offset=x":    400,
+		"/api/campaigns/7/recipients?offset=1e9":  400,
+	} {
+		if rec, _ := campaignRequest(t, store, http.MethodGet, path, ""); rec.Code != want {
+			t.Errorf("%s: status %d, want %d", path, rec.Code, want)
+		}
 	}
 }

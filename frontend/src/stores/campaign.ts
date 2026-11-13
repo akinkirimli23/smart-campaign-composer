@@ -16,6 +16,8 @@ import type {
   Lengths,
   LocalizedContent,
   LocalizeEvent,
+  MessageStatus,
+  Recipient,
   RuleOptions,
   SegmentResponse,
 } from '../api/types'
@@ -77,8 +79,9 @@ export const useCampaignStore = defineStore('campaign', () => {
   const step = ref<Step>('brief')
   const brief = ref('')
 
-  // "compose" is the four-step flow; "campaigns" is the list of campaigns.
-  const view = ref<'compose' | 'campaigns'>('compose')
+  // "home" is the landing page, "compose" the four-step flow, "campaigns"
+  // the list of campaigns.
+  const view = ref<'home' | 'compose' | 'campaigns'>('compose')
   // The dashboard shows a campaign opened from the list or a link, not one
   // that just came through the steps.
   const standalone = ref(false)
@@ -444,14 +447,78 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
+  // --- recipients of the campaign on the dashboard ---------------------------------
+  // The people behind the numbers, in a panel the marketer opens on demand:
+  // nothing is fetched until then. A page at a time; the list is a snapshot
+  // (the counts on the dashboard are live), reloaded when the campaign
+  // finishes while the panel is open.
+  const recipientsOpen = ref(false)
+  const recipients = ref<Recipient[]>([])
+  const recipientsTotal = ref(0)
+  const recipientsFilter = ref<MessageStatus | ''>('')
+  const recipientsLoading = ref(false)
+  const recipientsError = ref<string | null>(null)
+  // Only the answer to the latest request is used: a slow page for a filter
+  // the marketer has already left must not overwrite the current one.
+  let recipientsRequest = 0
+
+  function clearRecipients() {
+    recipientsRequest++
+    recipientsOpen.value = false
+    recipients.value = []
+    recipientsTotal.value = 0
+    recipientsFilter.value = ''
+    recipientsLoading.value = false
+    recipientsError.value = null
+  }
+
+  /** Loads the first page, or with more = true the page after what is shown. */
+  async function loadRecipients(more = false) {
+    const id = campaign.value?.id
+    if (id === undefined) return
+    const request = ++recipientsRequest
+    recipientsLoading.value = true
+    recipientsError.value = null
+    try {
+      const page = await api.listRecipients(id, recipientsFilter.value, more ? recipients.value.length : 0)
+      if (request !== recipientsRequest) return
+      recipients.value = more ? [...recipients.value, ...page.recipients] : page.recipients
+      recipientsTotal.value = page.total
+    } catch (err) {
+      if (request !== recipientsRequest) return
+      recipientsError.value = describe(err).message
+    } finally {
+      if (request === recipientsRequest) recipientsLoading.value = false
+    }
+  }
+
+  function filterRecipients(status: MessageStatus | '') {
+    recipientsFilter.value = status
+    return loadRecipients()
+  }
+
+  /** Opens the panel, optionally on one status, and loads its first page. */
+  function openRecipients(status: MessageStatus | '' = '') {
+    recipientsOpen.value = true
+    return filterRecipients(status)
+  }
+
+  function closeRecipients() {
+    recipientsOpen.value = false
+  }
+
   function watch(id: number) {
     stopWatching?.()
     status.value = null
     done.value = false
     statusError.value = null
+    clearRecipients()
     stopWatching = api.watchCampaign(id, {
       onStatus: (s) => (status.value = s),
-      onDone: () => (done.value = true),
+      onDone: () => {
+        done.value = true
+        if (recipientsOpen.value) void loadRecipients() // the final outcome of every message
+      },
       onError: (message) => (statusError.value = message),
     })
   }
@@ -467,6 +534,7 @@ export const useCampaignStore = defineStore('campaign', () => {
       // The live stream reports the same thing a moment later; showing the
       // answer at once keeps the button from looking ignored.
       status.value = await api.cancelCampaign(campaign.value.id)
+      if (recipientsOpen.value) void loadRecipients()
     } catch (err) {
       statusError.value = describe(err).message
     } finally {
@@ -485,6 +553,11 @@ export const useCampaignStore = defineStore('campaign', () => {
     } catch (err) {
       campaignsError.value = describe(err).message
     }
+  }
+
+  /** Shows the home page. Work in progress in the flow is kept. */
+  function showHome() {
+    view.value = 'home'
   }
 
   /** Shows the list. Work in progress in the flow is kept, not thrown away. */
@@ -508,6 +581,7 @@ export const useCampaignStore = defineStore('campaign', () => {
 
   /** Where the app is, for the URL hash (see lib/route.ts). */
   const route = computed<Route>(() => {
+    if (view.value === 'home') return { name: 'home' }
     if (view.value === 'campaigns') return { name: 'campaigns' }
     if (step.value === 'dashboard' && campaign.value) return { name: 'campaign', id: campaign.value.id }
     return { name: 'compose' }
@@ -516,6 +590,9 @@ export const useCampaignStore = defineStore('campaign', () => {
   /** Goes where the URL hash says (page load, back and forward buttons). */
   function navigate(to: Route) {
     switch (to.name) {
+      case 'home':
+        showHome()
+        break
       case 'campaigns':
         showCampaigns()
         break
@@ -559,6 +636,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     status.value = null
     done.value = false
     statusError.value = null
+    clearRecipients()
   }
 
   return {
@@ -573,7 +651,9 @@ export const useCampaignStore = defineStore('campaign', () => {
     sendMode, scheduledFor, scheduleProblem, scheduleSuggestion,
     approving, approveError, campaign, status, done, statusError, approve,
     cancelling, cancelCampaign,
-    view, standalone, campaigns, campaignsError, loadCampaigns, showCampaigns, openCampaign, route, navigate,
+    recipients, recipientsTotal, recipientsFilter, recipientsLoading, recipientsError, loadRecipients, filterRecipients,
+    recipientsOpen, openRecipients, closeRecipients,
+    view, standalone, campaigns, campaignsError, loadCampaigns, showHome, showCampaigns, openCampaign, route, navigate,
     reset,
   }
 })

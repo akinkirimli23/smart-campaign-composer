@@ -21,7 +21,8 @@ const how = [
 <template>
   <div class="page-head">
     <div>
-      <h1>Kampanyanı anlat</h1>
+      <p class="eyebrow">Böl. 1 — Brief</p>
+      <h1>Kampanyanı <em>anlat.</em></h1>
       <p class="lead">Kime, ne göndermek istediğini kendi cümlelerinle yaz. Gerisini adım adım birlikte hazırlayacağız.</p>
     </div>
   </div>

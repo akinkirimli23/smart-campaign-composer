@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { CampaignStatus, Content, ContentEvent, ContentResult, LocalizeEvent, SegmentResponse } from '../api/types'
+import type { CampaignStatus, Content, Recipient, ContentEvent, ContentResult, LocalizeEvent, SegmentResponse } from '../api/types'
 
 // The store is tested against a fake API: no network, no backend.
 const fake = vi.hoisted(() => ({
@@ -10,6 +10,7 @@ const fake = vi.hoisted(() => ({
   createCampaign: vi.fn(),
   cancelCampaign: vi.fn(),
   listCampaigns: vi.fn(),
+  listRecipients: vi.fn(),
   streamContent: vi.fn(),
   streamLocalize: vi.fn(),
   watchCampaign: vi.fn(),
@@ -59,6 +60,7 @@ async function storeAtContent() {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.resetAllMocks()
+  fake.listRecipients.mockResolvedValue({ recipients: [], total: 0, offset: 0 })
 })
 
 describe('audience', () => {
@@ -708,5 +710,142 @@ describe('content per language', () => {
     await store.localize()
     expect(fake.streamLocalize).not.toHaveBeenCalled()
     expect(store.missingLanguages).toEqual([])
+  })
+})
+
+describe('home page', () => {
+  it('is a place of its own that keeps the campaign being composed', async () => {
+    const store = await storeAtContent()
+    store.navigate({ name: 'home' })
+    expect(store.view).toBe('home')
+    expect(store.route).toEqual({ name: 'home' })
+    expect(store.content.sms).toBe(result.content.sms)
+
+    store.navigate({ name: 'compose' })
+    expect(store.view).toBe('compose')
+    expect(store.step).toBe('content')
+  })
+
+  it('starting a campaign from it lands on an empty brief', () => {
+    const store = useCampaignStore()
+    store.showHome()
+    store.reset()
+    expect(store.route).toEqual({ name: 'compose' })
+    expect(store.step).toBe('brief')
+  })
+})
+
+describe('recipients', () => {
+  const person = (id: number, status: Recipient['status'] = 'sent'): Recipient => ({
+    user_id: id,
+    name: `Kişi ${id}`,
+    channel: 'sms',
+    address: '+90••••••••12',
+    language: 'tr',
+    status,
+    attempts: 1,
+  })
+
+  /** Lets a test decide when, and with what, a request is answered. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  it('fetches nothing until the panel is opened', async () => {
+    fake.listRecipients.mockResolvedValue({ recipients: [person(1, 'failed'), person(2)], total: 120, offset: 0 })
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    expect(fake.listRecipients).not.toHaveBeenCalled()
+    expect(store.recipientsOpen).toBe(false)
+
+    await store.openRecipients()
+    expect(store.recipientsOpen).toBe(true)
+    expect(fake.listRecipients).toHaveBeenCalledWith(7, '', 0)
+    expect(store.recipients).toHaveLength(2)
+    expect(store.recipientsTotal).toBe(120)
+    expect(store.recipientsLoading).toBe(false)
+
+    store.closeRecipients()
+    expect(store.recipientsOpen).toBe(false)
+  })
+
+  it('can open straight on one status', async () => {
+    fake.listRecipients.mockResolvedValue({ recipients: [person(9, 'failed')], total: 1, offset: 0 })
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    await store.openRecipients('failed')
+    expect(fake.listRecipients).toHaveBeenCalledWith(7, 'failed', 0)
+    expect(store.recipientsFilter).toBe('failed')
+  })
+
+  it('appends the next page and starts over when the filter changes', async () => {
+    fake.listRecipients.mockResolvedValue({ recipients: [person(1), person(2)], total: 5, offset: 0 })
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    await store.openRecipients()
+
+    fake.listRecipients.mockResolvedValue({ recipients: [person(3), person(4)], total: 5, offset: 2 })
+    await store.loadRecipients(true)
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, '', 2)
+    expect(store.recipients.map((r) => r.user_id)).toEqual([1, 2, 3, 4])
+
+    fake.listRecipients.mockResolvedValue({ recipients: [person(9, 'failed')], total: 1, offset: 0 })
+    await store.filterRecipients('failed')
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, 'failed', 0)
+    expect(store.recipients.map((r) => r.user_id)).toEqual([9])
+    expect(store.recipientsTotal).toBe(1)
+  })
+
+  it('ignores the answer to a request that a newer one has replaced', async () => {
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    await store.openRecipients()
+
+    const slow = deferred<{ recipients: Recipient[]; total: number; offset: number }>()
+    fake.listRecipients.mockReturnValueOnce(slow.promise)
+    const first = store.filterRecipients('sent')
+    fake.listRecipients.mockResolvedValueOnce({ recipients: [person(5, 'failed')], total: 1, offset: 0 })
+    await store.filterRecipients('failed')
+
+    slow.resolve({ recipients: [person(1), person(2)], total: 2, offset: 0 }) // arrives late
+    await first
+    expect(store.recipients.map((r) => r.user_id)).toEqual([5])
+    expect(store.recipientsFilter).toBe('failed')
+  })
+
+  it('keeps what is shown and reports the error when a page fails', async () => {
+    fake.listRecipients.mockResolvedValue({ recipients: [person(1)], total: 3, offset: 0 })
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    await store.openRecipients()
+
+    fake.listRecipients.mockRejectedValue(new ApiError(500, 'internal', 'Alıcılar okunamadı'))
+    await store.loadRecipients(true)
+    expect(store.recipients).toHaveLength(1)
+    expect(store.recipientsError).toBe('Alıcılar okunamadı')
+  })
+
+  it('reloads when the campaign finishes, but only while the panel is open', async () => {
+    let handlers: { onDone: () => void } | undefined
+    fake.watchCampaign.mockImplementation((_id: number, h: typeof handlers) => {
+      handlers = h
+      return () => {}
+    })
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    handlers?.onDone()
+    expect(fake.listRecipients).not.toHaveBeenCalled() // closed: nothing to refresh
+
+    await store.openRecipients()
+    fake.listRecipients.mockResolvedValue({ recipients: [person(1)], total: 1, offset: 0 })
+    handlers?.onDone()
+    await vi.waitFor(() => expect(store.recipients).toHaveLength(1))
+
+    store.reset()
+    expect(store.recipients).toEqual([])
+    expect(store.recipientsOpen).toBe(false)
+    expect(store.recipientsFilter).toBe('')
   })
 })

@@ -82,7 +82,8 @@ const otherApproveErrors = computed<FieldError[]>(() =>
 <template>
   <div class="page-head">
     <div>
-      <h1>Mesajlar</h1>
+      <p class="eyebrow">Böl. 3 — Mesajlar</p>
+      <h1>Ne <em>gidecek?</em></h1>
       <p class="lead">
         Metinleri oku, istediğin gibi düzenle ve ne zaman gideceğini seç. Sayaçlar, değişkenler en uzun değerleriyle doldurulmuş halini ölçer.
       </p>

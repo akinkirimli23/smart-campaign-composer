@@ -64,7 +64,8 @@ const languageShares = computed(() => {
   <template v-if="segment?.status === 'unsupported'">
     <div class="page-head">
       <div>
-        <h1>Bu brief için kitle çıkarılamadı</h1>
+        <p class="eyebrow">Böl. 2 — Kitle</p>
+        <h1>Kitle <em>çıkarılamadı.</em></h1>
         <p class="lead">Brief'teki bir istek, kitle kurallarıyla ifade edilemiyor.</p>
       </div>
     </div>
@@ -85,7 +86,8 @@ const languageShares = computed(() => {
   <template v-else-if="segment && segment.rule && audience">
     <div class="page-head">
       <div>
-        <h1>Hedef kitle</h1>
+        <p class="eyebrow">Böl. 2 — Kitle</p>
+        <h1>Hedef <em>kitle.</em></h1>
         <p class="lead">Brief'inden çıkardığımız kitle bu. Uygun değilse koşulları düzenleyebilirsin; gönderimde tam olarak bu kitle kullanılır.</p>
       </div>
     </div>

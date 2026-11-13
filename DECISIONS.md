@@ -934,3 +934,150 @@ kendiliğinden yazılamaz mı? Üç seçenek konuşuldu ve mevcut hali korundu.
   kalmaz ama her yeniden üretim ve düzeltmede bir çağrı boşa gider. (C) Ayrı buton yerine
   alttaki ana butonun önce "… metnini yaz", sonra "Onayla ve gönder" olması: çağrı sayısı ve
   sıra aynı, yalnızca butonun yeri değişir; mevcut düzen yeterli bulundu.
+
+---
+
+## 31. A/B varyantları yapılmadı: ölçecek veri yok
+
+**Bağlam.** Case'in dört bonusundan üçü yapıldı (CI, zamanlanmış gönderim, dile göre içerik).
+Dördüncüsü, A/B varyantları, teslimden dört gün önce değerlendirildi ve bilerek dışarıda bırakıldı.
+
+**A/B'nin üç parçası.**
+1. *Bölme:* kitle rastgele ve dengeli iki gruba ayrılır. Rastgelelik şarttır; yoksa fark metinden
+   değil gruptan gelir.
+2. *Gönderim:* her grup yalnızca kendi varyantını alır.
+3. *Ölçüm ve karar:* varyant başına bir başarı ölçüsü (açılma, tıklama, satın alma) toplanır ve
+   fark anlamlıysa kazanan seçilir.
+
+**Karar.** Yapılmadı. İlk iki parça bu sistemde kurulabilir; üçüncüsü kurulamaz ve A/B'yi A/B
+yapan odur.
+
+**Neden.**
+- **Ölçecek bir şey yok.** Mock sağlayıcı yalnızca "kabul ettim" ya da "hata" der; açılma,
+  tıklama ya da satın alma bilgisi üretmez. Teslimat oranı ise metne bağlı değildir: iki
+  varyant da aynı oranda teslim edilir. Elde kazananı belirleyecek hiçbir sinyal yok.
+- **Seçenekler yarım ya da sahte.** Yalnızca bölme ve gönderim yapılsa "hangisi kazandı"
+  sorusu yanıtsız kalır. Mock sağlayıcıya rastgele açılma / tıklama ürettirilse pano bir kazanan
+  gösterir, ama o kazanan zar atmaktan gelir; ekranda yanıltıcı bir sonuç durur.
+- **Bedeli çekirdek akışa dokunmak.** A/B içerik şemasını, onayı, worker'ı ve panoyu değiştirir:
+  bugün testlerle korunan akışın tamamını. Case'in kapsam notu "her şeyi yapmak yerine çekirdek
+  akışı sağlam yap" diyor; teslime bu kadar yakınken bu risk bir bonus için alınmadı.
+
+**Yapılsaydı nasıl yapılırdı.**
+- *İçerik:* modelden tek çağrıda, iki farklı açıyla iki metin istenir (dil bonusundaki tek
+  çağrı deseni, karar 30). İkisi de aynı doğrulamadan geçer; pazarlamacı ikisini de görür,
+  düzenler ve onaylar. Kampanyanın içeriği "dil başına metin" yerine "varyant ve dil başına
+  metin" olur.
+- *Atama:* alıcı onay anında bir varyanta atanır ve atama satıra yazılır (`messages.variant`,
+  yeni bir migration). Atama rastgele ama deterministiktir: kampanya ve kullanıcı numarasının
+  özetinden türetilir. Böylece yeniden denemede ve worker yeniden başladığında aynı kişi hep aynı
+  varyantı alır; "aynı kişiye aynı mesaj iki kez gitmez" kuralı (`UNIQUE (campaign_id, user_id,
+  channel)`) olduğu gibi kalır.
+- *Gönderim:* worker metni seçerken dile ek olarak varyanta bakar; idempotency key değişmez.
+- *Ölçüm:* gerçek bir sağlayıcı açılma ve tıklama olaylarını webhook ile geri bildirir. Bunun
+  için bir geri bildirim endpoint'i, olayların mesaja bağlanması (sağlayıcı mesaj numarası zaten
+  satırda duruyor) ve varyant başına oranlar gerekir.
+- *Karar:* fark için basit bir anlamlılık testi (iki oran için z-testi) ve yeterli örneklem
+  eşiği; eşik aşılmadan "kazanan" gösterilmez. Sık kullanılan ileri adım: kitlenin küçük bir
+  kısmına iki varyantı gönderip kazananı kalanına göndermek; bu, zamanlanmış gönderim (karar 27)
+  üzerine kurulur.
+
+**Bedeli.** Bonus karşılanmadı. Karşılığında çekirdek akışa teslimden önce dokunulmadı ve
+ekranda anlamı olmayan bir "kazanan" gösterilmedi.
+
+---
+
+## 32. Açılış sayfası ve editoryal tasarım; kaydırmayla oynayan sahne video değil, kod
+
+**Bağlam.** Arayüz iki kez yenilendi (tasarım token'ları, sonra site menüsü ve kartlar) ama
+"karmaşık" ve "sıradan" bulundu. İstenen yön: pear.no'nun ritmine yakın, büyük tipografili,
+sade ve kaydırdıkça ilerleyen bir anlatım. İki soru soruldu ve yanıtlandı: tasarım yalnızca
+araca mı uygulansın yoksa bir açılış sayfası da olsun mu (ikisi de), ve istekte geçen ama
+projede olmayan video yerine ne kullanılsın (kodla çizilen sahne).
+
+**Karar.**
+- **Açılış sayfası** (`HomePage.vue`, adres: hash yok). Sabitlenmiş tek sahne, kaydırma konumuna
+  bağlı: brief yazılır → kurala uyan noktalar yanıp kümelenir → küme bir mesajın satırlarına
+  dönüşür → noktalar sırayla akıp gider. Ardından üç sakin bölüm (model, sınırlar, sorular) ve
+  kapanış çağrısı. Dört adımlı araç `#/olustur` adresine taşındı.
+- **Sahne video değil, canvas.** Her nokta bir kullanıcıyı temsil eder. Tek bir sayı, kaydırma
+  ilerlemesi `p` (0..1), her şeyi belirler: `lib/story.ts` içindeki saf fonksiyonlar `p`'den
+  sahnenin durumunu ve her başlığın giriş / çıkış oranını üretir. Çizim ve tipografi aynı
+  değerden beslendiği için birbirinden kopamaz; geri kaydırmak hikayeyi geri sarar.
+- **Editoryal dil, araç dahil her ekranda:** krem zemin, mürekkep rengi yazı, tek vurgu rengi;
+  sıkı bir grotesk (Inter Tight) başlıklarda, italik bir serif (Instrument Serif) ara metinlerde;
+  gölge yerine ince çizgiler, "Böl. 2 — Kitle" gibi bölüm etiketleri. Krem varsayılan; koyu tema
+  yalnızca üst menüdeki düğmeyle seçilirse uygulanır.
+- **İki bağımlılık eklendi:** `@fontsource-variable/inter-tight` ve
+  `@fontsource/instrument-serif`. Yazı tipi dosyaları derlemeye gömülür; çalışma anında dış
+  sunucuya istek yoktur.
+
+**Neden.**
+- **Video yerine kod.** Projede video yoktu; stok bir video ürünü anlatmazdı. Nokta alanı ise
+  ürünün yaptığı işi (kitleyi bul, mesaja çevir, gönder) birebir gösterir, birkaç kilobayttır ve
+  ileri-geri sarması bir videonun kare aramasından daha akıcıdır. Sahnedeki sayılar (381 kişi,
+  222 SMS, 254 email) örnek brief'in seed verisindeki gerçek sonuçlarıdır.
+- **Zaman çizelgesi saf fonksiyon.** "Aynı anda tek başlık görünür", "her sahne yalnızca kendi
+  başlığı ekrandayken hareket eder", "ileri kaydırırken hiçbir değer geri gitmez" gibi kurallar
+  tarayıcı olmadan test edilir (`story.test.ts`).
+- **Yazı tipleri gömülü.** Bu tasarım tipografiye dayanıyor; sistem yazı tipleriyle makineden
+  makineye değişirdi. Gömülü paket, CDN'e bağımlılık ve ziyaretçi verisinin üçüncü tarafa gitmesi
+  olmadan aynı görünümü verir; `docker compose up` çevrimdışı da aynı sonucu üretir.
+- **Araçta kaydırma efekti yok.** Form ekranlarında içerik sabitlemek kullanımı zorlaştırır;
+  araç aynı görsel dili taşır ama davranışı sıradan bir formdur.
+- **Mobil ve erişilebilirlik.** Dar ekranda sahne üstte, metin altta; daha az nokta ve daha kısa
+  kaydırma mesafesi. "Hareketi azalt" ayarında sabitleme ve animasyon yoktur, bölümler alt alta
+  durur. Döngü yalnızca sahne ekrandayken çalışır.
+
+**Bedeli / sınırı.**
+- Açılış sayfası case'in istediği bir şey değil; sunum değeri için eklendi. Araç ondan
+  bağımsızdır ve `#/olustur` ile doğrudan açılır.
+- Akıcılık gerçek bir tarayıcı penceresinde, kullanıcı tarafından değerlendirildi; otomatik
+  kontrol yalnızca sahnelerin doğru kaydırma konumunda doğru durumda olduğunu doğruladı.
+  Mobil yalnızca öykünmeyle denendi, gerçek cihazda değil.
+- İki paket ve yaklaşık 100 KB yazı tipi dosyası eklendi.
+- Adresler değişti: önceden hash'siz adres aracı açıyordu, şimdi açılış sayfasını açıyor.
+
+**Alternatifler.** Kullanıcının sağlayacağı bir videoyu kaydırmaya bağlamak (dosya yoktu; büyük
+dosya ve kare arama takılması riski). Yalnızca aracı yeniden tasarlamak (daha az iş; ama istenen
+anlatım araç ekranlarına sığmaz).
+
+---
+
+## 33. Alıcı listesi: panoda değil, istenince açılan panelde; adresler maskeli
+
+**Bağlam.** Pano yalnızca sayıları gösteriyordu: "474 mesajın 3'ü başarısız" ama hangi üç kişi
+ve neden, görülemiyordu. Veri zaten `messages` tablosunda duruyordu; eksik olan gösterimdi.
+
+**Karar.**
+- `GET /api/campaigns/{id}/recipients?status=&offset=&limit=`: kampanyanın mesajları, alıcının
+  adı, kanalı, dili, durumu, deneme sayısı, teslim zamanı ve varsa son hatasıyla. Dikkat
+  isteyenler önce gelir (başarısız, atlandı, iptal, bekleyen, en son teslim edilen). 50'şer satır,
+  en fazla 100.
+- Telefon ve email **backend'de maskelenir** (`+90••••••••72`, `a•••@example.com`); tam adres
+  API yanıtında hiç yer almaz.
+- Arayüzde liste panonun içinde durmaz: "Alıcıları gör" butonuyla sağdan açılan bir panelde
+  gösterilir ve ancak o zaman yüklenir. Duruma göre süzülür, "daha fazla göster" ile uzar.
+
+**Neden.**
+- **Yeni tablo yok.** Liste, pano sayılarının okuduğu satırların kendisidir; ikisi birbirinden
+  farklı bir şey söyleyemez. Retry, izin kontrolü ve iptalin gerçekten çalıştığı satır satır
+  görülür.
+- **Panel, çünkü liste panoyu boğuyordu.** İlk halinde tablo sayıların hemen altındaydı; canlı
+  pano bir bakışta okunmaz oldu. Çoğu zaman sayılar yeter; ayrıntı istenince açılır.
+- **Maskeleme sunucuda.** Pazarlamacının tam adresi görmesi gerekmez; arayüzde gizlemek veriyi
+  yine tarayıcıya taşırdı.
+- **Excel'e aktarma yerine site.** Liste canlıdır, dosya indirildiği anda eskir; dosya kişisel
+  veriyi pazarlamacının bilgisayarına ve oradan başka yerlere taşır. Dışa aktarma, ihtiyaç
+  olursa bu listenin yerine değil yanına eklenir.
+
+**Bedeli / sınırı.**
+- Sayfalama offset iledir. Alıcılar onayda dondurulduğu için satır eklenip çıkmaz, ama gönderim
+  sürerken bir satır durum değiştirip sıralamada yer değiştirebilir; "daha fazla göster" o anda
+  bir satırı atlayabilir ya da yineleyebilir. "Yenile" düzeltir; liste gönderim bitince
+  kendiliğinden yenilenir.
+- Gönderilen metin satırda saklanmadığı için (karar 22) liste "ne gitti"yi göstermez, yalnızca
+  "kime gitti ve ne oldu"yu.
+- Arama, kanala göre süzme ve dışa aktarma yok.
+- Kimlik doğrulama olmadığı için (karar 29) adresi bilen herkes alıcı adlarını görebilir;
+  maskeleme bunu sınırlar, çözmez.

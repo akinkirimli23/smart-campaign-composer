@@ -44,7 +44,8 @@ onUnmounted(() => clearInterval(timer))
 <template>
   <div class="page-head">
     <div>
-      <h1>Kampanyalar</h1>
+      <p class="eyebrow">Arşiv</p>
+      <h1>Kampanyalar<em>.</em></h1>
       <p class="lead">Zamanlanmış, gönderilen ve tamamlanmış kampanyalar. Ayrıntı için birine tıkla.</p>
     </div>
     <button class="primary" type="button" @click="store.reset()"><AppIcon name="plus" :size="18" /> Yeni kampanya</button>

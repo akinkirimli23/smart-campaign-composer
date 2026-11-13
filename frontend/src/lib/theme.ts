@@ -1,6 +1,5 @@
-// Light / dark theme. Without a stored choice the page follows the system
-// setting (plain CSS, see style.css); the header switch stores a choice and
-// puts it on <html data-theme>.
+// Light (cream) / dark theme. Cream is the default; the header switch stores
+// a choice and puts it on <html data-theme> (see style.css).
 
 export type Theme = 'light' | 'dark'
 
@@ -19,10 +18,6 @@ export function storedTheme(): Theme | null {
   }
 }
 
-export function systemTheme(): Theme {
-  return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
 export function otherTheme(theme: Theme): Theme {
   return theme === 'dark' ? 'light' : 'dark'
 }
@@ -37,7 +32,7 @@ export function chooseTheme(theme: Theme) {
   }
 }
 
-/** Applies the stored choice on page load; no choice leaves it to the system. */
+/** Applies the stored choice on page load; no choice means cream. */
 export function restoreTheme() {
   const stored = storedTheme()
   if (stored) document.documentElement.dataset.theme = stored

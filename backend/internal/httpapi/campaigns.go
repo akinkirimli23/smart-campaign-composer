@@ -25,6 +25,7 @@ type CampaignStore interface {
 	Status(ctx context.Context, id int64) (campaign.Status, error)
 	Totals(ctx context.Context) (campaign.Totals, error)
 	List(ctx context.Context, now time.Time) ([]campaign.Summary, error)
+	Recipients(ctx context.Context, id int64, status string, limit, offset int) (campaign.RecipientPage, error)
 }
 
 // MaxScheduleAhead bounds how far in the future a campaign may be scheduled;
@@ -149,6 +150,49 @@ func (s *Server) handleCampaignCancel(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, st)
 	}
+}
+
+// GET /api/campaigns/{id}/recipients?status=failed&offset=0&limit=50
+//
+// The people behind the dashboard's numbers: who each message is for and what
+// became of it, the ones that need attention first. status is optional and
+// must be a message status; addresses are masked.
+func (s *Server) handleCampaignRecipients(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "geçersiz kampanya numarası", nil)
+		return
+	}
+	query := r.URL.Query()
+	limit, okLimit := pageNumber(query.Get("limit"))
+	offset, okOffset := pageNumber(query.Get("offset"))
+	if !okLimit || !okOffset {
+		writeError(w, http.StatusBadRequest, "invalid_request", "limit ve offset negatif olmayan tam sayı olmalı", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	page, err := s.campaigns.Recipients(ctx, id, query.Get("status"), limit, offset)
+	switch {
+	case errors.Is(err, campaign.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Kampanya bulunamadı", nil)
+	case errors.Is(err, campaign.ErrUnknownStatus):
+		writeError(w, http.StatusBadRequest, "invalid_request", "bilinmeyen durum: "+query.Get("status"), nil)
+	case err != nil:
+		slog.Error("campaign recipients", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Alıcılar okunamadı", nil)
+	default:
+		writeJSON(w, http.StatusOK, page)
+	}
+}
+
+// pageNumber reads an optional non-negative integer query parameter.
+func pageNumber(raw string) (int, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	return n, err == nil && n >= 0 && n <= 1_000_000
 }
 
 // campaignStatus loads the status of the campaign in the path; on failure it

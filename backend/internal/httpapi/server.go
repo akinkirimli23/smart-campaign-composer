@@ -84,6 +84,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/campaigns", s.handleCampaignList)
 	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignStatus)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/events", s.handleCampaignEvents)
+	s.mux.HandleFunc("GET /api/campaigns/{id}/recipients", s.handleCampaignRecipients)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/cancel", s.handleCampaignCancel)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 }

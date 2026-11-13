@@ -64,8 +64,10 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
   Uygulanmış migration'ı düzenleme, yenisini ekle.
 - DB gerektiren testler `testdb.New(t)` kullanır (her test için ayrı şema).
 - Frontend: Vue 3 (`<script setup>`), TypeScript (strict), Pinia, Vite, vitest. Yönlendirici ve
-  arayüz kütüphanesi yok; dört adımlı oluşturma akışı ve bir kampanyalar listesi. Ekranın yeri
-  adres çubuğunun hash'inde tutulur (`lib/route.ts`, DECISIONS 29).
+  arayüz kütüphanesi yok; bir açılış sayfası, dört adımlı oluşturma akışı ve bir kampanyalar
+  listesi. Ekranın yeri adres çubuğunun hash'inde tutulur (`lib/route.ts`, DECISIONS 29): hash yok
+  = açılış, `#/olustur`, `#/kampanyalar`, `#/kampanya/N`. Tek ek bağımlılık iki gömülü yazı tipi
+  paketi (DECISIONS 32).
 - Kod yorumları İngilizce, dokümanlar (README, DECISIONS) Türkçe.
 - `.env` asla commit edilmez. `ai-sessions/` içine koymadan önce API key ve kişisel bilgileri temizle.
 
@@ -159,8 +161,8 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (30 kayıt) |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 12 Kasım gecesi güncellendi (dile göre içerik bonusu dahil); sonrasında çalışılırsa yeniden alınmalı |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (33 kayıt) |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 12 Kasım gecesi güncellendi (dile göre içerik bonusu dahil); açılış sayfası, yeni tasarım ve alıcı listesi ondan sonra yapıldı, **export yeniden alınmalı** |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
@@ -168,7 +170,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | Gereksinim | Aşama |
 |---|---|
 | Zamanlanmış gönderim | ✅ iptal ile birlikte (DECISIONS 27) |
-| A/B varyantları | yapılmadı; nedeni README "Bonuslar"da |
+| A/B varyantları | yapılmadı; nedeni ve nasıl yapılacağı DECISIONS 31 ve README "Bonuslar"da |
 | Kullanıcının diline göre içerik | ✅ ana dil için bir çağrı, diğer dillerin tamamı için bir çağrı (DECISIONS 30) |
 | CI pipeline | 6 ✅ |
 
@@ -237,7 +239,8 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 
 - `internal/campaign`: `Store.Create` kampanyayı ve alıcılarını tek transaction'da yazar (kanal
   başına tek `INSERT … SELECT`, derleyicinin WHERE'i + `audience.*Reachable`); `Store.Status`
-  kanal ve durum bazında sayar; `Store.List` son 100 kampanyayı durumlarıyla döner. Aşama 5'in canlı panosu ve metrics endpoint'i bunun üzerine kurulur.
+  kanal ve durum bazında sayar; `Store.List` son 100 kampanyayı durumlarıyla döner; `Store.Recipients` bir kampanyanın
+  mesajlarını sayfa sayfa, sorunlular önce ve adresler maskeli olarak döner (DECISIONS 33). Aşama 5'in canlı panosu ve metrics endpoint'i bunun üzerine kurulur.
 - `internal/delivery`: `Worker` (kanal başına bir döngü; `FOR UPDATE SKIP LOCKED` ile kiralama,
   gönderimde şablon doldurma ve izin kontrolü, sonuç yazarken `status = 'sending' AND attempts = N`
   koşulu), `Limiter` (eşit aralıklı slot, burst yok, `PauseUntil` ile 429), `HTTPProvider`.
@@ -292,11 +295,19 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Adres: `store.route` hesaplanır, `App.vue` hash ile iki yönlü eşitler; `store.navigate` hash'ten
   gelen adrese gider. Yeni bir ekran eklersen `lib/route.ts`, `route` ve `navigate` üçünü birlikte
   güncelle.
-- Sayfa düzeni (`App.vue`, `style.css`): yapışkan üst menü (Kampanya oluştur / Kampanyalar, tema
-  düğmesi), tıklanabilir adım çubuğu, her ekranda `.page-head` başlığı + kartlar, adımın ana
-  düğmeleri altta yapışkan `.actionbar` içinde. Renkler `style.css` başındaki token'lardan gelir;
-  koyu tema değerleri iki yerde durur (medya sorgusu ve `data-theme`), birini değiştirirsen
-  diğerini de değiştir. Tema seçimi `lib/theme.ts` (localStorage; seçim yoksa sistem ayarı).
+- Tasarım (DECISIONS 32): krem zemin, mürekkep rengi yazı, tek vurgu rengi; Inter Tight başlıklar,
+  Instrument Serif italik ara metinler, gölge yerine çizgiler. Renkler `style.css` başındaki
+  token'lardan gelir; krem varsayılan, koyu tema yalnızca `data-theme="dark"` ile (`lib/theme.ts`,
+  localStorage). Sayfa düzeni: yapışkan üst menü, numaralı tıklanabilir adım çubuğu, her ekranda
+  `.page-head` (bölüm etiketi + büyük başlık), adımın ana düğmeleri altta yapışkan `.actionbar`.
+- Açılış sayfası (`components/HomePage.vue`): sabitlenmiş bir canvas sahnesi kaydırmayla oynar.
+  Zaman çizelgesi `lib/story.ts` içinde saf fonksiyonlardır (`sceneAt`, `chapterPhase`); çizim de
+  başlıklar da aynı ilerleme değerinden türetilir. Bir sahnenin ya da başlığın zamanını
+  değiştirirsen `CHAPTERS` ile `sceneAt` aralıklarını birlikte değiştir; testler ikisinin
+  örtüştüğünü kontrol eder. Sahnenin renkleri temadan bağımsızdır (`--film-bg`, `--film-fg`).
+- Alıcı listesi (DECISIONS 33): panoda "Alıcıları gör" ile açılan yan panel. Durum store'da
+  (`recipientsOpen`, `openRecipients`, `filterRecipients`, `loadRecipients(more)`); liste ancak
+  panel açılınca yüklenir, yalnızca en son isteğin yanıtı kullanılır. Maskeleme backend'dedir.
 - Onay ekranında "Hemen / Zamanla" seçimi; pano zamanlanmış kampanyada başlangıç saatini ve
   iptal butonunu gösterir. İptal iki tıklamadır ve sayfanın içinde sorulur (tarayıcı penceresi
   değil).

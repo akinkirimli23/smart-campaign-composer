@@ -54,9 +54,10 @@ docker compose --profile test run --rm --build web-test
 
 `docker compose up --build` bittikten sonra arayüz **http://localhost:3000** adresindedir.
 
-Üst menüde iki bölüm var: **Kampanya oluştur** (dört adımlı akış) ve **Kampanyalar** (liste).
-Adım çubuğundan tamamlanmış bir adıma geri dönülebilir; her adımın ana düğmeleri ekranın altında
-sabit durur.
+Adres bir **açılış sayfası** ile açılır: kaydırdıkça ilerleyen bir sahne ürünün ne yaptığını
+anlatır (brief → kitle → mesaj → gönderim). "Kampanya oluştur" dört adımlı akışa
+(`#/olustur`), "Kampanyalar" listeye götürür. Adım çubuğundan tamamlanmış bir adıma geri
+dönülebilir; her adımın ana düğmeleri ekranın altında sabit durur.
 
 1. **Brief.** Kampanyayı kendi cümlelerinle yaz ya da hazır örneklerden birini seç.
 2. **Kitle.** Kuraldan türetilen açıklama, modelin yorumları ve kanal bazlı kişi sayıları.
@@ -78,7 +79,8 @@ sabit durur.
 
 Sağ üstteki **Kampanyalar** tüm kampanyaları listeler: zamanlanmış, gönderilen, tamamlanmış
 ve iptal edilmiş olanlar. Bir satıra tıklayınca o kampanyanın panosu açılır; zamanlanmış bir
-kampanya oradan iptal edilir. Ekranlar adreslenebilir (`#/kampanyalar`, `#/kampanya/12`), yani
+kampanya oradan iptal edilir. Panodaki "Alıcıları gör" butonu, mesajların kimlere gittiğini ve gitmeyenlerin nedenini
+gösteren bir panel açar (adresler maskeli). Ekranlar adreslenebilir (`#/olustur`, `#/kampanyalar`, `#/kampanya/12`), yani
 sayfa yenilense de aynı yerde kalır.
 
 Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
@@ -110,6 +112,7 @@ deneme ekranda görülür.
 | `GET /api/campaigns` | Son 100 kampanya, en yenisi üstte: brief, başlangıç zamanı, durum (`scheduled`, `sending`, `done`, `cancelled`) ve mesaj sayıları |
 | `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at`, metin dilleri (`languages`) ve `done` |
 | `POST /api/campaigns/{id}/cancel` | Henüz gönderilmemiş mesajları iptal eder; gönderilenler kalır. Tekrarlanabilir |
+| `GET /api/campaigns/{id}/recipients` | Kampanyanın alıcıları: ad, kanal, dil, durum, deneme sayısı, teslim zamanı, varsa son hata. `?status=` (bir mesaj durumu), `?offset=`, `?limit=` (varsayılan 50, en fazla 100). Dikkat isteyenler önce gelir; telefon ve email maskelenir |
 | `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
 | `GET /metrics` | Prometheus metin formatı: `scc_campaigns`, `scc_messages{channel,status}`, `scc_provider_requests_total{channel,outcome}` |
 
@@ -228,7 +231,7 @@ frontend/          Vue 3 + TypeScript + Pinia arayüzü (nginx ile sunulur)
   src/stores       tüm akışın durumu (Pinia)
   src/api          API istemcisi ve tipleri
   src/lib          SSE ayrıştırıcı, şablon ölçümü (canlı sayaç), kural düzenleyicisinin mantığı,
-                   adres (hash) okuma / yazma
+                   adres (hash) okuma / yazma, açılış sahnesinin zaman çizelgesi, tema
   src/components   adım ekranları
 .github/workflows/ CI
 ai-sessions/       Claude oturum export'ları
@@ -257,7 +260,7 @@ zamanları seed'in yüklendiği ana göredir.
 | Aynı kişiye iki kez gitmeme (iki worker, hata veren provider), hız limiti, retry, `Retry-After`; zamanı gelmeden gönderilmeme, iptalden sonra hiçbir şeyin gitmemesi; her alıcının kendi dilindeki metni alması | `backend/internal/delivery` |
 | Claude istemcisi (yerel bir SSE sunucusuna karşı, key olmadan) | `backend/internal/llm/anthropicllm` |
 | HTTP uçları, SSE akışları, onayda yeniden doğrulama | `backend/internal/httpapi` |
-| Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, kural düzenleyicisinin mantığı, akışın durumu | `frontend/src/**/*.test.ts` |
+| Arayüz: SSE ayrıştırıcı, canlı sayaç ölçümü, kural düzenleyicisinin mantığı, akışın durumu, alıcı listesi, açılış sahnesinin zaman çizelgesi (aynı anda tek başlık, geri sarma) | `frontend/src/**/*.test.ts` |
 
 CI (GitHub Actions) her push'ta üç iş çalıştırır: backend (gofmt, vet, yarış dedektörüyle
 testler, Postgres'e karşı), frontend (tip kontrolü, testler, derleme) ve `docker compose up` ile
@@ -273,9 +276,12 @@ kurulumun kendisi.
 - **Gerçek Claude ile uçtan uca deneme yapılmadı.** Geliştirme boyunca mock LLM kullanıldı.
   İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
   gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
-- Arayüz masaüstü genişliğinde denendi; dar ekran düzeni yazıldı ama denenmedi. Açık ve koyu
-  tema var (üst menüdeki düğme; seçim yapılmazsa sistem ayarı izlenir); son tasarımda koyu tema
-  gözle, açık tema yalnızca çalışırlık açısından kontrol edildi.
+- Arayüz masaüstü genişliğinde denendi; dar ekran yalnızca tarayıcı öykünmesiyle, gerçek cihazda
+  değil. Varsayılan tema krem; koyu tema üst menüdeki düğmeyle seçilir ve daha az denendi.
+- Açılış sayfası case'in istediği bir şey değil, sunum için eklendi; araç ondan bağımsız çalışır
+  (DECISIONS 32).
+- Alıcı listesinde arama, kanala göre süzme ve dışa aktarma yok; gönderim sürerken sayfalar
+  arasında bir satır yer değiştirebilir, "Yenile" düzeltir (DECISIONS 33).
 - Ekran bileşenleri için otomatik test yok; mantık ve durum birim testleriyle, ekranlar tarayıcıda
   elle denendi.
 - Oluşturma adımlarındayken (brief, kitle, içerik) sayfa yenilenirse akış baştan başlar.
@@ -307,7 +313,23 @@ Eksik koşullu bir kural daha geniş bir kitle demek olurdu.
 | CI pipeline | Yapıldı (GitHub Actions: backend, frontend, `docker compose up`) |
 | Zamanlanmış gönderim | Yapıldı; iptal edilebilir (DECISIONS 27). Brief'teki zaman öneri olarak okunur (DECISIONS 28) |
 | Kullanıcının diline göre içerik | Yapıldı (DECISIONS 30): her alıcı kendi dilindeki metni alır. Ana dil için bir model çağrısı, kitledeki diğer dillerin tamamı için bir çağrı |
-| A/B varyantları | Yapılmadı. A/B'nin anlamı kazananı seçmektir; bunun için açılma ya da tıklama verisi gerekir ve mock provider'da yok. Uydurma veriyle yapmak yerine dışarıda bırakıldı |
+| A/B varyantları | Yapılmadı (DECISIONS 31). Aşağıda |
+
+### A/B varyantları neden yok
+
+A/B üç parçadır: kitleyi rastgele bölmek, her gruba kendi metnini göndermek ve hangisinin daha
+iyi sonuç verdiğini ölçüp kazananı seçmek. İlk ikisi bu sistemde kurulabilir; üçüncüsü
+kurulamaz, çünkü ölçecek veri yok: mock sağlayıcı yalnızca "kabul ettim" ya da "hata" der,
+açılma ya da tıklama bilgisi üretmez, teslimat oranı da metne bağlı değildir. Kazananı
+olmayan bir A/B yarım, rastgele üretilmiş açılma verisiyle seçilen bir kazanan ise yanıltıcı
+olurdu. Üstelik özellik içerik şemasına, onaya, worker'a ve panoya, yani çekirdek akışın
+tamamına dokunur.
+
+Yapılsaydı: model tek çağrıda iki metin yazar; alıcı onay anında kampanya ve kullanıcı
+numarasından türetilen deterministik bir atamayla bir varyanta bağlanır ve atama mesaj satırına
+yazılır (yeniden denemede aynı kişi aynı varyantı alır, "iki kez gitmez" kuralı bozulmaz);
+worker metni dil ve varyanta göre seçer; sağlayıcının açılma / tıklama geri bildirimleri mesaja
+bağlanır ve fark anlamlı olmadan kazanan gösterilmez. Ayrıntısı DECISIONS 31'de.
 
 ## Sonraya bırakılanlar
 
@@ -321,6 +343,7 @@ Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
 | Ülke, sadakat seviyesi, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
 | Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
 | Zamanlanmış kampanyayı düzenleme, alıcının yerel saatinde gönderim | Zamanlanan kampanya yalnızca iptal edilebilir; saat pazarlamacının saat dilimindedir (DECISIONS 27) |
-| Gönderilen metnin saklanması | Şablon ve kullanıcıdan yeniden üretilebilir; satırda tutulmuyor (DECISIONS 22) |
+| Gönderilen metnin saklanması | Şablon ve kullanıcıdan yeniden üretilebilir; satırda tutulmuyor (DECISIONS 22). Alıcı listesi bu yüzden "ne gitti"yi değil, "kime gitti ve ne oldu"yu gösterir |
+| Alıcı listesini dışa aktarma (CSV / Excel) | Liste sitede canlı ve maskeli gösteriliyor; dosya kişisel veriyi dışarı taşır ve indirildiği anda eskir (DECISIONS 33) |
 | Türkçe ve İngilizce dışındaki diller | Dil kümesi kapalı ve seed'deki iki dille sınırlı; yeni dil `content.Languages` tablosuna ve `users.language` kısıtına eklenir. Çok dilde tek çağrı yerine dil grupları gerekir (DECISIONS 30) |
 | Panoda dil bazında gönderim sayıları | Pano yalnızca kampanyanın hangi dillerde metni olduğunu gösterir |

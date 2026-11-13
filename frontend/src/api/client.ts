@@ -9,6 +9,8 @@ import type {
   FieldError,
   LocalizedContent,
   LocalizeEvent,
+  MessageStatus,
+  RecipientPage,
   Rule,
   RuleOptions,
   SegmentResponse,
@@ -110,6 +112,10 @@ export const api = {
 
   /** Recent campaigns, newest first. */
   listCampaigns: async () => (await getJSON<{ campaigns: CampaignSummary[] }>('/api/campaigns')).campaigns,
+
+  /** One page of a campaign's recipients, the ones that need attention first. */
+  listRecipients: (id: number, status: MessageStatus | '', offset: number) =>
+    getJSON<RecipientPage>(`/api/campaigns/${id}/recipients?offset=${offset}${status ? `&status=${status}` : ''}`),
 
   /** Stops whatever has not been sent yet; returns the campaign's status. */
   cancelCampaign: (id: number) => postJSON<CampaignStatus>(`/api/campaigns/${id}/cancel`, {}),

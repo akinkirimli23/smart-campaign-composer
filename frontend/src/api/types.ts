@@ -189,6 +189,30 @@ export interface ChannelCounts {
   cancelled: number
 }
 
+export type MessageStatus = keyof Omit<ChannelCounts, 'total'>
+
+/** One message of a campaign: who it is for and what became of it. */
+export interface Recipient {
+  user_id: number
+  name: string
+  channel: Channel
+  /** Masked phone number or email address. */
+  address: string
+  language: string
+  status: MessageStatus
+  attempts: number
+  sent_at?: string
+  /** The last failure reported for this message, if any. */
+  error?: string
+}
+
+export interface RecipientPage {
+  recipients: Recipient[]
+  /** How many messages match the filter, not how many are on this page. */
+  total: number
+  offset: number
+}
+
 export type CampaignState = 'scheduled' | 'sending' | 'done' | 'cancelled'
 
 /** One row of the campaign list; counts are summed over both channels. */

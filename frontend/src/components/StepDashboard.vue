@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
-import type { Channel, ChannelCounts } from '../api/types'
+import type { Channel, ChannelCounts, MessageStatus, Recipient } from '../api/types'
+import { formatDateTime } from '../lib/time'
 import AppIcon from './AppIcon.vue'
 
 const store = useCampaignStore()
@@ -56,6 +57,59 @@ const startsAt = computed(() =>
   store.status ? new Date(store.status.send_at).toLocaleString('tr-TR', { dateStyle: 'long', timeStyle: 'short' }) : '',
 )
 
+// --- recipients -----------------------------------------------------------------
+const statusLabels = Object.fromEntries(rows.map((r) => [r.key, r.label])) as Record<MessageStatus, string>
+
+/** Messages per status over both channels, for the filter buttons. */
+const byStatus = computed(() => {
+  const sum: Record<MessageStatus, number> = { pending: 0, sending: 0, sent: 0, failed: 0, skipped: 0, cancelled: 0 }
+  for (const { id } of channels) {
+    const c = counts(id)
+    if (!c) continue
+    for (const { key } of rows) sum[key] += c[key]
+  }
+  return sum
+})
+
+// The ones that need attention first, as in the list itself.
+const filters: MessageStatus[] = ['failed', 'skipped', 'cancelled', 'pending', 'sending', 'sent']
+
+/** What happened, in the marketer's words; the provider's own text is shown next to it. */
+function note(r: Recipient): string {
+  switch (r.status) {
+    case 'sent':
+      return r.sent_at ? formatDateTime(new Date(r.sent_at)) : ''
+    case 'skipped':
+      return 'Onaydan sonra izni ya da adresi kalktı'
+    case 'failed':
+      return 'Gönderilemedi'
+    case 'cancelled':
+      return 'Kampanya iptal edildi'
+    case 'pending':
+      return r.error ? 'Yeniden denenecek' : 'Sırada'
+    default:
+      return 'Gönderiliyor'
+  }
+}
+
+// The list opens in a side panel: the page behind it stops scrolling, and
+// focus moves into the panel so Escape and Tab work from the keyboard.
+const closeButton = ref<HTMLButtonElement | null>(null)
+watch(
+  () => store.recipientsOpen,
+  async (open) => {
+    document.body.classList.toggle('no-scroll', open)
+    if (open) {
+      await nextTick()
+      closeButton.value?.focus()
+    }
+  },
+)
+onUnmounted(() => {
+  document.body.classList.remove('no-scroll')
+  store.closeRecipients()
+})
+
 // Cancelling cannot be undone, so it takes two clicks: the first one only
 // asks. An inline question instead of a browser dialog keeps the live numbers
 // visible while deciding.
@@ -73,7 +127,8 @@ async function cancel() {
   </button>
   <div class="page-head">
     <div>
-      <h1>Gönderim <span v-if="store.campaign" class="muted">· kampanya #{{ store.campaign.id }}</span></h1>
+      <p class="eyebrow">Böl. 4 — Gönderim<template v-if="store.campaign"> · kampanya #{{ store.campaign.id }}</template></p>
+      <h1>Canlı <em>akış.</em></h1>
       <p v-if="store.status?.brief" class="brief-quote">{{ store.status.brief }}</p>
       <p v-if="store.status?.languages && store.status.languages.length > 1" class="hint tight" style="margin-top: 8px">
         Metin dilleri: {{ store.status.languages.map((code) => code.toUpperCase()).join(' · ') }}. Her alıcı kendi dilindeki metni alır.
@@ -187,5 +242,98 @@ async function cancel() {
     <p class="hint" style="margin-top: 16px">
       “Bekliyor” yeniden denenecek mesajları da içerir. “Atlandı”, onaydan sonra izni ya da adresi kalkan alıcılardır.
     </p>
+
+    <div class="recipients-entry">
+      <div>
+        <h2>Bu mesajlar kimlere gitti?</h2>
+        <p class="muted">Alıcıları tek tek gör: kime teslim edildi, kime gitmedi ve neden.</p>
+      </div>
+      <div class="row" style="flex-wrap: wrap">
+        <button v-if="byStatus.failed + byStatus.skipped > 0" class="small" type="button" @click="store.openRecipients('failed')">
+          Yalnızca sorunlular <span class="muted">· {{ byStatus.failed + byStatus.skipped }}</span>
+        </button>
+        <button class="primary" type="button" @click="store.openRecipients()">
+          <AppIcon name="users" :size="18" /> Alıcıları gör
+        </button>
+      </div>
+    </div>
   </template>
+
+  <Teleport to="body">
+    <div v-if="store.recipientsOpen" class="drawer-backdrop" @click.self="store.closeRecipients()">
+      <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="recipients-title" @keydown.esc="store.closeRecipients()">
+    <div class="card-head">
+      <div>
+        <p class="eyebrow">Kampanya #{{ store.campaign?.id }}</p>
+        <h2 id="recipients-title" class="section-title">Alıcılar</h2>
+      </div>
+      <div class="row">
+        <button class="small" type="button" :disabled="store.recipientsLoading" @click="store.loadRecipients()">
+          {{ store.recipientsLoading ? 'Yükleniyor…' : 'Yenile' }}
+        </button>
+        <button ref="closeButton" class="small" type="button" @click="store.closeRecipients()">Kapat</button>
+      </div>
+    </div>
+
+      <div class="filters" role="group" aria-label="Duruma göre süz">
+        <button class="filter" :class="{ on: store.recipientsFilter === '' }" type="button" @click="store.filterRecipients('')">
+          Hepsi <span>{{ totals.total }}</span>
+        </button>
+        <template v-for="f in filters" :key="f">
+          <button
+            v-if="byStatus[f] > 0 || store.recipientsFilter === f"
+            class="filter"
+            :class="{ on: store.recipientsFilter === f }"
+            type="button"
+            @click="store.filterRecipients(f)"
+          >
+            {{ statusLabels[f] }} <span>{{ byStatus[f] }}</span>
+          </button>
+        </template>
+      </div>
+
+      <p v-if="store.recipientsError" class="alert error" role="alert">{{ store.recipientsError }}</p>
+
+      <div v-if="store.recipients.length" class="table-wrap">
+        <table class="recipient-table">
+          <thead>
+            <tr>
+              <th scope="col">Alıcı</th>
+              <th scope="col">Kanal</th>
+              <th scope="col">Durum</th>
+              <th scope="col" class="num">Deneme</th>
+              <th scope="col">Ne oldu</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in store.recipients" :key="r.user_id + r.channel">
+              <td>
+                <strong>{{ r.name }}</strong>
+                <span class="sub">{{ r.address }}</span>
+              </td>
+              <td>
+                {{ r.channel === 'sms' ? 'SMS' : 'Email' }}
+                <span class="sub">{{ r.language.toUpperCase() }}</span>
+              </td>
+              <td><span class="badge" :class="'m-' + r.status">{{ statusLabels[r.status] }}</span></td>
+              <td class="num">{{ r.attempts }}</td>
+              <td>
+                {{ note(r) }}
+                <code v-if="r.error && r.status !== 'skipped'" class="sub">{{ r.error }}</code>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else-if="!store.recipientsLoading && !store.recipientsError" class="hint">Bu durumda alıcı yok.</p>
+
+      <div v-if="store.recipients.length < store.recipientsTotal" class="more">
+        <button type="button" :disabled="store.recipientsLoading" @click="store.loadRecipients(true)">
+          Daha fazla göster <span class="muted">· {{ store.recipients.length }} / {{ store.recipientsTotal }}</span>
+        </button>
+      </div>
+      <p class="hint tight" style="margin-top: 12px">Telefon ve email adresleri gizlenerek gösterilir. Liste, “Yenile” ile ya da gönderim bittiğinde güncellenir.</p>
+      </aside>
+    </div>
+  </Teleport>
 </template>
