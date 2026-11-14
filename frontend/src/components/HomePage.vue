@@ -307,20 +307,6 @@ const figures = [
   { value: '1', unit: ' kez', label: 'Aynı kişiye aynı mesaj. Yeniden denemede bile.' },
 ]
 
-const questions = [
-  {
-    q: 'Yapay zekâ veritabanına dokunuyor mu?',
-    a: 'Hayır. Model yalnızca yapılandırılmış bir kural önerir. Sorguyu, doğrulanmış kuraldan sistem kendisi kurar; modelin yazdığı hiçbir metin sorguya girmez.',
-  },
-  {
-    q: 'İzni olmayan birine mesaj gider mi?',
-    a: 'Gitmez. Bir kanaldan gönderim için hem izin hem adres gerekir ve bu, gönderim anında yeniden kontrol edilir.',
-  },
-  { q: 'Müşterim başka bir dil okuyorsa?', a: 'Metin, kitledeki her dil için yazılır. Herkes kendi dilindeki mesajı alır.' },
-  { q: 'Yanlışlıkla onaylarsam?', a: 'Zamanlanmış ya da süren bir kampanya durdurulabilir. Bekleyen mesajlar gönderilmez.' },
-  { q: 'Gerçek kişilere mesaj gidiyor mu?', a: 'Bu kurulumda hayır. Alıcılar örnek veridir, gönderim bir test sağlayıcısına yapılır.' },
-]
-
 const chapterLabels = ['Giriş', 'Brief', 'Kitle', 'Mesaj', 'Gönderim']
 
 // v-reveal: an element rises into place the first time it scrolls into view.
@@ -433,21 +419,6 @@ const vReveal: Directive<HTMLElement> = {
             <dd>{{ f.label }}</dd>
           </div>
         </dl>
-      </div>
-    </section>
-
-    <section class="band">
-      <div class="container split">
-        <div>
-          <p class="eyebrow dark">Sorular</p>
-          <h2 v-reveal class="statement small">Daha önce <em>soruldu.</em></h2>
-        </div>
-        <div class="faq">
-          <details v-for="item in questions" :key="item.q">
-            <summary>{{ item.q }}</summary>
-            <p>{{ item.a }}</p>
-          </details>
-        </div>
       </div>
     </section>
 

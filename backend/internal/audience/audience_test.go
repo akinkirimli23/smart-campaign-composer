@@ -257,3 +257,91 @@ AND ((sms_opt_in AND phone IS NOT NULL) OR (email_opt_in AND email IS NOT NULL))
 		t.Errorf("languages = %+v, err = %v", got, err)
 	}
 }
+
+// A suppressed address is not reachable on that channel, and only on that
+// channel; the count says how many messages that leaves out.
+func TestSuppressedAddressesAreNotReachable(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 5000, 42, refNow); err != nil {
+		t.Fatal(err)
+	}
+	counter := audience.Counter{DB: pool}
+	before, err := counter.Count(ctx, exampleRule, refNow)
+	if err != nil || before.Suppressed != 0 {
+		t.Fatalf("before = %+v, err = %v", before, err)
+	}
+
+	// Three people of the example audience who can be reached on both channels:
+	// the first loses SMS, the second email, the third both.
+	rows, err := pool.Query(ctx, `
+SELECT u.id FROM users u
+WHERE u.city = 'İstanbul' AND u.sms_opt_in AND u.phone IS NOT NULL AND u.email_opt_in AND u.email IS NOT NULL
+  AND EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.event_type = 'cart_add' AND e.occurred_at > $1::timestamptz - interval '30 days' AND e.occurred_at <= $1)
+  AND NOT EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.event_type = 'purchase' AND e.occurred_at > $1::timestamptz - interval '30 days' AND e.occurred_at <= $1)
+ORDER BY u.id LIMIT 3`, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if len(ids) != 3 {
+		t.Fatalf("found %d people reachable on both channels", len(ids))
+	}
+	for _, s := range []struct {
+		id      int64
+		channel string
+	}{{ids[0], "sms"}, {ids[1], "email"}, {ids[2], "sms"}, {ids[2], "email"}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO suppressions (user_id, channel, reason) VALUES ($1, $2, 'invalid_address')`, s.id, s.channel); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	after, err := counter.Count(ctx, exampleRule, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := audience.Counts{
+		Total: before.Total, SMS: before.SMS - 2, Email: before.Email - 2,
+		Unreachable: before.Unreachable + 1, // only the third lost both channels
+		Suppressed:  4,
+	}
+	if after != want {
+		t.Errorf("after = %+v, want %+v", after, want)
+	}
+
+	// Someone who never consented is not "suppressed", whatever the table says.
+	var silent int64
+	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE city = 'İstanbul' AND NOT sms_opt_in LIMIT 1`).Scan(&silent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO suppressions (user_id, channel, reason) VALUES ($1, 'sms', 'invalid_address') ON CONFLICT DO NOTHING`, silent); err != nil {
+		t.Fatal(err)
+	}
+	city := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+	}}
+	if got, err := counter.Count(ctx, city, refNow); err != nil || got.Suppressed != 4 {
+		t.Errorf("suppressed = %d, err = %v", got.Suppressed, err)
+	}
+
+	// Someone who unsubscribed is left out the same way, and counted apart.
+	if _, err := pool.Exec(ctx, `UPDATE suppressions SET reason = 'unsubscribed' WHERE user_id = $1`, ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	got, err := counter.Count(ctx, exampleRule, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.Suppressed, want.Unsubscribed = 2, 2
+	if got != want {
+		t.Errorf("after unsubscribing = %+v, want %+v", got, want)
+	}
+}

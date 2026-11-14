@@ -87,6 +87,10 @@ export interface Audience {
   sms: number
   email: number
   unreachable: number
+  /** Messages left out only because the address was found invalid earlier. */
+  suppressed?: number
+  /** Messages left out because the person unsubscribed from that channel. */
+  unsubscribed?: number
 }
 
 export interface Assumption {
@@ -199,18 +203,38 @@ export interface Recipient {
   /** Masked phone number or email address. */
   address: string
   language: string
+  city: string
   status: MessageStatus
   attempts: number
   sent_at?: string
   /** The last failure reported for this message, if any. */
   error?: string
+  /** Why this person is not sent to on this channel any more, if they are not. */
+  suppression?: Suppression
 }
+
+export type Suppression = 'unsubscribed' | 'invalid_address'
+
 
 export interface RecipientPage {
   recipients: Recipient[]
   /** How many messages match the filter, not how many are on this page. */
   total: number
   offset: number
+  /** Messages per status under the other filters: what each status button would list. */
+  by_status: Partial<Record<MessageStatus, number>>
+}
+
+/** What narrows a recipient list; an empty value does not filter. */
+export interface RecipientFilter {
+  status: MessageStatus | ''
+  channel: Channel | ''
+  language: string
+  city: string
+  /** Part of the recipient's name. */
+  q: string
+  /** Only recipients who are suppressed for this reason. */
+  suppression: Suppression | ''
 }
 
 export type CampaignState = 'scheduled' | 'sending' | 'done' | 'cancelled'

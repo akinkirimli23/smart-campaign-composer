@@ -161,7 +161,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (33 kayıt) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (37 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 13 Kasım'da güncellendi (açılış sayfası, yeni tasarım ve alıcı listesi dahil); sonrasında çalışılırsa yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
@@ -195,9 +195,12 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   kuralı düşürmez (`parseOutcome` zaman hatalarını ayrı döner). Model yerel saat yazar, UTC'ye
   backend çevirir.
 - `internal/audience`: kanal bazlı sayım. `SMSReachable` / `EmailReachable` sabitleri "bu kanaldan
-  gönderilebilir" tanımının tek yeri; aşama 4'teki gönderici de bunları kullanmalı.
+  gönderilebilir" tanımının tek yeri: izin + adres + bastırılmamış (`suppressions` tablosu,
+  DECISIONS 35). Sayım, kuyruğa alma ve worker hep bunları kullanır; yeni bir "gönderilemez"
+  nedeni eklenecekse buraya eklenir, ayrı bir kontrol yazılmaz.
 - `internal/llm`: `Client` ve `Streamer` arayüzleri, testler için `Scripted`; `llm/mockllm` key
-  yokken kullanılan anahtar kelime eşleştirici; `llm/anthropicllm` gerçek istemci (resmi Go SDK,
+  yokken kullanılan anahtar kelime eşleştirici (tanımadığı niteliği sessizce atmaz, `refusals`
+  tablosuyla reddeder: DECISIONS 36; uç durum seti `scripts/brief-seti.py`, `docs/brief-seti.md`); `llm/anthropicllm` gerçek istemci (resmi Go SDK,
   DECISIONS 16). SDK'yı yalnızca `anthropicllm` import eder. Testleri yerel bir SSE sunucusuna
   karşı çalışır, key istemez.
 - **Açık iş:** gerçek key ile uçtan uca deneme yapılmadı; README "Bilinen eksikler"de yazıyor.
@@ -244,6 +247,14 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 - `internal/delivery`: `Worker` (kanal başına bir döngü; `FOR UPDATE SKIP LOCKED` ile kiralama,
   gönderimde şablon doldurma ve izin kontrolü, sonuç yazarken `status = 'sending' AND attempts = N`
   koşulu), `Limiter` (eşit aralıklı slot, burst yok, `PauseUntil` ile 429), `HTTPProvider`.
+- Sağlayıcı `recipient_unreachable` koduyla ret verirse (`delivery.Unreachable`) worker kişiyi o
+  kanal için bastırır (`Worker.suppress`); karar koda bakar, hata metnine değil. Başka bir kalıcı
+  ret (`Permanent`) kimseyi bastırmaz.
+- Abonelikten çıkma (DECISIONS 37): mock sağlayıcı teslim ettiği alıcıların bir kısmı için
+  `POST /api/provider/events` çağırır (`reference` = bizim idempotency key'imiz, `X-Webhook-Secret`
+  doğrulanır). `Store.Unsubscribe` yalnızca teslim edilmiş bir mesaj için kabul eder ve aynı
+  `suppressions` tablosuna `unsubscribed` nedeniyle yazar; gerisi karar 35 ile aynı yoldan çalışır.
+  `users.*_opt_in` değiştirilmez.
 - Mesaj durumları: `pending` → `sending` → `sent` / `failed` / `skipped` / `cancelled`. Retry
   durumu satırda (`attempts`, `next_attempt_at`); 429 deneme hakkı harcamaz.
 - Zamanlama (DECISIONS 27): `Store.Create(…, asOf, sendAt)`; mesajların `next_attempt_at` değeri
@@ -257,7 +268,9 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 - Worker API süreci içinde çalışır (`WORKER_ENABLED`); hız sınırlayıcı süreç içi olduğu için
   gönderen süreç tek olmalı.
 - `internal/mockprovider` + `cmd/mockprovider`: compose'ta `mock-provider` servisi, `:8090`.
-  Oranlar `MOCK_*` ortam değişkenleriyle ayarlanır.
+  Oranlar `MOCK_*` ortam değişkenleriyle ayarlanır. `MOCK_UNREACHABLE_RATE` (varsayılan %2)
+  adrese bağlı kalıcı rettir (`422`): "başarısız" durumunun çalışan sistemde görünmesini sağlar
+  (DECISIONS 34).
 - Segment kuralına `min_count`, harcama / sipariş metrikleri ve üyelik tarihi aşama 5'ten sonra
   eklendi (DECISIONS 25). "Herkese gönder" ve diğer eksikler README "Sonraya bırakılanlar"da.
 
@@ -308,6 +321,11 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Alıcı listesi (DECISIONS 33): panoda "Alıcıları gör" ile açılan yan panel. Durum store'da
   (`recipientsOpen`, `openRecipients`, `filterRecipients`, `loadRecipients(more)`); liste ancak
   panel açılınca yüklenir, yalnızca en son isteğin yanıtı kullanılır. Maskeleme backend'dedir.
+  Süzgeçler (`RecipientFilter`: durum, kanal, dil, şehir, ad) sorgu parametresidir; durum
+  düğmelerindeki sayılar yanıttaki `by_status`'tan gelir, panodaki toplamlardan değil. Kampanya
+  listesinin süzgeci tarayıcıdadır (`lib/campaigns.ts`). Bastırılan alıcı satırında etiketle
+  görünür (`Recipient.suppression`); kitle ekranı hariç kalan mesajları nedenine göre ayrı sayar
+  (`audience.suppressed`, `audience.unsubscribed`).
 - Onay ekranında "Hemen / Zamanla" seçimi; pano zamanlanmış kampanyada başlangıç saatini ve
   iptal butonunu gösterir. İptal iki tıklamadır ve sayfanın içinde sorulur (tarayıcı penceresi
   değil).

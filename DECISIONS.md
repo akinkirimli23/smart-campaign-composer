@@ -998,8 +998,8 @@ projede olmayan video yerine ne kullanılsın (kodla çizilen sahne).
 **Karar.**
 - **Açılış sayfası** (`HomePage.vue`, adres: hash yok). Sabitlenmiş tek sahne, kaydırma konumuna
   bağlı: brief yazılır → kurala uyan noktalar yanıp kümelenir → küme bir mesajın satırlarına
-  dönüşür → noktalar sırayla akıp gider. Ardından üç sakin bölüm (model, sınırlar, sorular) ve
-  kapanış çağrısı. Dört adımlı araç `#/olustur` adresine taşındı.
+  dönüşür → noktalar sırayla akıp gider. Ardından sakin bölümler (model, sınırlar) ve kapanış
+  çağrısı. (İlk halinde bir "sorular" bölümü de vardı; incelemede gereksiz bulunup kaldırıldı.) Dört adımlı araç `#/olustur` adresine taşındı.
 - **Sahne video değil, canvas.** Her nokta bir kullanıcıyı temsil eder. Tek bir sayı, kaydırma
   ilerlemesi `p` (0..1), her şeyi belirler: `lib/story.ts` içindeki saf fonksiyonlar `p`'den
   sahnenin durumunu ve her başlığın giriş / çıkış oranını üretir. Çizim ve tipografi aynı
@@ -1081,3 +1081,234 @@ ve neden, görülemiyordu. Veri zaten `messages` tablosunda duruyordu; eksik ola
 - Arama, kanala göre süzme ve dışa aktarma yok.
 - Kimlik doğrulama olmadığı için (karar 29) adresi bilen herkes alıcı adlarını görebilir;
   maskeleme bunu sınırlar, çözmez.
+
+**Güncelleme (13 Kasım): süzgeçler.** Liste yalnızca duruma göre süzülüyordu; binlerce alıcılı
+bir kampanyada belirli birini ya da bir grubu bulmak mümkün değildi.
+
+- **Alıcı listesi** artık kanala, dile, şehre ve ada göre de süzülür
+  (`?channel=&language=&city=&q=`); süzgeçler birlikte çalışır. Yanıttaki `by_status`, durum
+  dışındaki süzgeçlere uyan mesajları duruma göre sayar; durum düğmeleri bu sayıları gösterir,
+  yani "SMS + İngilizce" seçiliyken "Başarısız 1" o kesitteki başarısızları söyler.
+- Dil ve şehir seçenekleri kural düzenleyicisinin kullandığı `GET /api/segments/options`'tan
+  gelir; arayüze liste gömülmedi.
+- Her süzgeç değeri sorgu parametresi olarak gider, SQL metnine eklenmez. Durum ve kanal kapalı
+  kümeden doğrulanır; ad aramasındaki `%` ve `_` kaçırılır, yani birer karakterdir.
+- **Kampanya listesi** duruma ve brief'teki metne göre süzülür. Liste en fazla 100
+  kampanya tuttuğu için bu tarayıcıda yapılır; backend'e yeni bir sorgu eklenmedi.
+- *Sınırı:* ad araması `ILIKE` ile yapılır; veritabanının harf kuralları Türkçe değilse "I" ile
+  "ı" eşleşmeyebilir. Ad aramasında indeks yok; çok büyük kampanyada yavaşlar.
+
+---
+
+## 34. Mock sağlayıcıda kalıcı ret: bazı alıcılara hiç ulaşılamaz
+
+**Bağlam.** Arayüz incelenirken bütün kampanyaların %100 teslim edildiği görüldü. Neden:
+sağlayıcının hataları (500 / 503, 429, kaybolan yanıt) hep geçiciydi ve beş denemeyle
+(karar 21) hepsi aşılıyordu; %5 hata oranında beş denemenin de başarısız olma olasılığı
+milyonda birin altında. "Başarısız" durumu kodda ve testlerde vardı ama çalışan sistemde hiç
+görünmüyordu; pano ve alıcı listesinin en önemli hali denenmemiş oluyordu.
+
+**Karar.** Mock sağlayıcı alıcıların küçük bir kısmını kalıcı olarak reddeder
+(`MOCK_UNREACHABLE_RATE`, varsayılan %2): SMS'te "numara kullanımda değil", email'de "posta
+kutusu yok", ikisi de `422`. Ret adresin özetinden türetilir: aynı adres her denemede ve her
+kampanyada reddedilir.
+
+**Neden.**
+- **Gerçek sağlayıcılar böyle davranır.** Her listede kapanmış numaralar ve geri dönen adresler
+  olur; bunlar yeniden denemeyle düzelmez.
+- **Kalıcı hata yolu artık uçtan uca görünüyor.** Worker `4xx` yanıtını kalıcı sayar, yeniden
+  denemez ve mesajı tek denemede "başarısız" yapar (karar 21'deki ayrım). Panoda başarısız
+  sayısı, alıcı listesinde kim olduğu ve nedeni görülür.
+- **Adrese bağlı, rastgele değil.** Rastgele ret yeniden denemede kabul edilebilirdi; bu "kalıcı"
+  olmazdı ve idempotency davranışını bulandırırdı. Özet kriptografik (SHA-256): adresler uzun bir
+  ortak sonek taşıdığı için (`…@example.com`) zayıf bir özet onları eşit dağıtmıyordu; ilk
+  denemede 310 email'in hiçbiri reddedilmemişti.
+
+**Bedeli / sınırı.**
+- Varsayılan kurulumda kampanyalar artık %100 değil, yaklaşık %98 teslim edilir. `0` yapılırsa
+  eski davranışa dönülür.
+- İlk halinde aynı kişiler her kampanyada yeniden deneniyor ve yeniden başarısız oluyordu; bu,
+  karar 35 ile giderildi.
+- Arayüz sağlayıcının hata metnini bilinen birkaç kalıba göre Türkçeleştirir; tanımadığı metinde
+  genel bir "sağlayıcı mesajı reddetti" gösterir (özgün metin üzerine gelince görünür).
+
+---
+
+## 35. Geçersiz adres bastırılır: sağlayıcının "yok" dediği adrese bir daha gönderilmez
+
+**Bağlam.** Karar 34'ten sonra görüldü: sağlayıcının kalıcı olarak reddettiği on kişi her
+kampanyada yeniden kuyruğa giriyor, yeniden deneniyor ve yeniden başarısız oluyordu. Sektördeki
+araçlara bakıldığında (Braze, Klaviyo, Twilio / Telnyx belgeleri) hepsinde bir "bastırma listesi"
+olduğu görüldü: geri dönen adres ve abonelikten çıkan kişi listeye girer, sonraki gönderimlerde
+atlanır.
+
+**Karar.**
+- Yeni tablo `suppressions (user_id, channel, reason, campaign_id, detail, created_at)`, kişi ve
+  kanal başına tek satır (migration 006). Şimdilik tek neden var: `invalid_address`.
+- Sağlayıcı adresin var olmadığını bir **hata koduyla** bildirir (`recipient_unreachable`).
+  İstemci bunu ayrı bir hata türüne çevirir (`Unreachable`); worker mesajı tek denemede
+  "başarısız" yapar ve kişiyi o kanal için bastırır.
+- "Bu kanaldan gönderilebilir" tanımının tek yeri olan `audience.SMSReachable` /
+  `EmailReachable` artık bastırmayı da içerir: izin **ve** adres **ve** bastırılmamış. Bu
+  sabitleri kitle sayımı, kuyruğa alma ve worker'ın gönderim anındaki kontrolü kullandığı için
+  üçü birden değişti:
+  - Sonraki kampanyalarda o kişi o kanalda kuyruğa girmez; kitle ekranındaki sayılar buna göre
+    düşer ve kaç mesajın bu yüzden hariç kaldığı ayrıca gösterilir (`suppressed`).
+  - Daha önce kuyruğa girmiş bir mesaj (örneğin zamanlanmış bir kampanya) sırası gelince
+    gönderilmez, "atlandı" olur.
+- Bastırma kanal bazındadır: numarası kapanan kişiye email gitmeye devam eder.
+
+**Neden.**
+- **Boşa istek ve yanlış sayı.** Aynı ölü adrese her kampanyada istek atmak sağlayıcı kotasını
+  ve hız sınırını harcar, pazarlamacıya da ulaşamayacağı kişileri "gidecek" diye gösterir.
+- **Kod, metin değil.** Karar hata mesajının sözüne değil koduna bakar. Sağlayıcı bir isteği
+  başka bir nedenle reddederse (bozuk istek, fazla uzun SMS) bu adresin değil bizim hatamızdır;
+  o durumda kimse bastırılmaz. Test bunu ayrıca doğrular.
+- **Tek tanım.** Bastırma ayrı bir kontrol olarak üç yere yazılmadı; mevcut tek tanıma eklendi.
+  Böylece "ekranda görünen sayı" ile "gönderilen" yine aynı kuraldan çıkar (kural 3 ve 5).
+- **Ayrı tablo, `users`'ta kolon değil.** Neden, kaynak kampanya ve tarih saklanır (denetim için);
+  ileride başka nedenler (abonelikten çıkma, şikâyet) aynı tabloya ve aynı tanıma oturur.
+
+**Bedeli / sınırı.**
+- Bastırmayı kaldırmanın arayüzü yok. Numara yeniden kullanıma açılırsa satır elle silinir
+  (`DELETE FROM suppressions …`); `make reset` hepsini temizler.
+- Tek bir ret yeterlidir. Gerçek sağlayıcılar bazen geçici bir sorunu kalıcı gibi bildirir;
+  üretimde "iki ayrı kampanyada ret" gibi bir eşik düşünülür.
+- Kitle kuralına uyan ama bastırılmış kişi "kurala uyan" toplamında görünmeye devam eder; kanal
+  sayılarından düşer.
+- Mock sağlayıcıda ret adrese bağlı olduğu için (karar 34) aynı kişiler bastırılır; ilk
+  kampanyadan sonra o kitlede başarısız mesaj görülmez. "Başarısız" halini yeniden görmek için
+  başka bir kitle seçilir ya da `make reset` yapılır.
+
+**Alternatif.** `users` tablosuna `sms_invalid`, `email_invalid` kolonları: daha az kod, ama
+neden ve kaynak saklanmaz ve her yeni neden yeni bir kolon ister.
+
+---
+
+## 36. Uç durum brief seti; mock LLM atamayacağı isteği reddeder
+
+**Bağlam.** Sistem hep "iyi" brief'lerle denenmişti. Hataları görmek için 51 brief'lik bir uç
+durum seti yazıldı (`docs/brief-seti.md`, çalıştırıcısı `scripts/brief-seti.py`): yazım
+farkları, veride olmayan istekler, mantık çelişkileri, "herkese gönder", sınır değerleri, zaman
+ifadeleri, enjeksiyon denemeleri, anlamsız girdi, kanal ve dil istekleri.
+
+**Bulunan.** Doğrulayıcı, sınırlar ve enjeksiyon denemeleri beklendiği gibi davrandı (SQL metni
+etkisiz, `</brief>` kaçışı etkisiz, sınır dışı değerler 422). Sorun mock LLM'deydi: tanımadığı
+bir niteliği **sessizce atıyor** ve kalan koşullarla kural üretiyordu. Dokuz brief istenenden
+farklı, çoğu daha geniş bir kitle verdi:
+
+| Brief | Ne oldu |
+|---|---|
+| "İstanbul **dışındaki** kullanıcılara" | İstanbul'dakileri seçti (tam tersi) |
+| "25 yaşından **büyük** erkeklere" | Yaş atıldı: bütün erkekler |
+| "alışveriş yapan **ve** hiç yapmayan" | Çelişki fark edilmedi |
+| "**-500** TL üzeri" | 500 TL olarak okundu |
+| "**yalnızca SMS** gönder", "**WhatsApp** mesajı gönder" | Kanal isteği atıldı; SMS ve email birlikte |
+| "**Almanca** konuşan" | Dil atıldı: şehirdeki herkes |
+| İngilizce yazılmış brief | Sepet koşulu atıldı: şehirdeki herkes |
+
+Bu, karar 15'in ("kısmi kural üretilmez") mock tarafından çiğnenmesiydi; gerçek model için
+prompt bunu söylüyor, mock ise söylemiyordu. Değerlendiren kişi API key olmadan çalıştıracağı
+için mock'un davranışı ürünün davranışı gibi görünür.
+
+**Karar.**
+- Mock, ifade edebildiğini ifade eder: "dışındaki / hariç" şehir hariç tutma olur; "N yaşından
+  büyük / küçük" yaş aralığı olur ve sınırın nasıl okunduğu yorum olarak gösterilir; "Türkçe
+  konuşan" dil koşulu olur.
+- İfade edemediğini **reddeder** ve nedenini söyler: kanal seçimi, WhatsApp / push, veride
+  olmayan dil, negatif değer, çelişen koşullar, Türkçe olmayan brief.
+- Brief seti repoda durur; aynı set gerçek Claude ile çalıştırılıp iki sütun karşılaştırılacak.
+
+**Ürünün kendisinde açık kalanlar** (mock'tan bağımsız; `docs/brief-seti.md` içinde):
+- **Kanal seçilemiyor.** Kural formatında ve onayda kanal yok: kampanya her zaman izni olan
+  herkese iki kanaldan da gider. "Yalnızca SMS" gerçek bir pazarlamacı isteği; şimdilik
+  reddediliyor, sessizce yok sayılmıyor.
+- **Metindeki iddialar doğrulanmıyor.** "%150 indirim" kural olarak geçerli; içerik doğrulayıcısı
+  uzunluğa ve değişkenlere bakar, anlamına değil.
+- **Sınır hatasının dili.** "Son 0 günde" için yanıt "model geçerli bir kural üretemedi"dir;
+  doğru ama pazarlamacıya "gün sayısı 1–365 arası olmalı" demek daha yardımcı olurdu.
+
+---
+
+## 37. Abonelikten çıkma: sağlayıcı webhook'la bildirir, kişi o kanalda bastırılır
+
+**Bağlam.** Geçersiz adres (karar 35) "mesaj hiç ulaşmadı" durumuydu. İstenen ikinci durum
+farklı: **mesaj teslim edilir, sonra alıcı abonelikten çıkar**; sonraki kampanyada o kişiye o
+kanaldan mesaj gitmemeli ve bu listede görünmeli. Bu, yazılmadan önce konuşuldu. Asıl soru
+tabloda ya da kuralda değildi (ikisi karar 35'te hazırdı), çıkma isteğinin nereden geleceğiydi:
+gerçekte kullanıcı SMS'e STOP yazar ya da emaildeki bağlantıya tıklar; bu projede gerçek
+kullanıcı da gelen mesaj da yok.
+
+**Seçenekler.**
+- *A: Mock sağlayıcı çıkmayı taklit eder ve webhook ile bildirir.* Senaryo birebir, gerçek
+  entegrasyonun şekli görünür; bedeli yeni bir endpoint ve sağlayıcıdan API'ye ters yönde çağrı.
+- *B: Pazarlamacı panelden elle çıkarır.* Küçük iş; ama çıkmayı müşteri değil pazarlamacı
+  yapmış olur, gerçeği yansıtmaz.
+
+**Karar: A, dar kapsamla.**
+- Mock sağlayıcı, mesajı teslim ettiği alıcıların küçük bir kısmı için (`MOCK_UNSUBSCRIBE_RATE`,
+  varsayılan %2) teslimattan iki saniye sonra API'ye bildirir:
+  `POST /api/provider/events {"type": "unsubscribed", "reference": "campaign-7-user-12-sms"}`.
+- `reference`, mesajla birlikte gönderdiğimiz idempotency key'in geri verilmesidir: kampanyayı,
+  kişiyi ve kanalı tam olarak söyler. Kimse telefon numarası ya da adresle aranmaz.
+- API olayı ancak o referansla **teslim edilmiş** bir mesaj varsa kabul eder ve kişiyi o kanal
+  için `unsubscribed` nedeniyle `suppressions` tablosuna yazar (migration 007 nedeni ekler).
+- Bundan sonrası karar 35'in aynısıdır, yeni kod gerektirmedi: tek "gönderilebilir" tanımı
+  bastırmayı zaten içerdiği için kişi sonraki kampanyada kuyruğa girmez, kuyruktaki mesajı
+  atlanır, kitle ekranındaki sayılar düşer.
+- Görünürlük: alıcı panelinde satır "Teslim edildi" kalır ve yanına "Abonelikten çıktı" etiketi
+  gelir; "Abonelikten çıkanlar" süzgeci vardır. Kitle ekranı kaç mesajın bu yüzden hariç
+  kaldığını ayrı satırda söyler (`unsubscribed`, geçersiz adresten ayrı sayılır).
+- Kanal bazındadır: SMS'ten çıkan kişi email almaya devam eder.
+
+**Neden.**
+- **Webhook, çünkü gerçek sağlayıcılar böyle çalışır.** Çıkma, bizim isteğimize verilen bir yanıt
+  değil, sonradan olan bir olaydır; sağlayıcı bunu bize bildirir. Elle çıkarma butonu bu akışı
+  göstermezdi.
+- **Referans olarak kendi anahtarımız.** Sağlayıcının bizim numaralarımızı bilmesi gerekmez, bizim
+  de adresle eşleştirme yapmamız (yanlış kişiyi bulma riski) gerekmez. Biçim katı ayrıştırılır;
+  birebir uymayan referans reddedilir.
+- **Yalnızca teslim edilmiş mesaja.** Kuyrukta bekleyen ya da hiç gönderilmemiş bir mesajdan
+  "çıkılamaz"; bu, uydurma ya da yanlış bir olayın birini bastırmasını önler.
+- **Paylaşılan anahtar.** Endpoint dışarıdan çağrılır; `X-Webhook-Secret` başlığı doğrulanır
+  (compose iki servise aynı değeri verir). Olay yinelenirse zararsızdır.
+- **Kanal bazında.** Sektördeki kural budur (SMS'te STOP yalnızca SMS'i durdurur); kişinin diğer
+  kanaldaki izni ayrı bir rızadır.
+- **`users.sms_opt_in` değiştirilmedi.** İzin alanı seed verisidir ve kitle kurallarının
+  girdisidir; çıkma ayrı bir olaydır ve nedeni, tarihi, kaynak kampanyasıyla saklanır.
+
+**Doğrulama.** Antalya'ya aynı kampanya iki kez gönderildi. Birincide 404 mesaj teslim edildi,
+9'u başarısız oldu; birkaç saniye içinde 10 kişi abonelikten çıktı. İkincide kitle ekranı
+"10 mesaj: abonelikten çıktı, 9 mesaj: adres geçersiz" dedi; kuyruğa 394 mesaj girdi (404 − 10)
+ve hepsi teslim edildi. Bu senaryo ayrıca testle korunuyor.
+
+**Bedeli / sınırı.**
+- Gelen mesaj (STOP metni) ayrıştırılmaz, emailde çıkma bağlantısı yoktur; çıkmayı mock
+  sağlayıcı kendisi uydurur.
+- Yeniden abone olma (START) ve bastırmayı kaldırma arayüzü yok.
+- Çıkma ile bir sonraki kampanyanın onayı arasında yarış olabilir: olay gelmeden onaylanan
+  kampanya o kişiyi kuyruğa alır. Worker gönderim anında yeniden kontrol ettiği için mesaj
+  gitmez ("atlandı"); ama olay teslimattan *sonra* gelirse o mesaj gitmiş olur. Gerçek
+  sistemlerde de böyledir; yasal süre içinde işlemek yeterlidir.
+- Paylaşılan anahtar basit bir kontroldür; imzalı istek (HMAC) ve zaman damgası yok.
+- Mock'ta çıkma adrese bağlı olduğu için aynı kişiler çıkar; bir kitlede yalnızca ilk kampanyada
+  görülür.
+
+**Listede nasıl görünür: üç ayrı durum.** İncelemede sorulan soru şuydu: mesajı alıp sonra çıkan
+kişi "başarısız" mı sayılır, yoksa hiç mi görünmez? Yanıt, hangi kampanyaya bakıldığına bağlıdır.
+
+| Durum | Ne oldu | O kampanyada | Sonraki kampanyada |
+|---|---|---|---|
+| Teslim edildi + "Abonelikten çıktı" | Mesaj ulaştı, kişi sonra çıktı | Teslim sayısına dahil; başarısız değil | Kuyruğa girmez, listede satırı olmaz |
+| Başarısız ("numara kullanımda değil") | Mesaj hiç ulaşmadı, adres geçersiz | Başarısız sayısına dahil, tek deneme | Kuyruğa girmez, listede satırı olmaz |
+| Atlandı | Mesaj kuyruktaydı; gönderilmeden önce kişi çıktı ya da izni kalktı | Atlandı sayısına dahil | — |
+
+- "Abonelikten çıktı" etiketi mesajın sonucunu değil, kişinin bundan sonraki durumunu söyler; bu
+  yüzden mesajın durumu ("Teslim edildi") değişmez ve iki bilgi yan yana gösterilir. Çıkan kişiyi
+  "başarısız" saymak teslimat oranını olduğundan kötü gösterirdi.
+- Sonraki kampanyada bu kişiler tek tek değil toplu olarak görünür: kitle ekranındaki
+  "N mesaj gönderilmeyecek: alıcı o kanalda abonelikten çıktı" satırı. Kuyruğa hiç girmedikleri
+  için o kampanyanın alıcı listesinde yer almazlar.
+- "Atlandı" yalnızca arada kalan mesaj içindir: çıkma anında başka bir kampanyanın (örneğin
+  önceden zamanlanmış) mesajı kuyruktaysa gönderilmez ve o kampanyada böyle görünür.
+- Hepsi kanal bazındadır: SMS'ten çıkan kişi email kanalında olağan alıcıdır.

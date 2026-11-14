@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
 import type { CampaignState, CampaignSummary } from '../api/types'
+import { countByState, filterCampaigns } from '../lib/campaigns'
 import { formatDateTime } from '../lib/time'
 import AppIcon from './AppIcon.vue'
 
@@ -12,6 +13,18 @@ const stateLabels: Record<CampaignState, string> = {
   sending: 'Gönderiliyor',
   done: 'Tamamlandı',
   cancelled: 'İptal edildi',
+}
+
+// Narrowing the list: by state and by text in the brief.
+const states: CampaignState[] = ['scheduled', 'sending', 'done', 'cancelled']
+const state = ref<CampaignState | ''>('')
+const query = ref('')
+const counts = computed(() => countByState(store.campaigns ?? []))
+const shown = computed(() => filterCampaigns(store.campaigns ?? [], state.value, query.value))
+
+function clearFilters() {
+  state.value = ''
+  query.value = ''
 }
 
 function when(c: CampaignSummary): string {
@@ -64,21 +77,41 @@ onUnmounted(() => clearInterval(timer))
     <button class="primary" type="button" @click="store.reset()">Kampanya oluştur</button>
   </section>
 
-  <section v-else-if="store.campaigns" class="card flush">
-    <ul class="campaign-list">
-      <li v-for="c in store.campaigns" :key="c.id">
-        <button type="button" class="campaign-row" @click="store.openCampaign(c.id)">
-          <span class="badge" :class="c.state">{{ stateLabels[c.state] }}</span>
-          <span class="campaign-main">
-            <span class="campaign-brief">{{ c.brief || 'Brief girilmemiş' }}</span>
-            <span class="campaign-meta">#{{ c.id }} · {{ when(c) }}</span>
-          </span>
-          <span class="campaign-progress">
-            <span class="meter" style="display: block"><span :style="{ width: percent(c) + '%' }" /></span>
-            {{ progress(c) }}
-          </span>
+  <template v-else-if="store.campaigns">
+    <div class="filter-bar">
+      <input v-model="query" type="text" class="search" placeholder="Brief'te ara" aria-label="Kampanyalarda ara" />
+    </div>
+    <div class="filters" role="group" aria-label="Duruma göre süz">
+      <button class="filter" :class="{ on: state === '' }" type="button" @click="state = ''">
+        Hepsi <span>{{ store.campaigns.length }}</span>
+      </button>
+      <template v-for="s in states" :key="s">
+        <button v-if="counts[s] > 0 || state === s" class="filter" :class="{ on: state === s }" type="button" @click="state = s">
+          {{ stateLabels[s] }} <span>{{ counts[s] }}</span>
         </button>
-      </li>
-    </ul>
-  </section>
+      </template>
+    </div>
+
+    <section v-if="shown.length" class="card flush">
+      <ul class="campaign-list">
+        <li v-for="c in shown" :key="c.id">
+          <button type="button" class="campaign-row" @click="store.openCampaign(c.id)">
+            <span class="badge" :class="c.state">{{ stateLabels[c.state] }}</span>
+            <span class="campaign-main">
+              <span class="campaign-brief">{{ c.brief || 'Brief girilmemiş' }}</span>
+              <span class="campaign-meta">#{{ c.id }} · {{ when(c) }}</span>
+            </span>
+            <span class="campaign-progress">
+              <span class="meter" style="display: block"><span :style="{ width: percent(c) + '%' }" /></span>
+              {{ progress(c) }}
+            </span>
+          </button>
+        </li>
+      </ul>
+    </section>
+    <p v-else class="hint">
+      Bu süzgeçlere uyan kampanya yok.
+      <button class="ghost small" type="button" @click="clearFilters">Süzgeçleri temizle</button>
+    </p>
+  </template>
 </template>

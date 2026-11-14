@@ -44,6 +44,9 @@ services:
         required: false
     environment:
       HTTP_ADDR: ":8090"
+      # Where the provider reports what happens after delivery (unsubscribes).
+      WEBHOOK_URL: http://api:8080/api/provider/events
+      PROVIDER_WEBHOOK_SECRET: ${PROVIDER_WEBHOOK_SECRET:-local-webhook-secret}
     ports:
       - "8090:8090"
     healthcheck:
@@ -63,6 +66,7 @@ services:
       DATABASE_URL: postgres://scc:scc@postgres:5432/scc?sslmode=disable
       HTTP_ADDR: ":8080"
       PROVIDER_URL: http://mock-provider:8090
+      PROVIDER_WEBHOOK_SECRET: ${PROVIDER_WEBHOOK_SECRET:-local-webhook-secret}
     ports:
       - "8080:8080"
     depends_on:

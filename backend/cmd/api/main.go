@@ -79,6 +79,8 @@ func run() error {
 		VarLengths: &content.DBLengths{DB: pool},
 		Campaigns:  campaign.Store{DB: pool},
 		Metrics:    registry,
+
+		WebhookSecret: cfg.ProviderWebhookSecret,
 	}))
 
 	// The delivery worker runs in this process. Its rate limiter is in-memory,

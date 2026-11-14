@@ -23,6 +23,9 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	// ProviderURL is the base URL of the SMS / email provider (the mock, in this project).
 	ProviderURL string
+	// ProviderWebhookSecret is what the provider presents when it reports an
+	// event (an unsubscribe) back to us. Empty leaves that endpoint open.
+	ProviderWebhookSecret string
 	// SendRatePerSecond is the per-channel send limit (case requirement: 100).
 	SendRatePerSecond int
 	// WorkerEnabled runs the delivery worker inside the API process.
@@ -35,14 +38,15 @@ func Load() (Config, error) {
 	c := Config{
 		// The default targets the compose Postgres, which is published on host
 		// port 5433 so it does not clash with a locally installed Postgres.
-		DatabaseURL:     getenv("DATABASE_URL", "postgres://scc:scc@localhost:5433/scc?sslmode=disable"),
-		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		AnthropicModel:  os.Getenv("ANTHROPIC_MODEL"),
-		LLMMode:         getenv("LLM_MODE", "auto"),
-		ProviderURL:     getenv("PROVIDER_URL", "http://localhost:8090"),
-		WorkerEnabled:   getenv("WORKER_ENABLED", "true") != "false",
-		ShutdownTimeout: 10 * time.Second,
+		DatabaseURL:           getenv("DATABASE_URL", "postgres://scc:scc@localhost:5433/scc?sslmode=disable"),
+		HTTPAddr:              getenv("HTTP_ADDR", ":8080"),
+		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicModel:        os.Getenv("ANTHROPIC_MODEL"),
+		LLMMode:               getenv("LLM_MODE", "auto"),
+		ProviderURL:           getenv("PROVIDER_URL", "http://localhost:8090"),
+		ProviderWebhookSecret: getenv("PROVIDER_WEBHOOK_SECRET", ""),
+		WorkerEnabled:         getenv("WORKER_ENABLED", "true") != "false",
+		ShutdownTimeout:       10 * time.Second,
 	}
 
 	// UnmarshalText accepts debug/info/warn/error in any case.

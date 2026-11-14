@@ -22,10 +22,19 @@ func main() {
 		ErrorRate:     rate("MOCK_ERROR_RATE", 0.05),
 		RateLimitRate: rate("MOCK_RATE_LIMIT_RATE", 0.01),
 		LostReplyRate: rate("MOCK_LOST_REPLY_RATE", 0.01),
-		MinLatency:    millis("MOCK_MIN_LATENCY_MS", 20),
-		MaxLatency:    millis("MOCK_MAX_LATENCY_MS", 250),
-		RetryAfter:    millis("MOCK_RETRY_AFTER_MS", 1000),
-		Seed:          42,
+		// A few recipients in every campaign can never be reached, so "failed"
+		// is something the dashboard actually shows.
+		UnreachableRate: rate("MOCK_UNREACHABLE_RATE", 0.02),
+		// A few recipients opt out after a message reached them; the provider
+		// reports it to the sender's webhook, if one is configured.
+		UnsubscribeRate:  rate("MOCK_UNSUBSCRIBE_RATE", 0.02),
+		UnsubscribeDelay: millis("MOCK_UNSUBSCRIBE_DELAY_MS", 2000),
+		WebhookURL:       os.Getenv("WEBHOOK_URL"),
+		WebhookSecret:    os.Getenv("PROVIDER_WEBHOOK_SECRET"),
+		MinLatency:       millis("MOCK_MIN_LATENCY_MS", 20),
+		MaxLatency:       millis("MOCK_MAX_LATENCY_MS", 250),
+		RetryAfter:       millis("MOCK_RETRY_AFTER_MS", 1000),
+		Seed:             42,
 	}
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {

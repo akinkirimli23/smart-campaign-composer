@@ -31,22 +31,26 @@ type Options struct {
 	StatusInterval time.Duration
 	// VarLengths supplies the worst-case length of each template variable.
 	VarLengths VarLengthSource
+	// WebhookSecret is what the provider must present on /api/provider/events.
+	// Empty means the endpoint is open (local development).
+	WebhookSecret string
 	// Now is the clock used as the "as of" time for audience queries.
 	// Defaults to time.Now; tests pin it.
 	Now func() time.Time
 }
 
 type Server struct {
-	db         Pinger
-	segments   SegmentGenerator
-	audience   AudienceCounter
-	content    ContentGenerator
-	varLengths VarLengthSource
-	campaigns  CampaignStore
-	metrics    *metrics.Registry
-	statusTick time.Duration
-	now        func() time.Time
-	mux        *http.ServeMux
+	db            Pinger
+	segments      SegmentGenerator
+	audience      AudienceCounter
+	content       ContentGenerator
+	varLengths    VarLengthSource
+	campaigns     CampaignStore
+	metrics       *metrics.Registry
+	statusTick    time.Duration
+	webhookSecret string
+	now           func() time.Time
+	mux           *http.ServeMux
 }
 
 func New(o Options) *Server {
@@ -59,7 +63,7 @@ func New(o Options) *Server {
 	s := &Server{
 		db: o.DB, segments: o.Segments, audience: o.Audience,
 		content: o.Content, varLengths: o.VarLengths, campaigns: o.Campaigns,
-		metrics: o.Metrics, statusTick: o.StatusInterval,
+		metrics: o.Metrics, statusTick: o.StatusInterval, webhookSecret: o.WebhookSecret,
 		now: o.Now, mux: http.NewServeMux(),
 	}
 	s.routes()
@@ -86,6 +90,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/campaigns/{id}/events", s.handleCampaignEvents)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/recipients", s.handleCampaignRecipients)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/cancel", s.handleCampaignCancel)
+	s.mux.HandleFunc("POST /api/provider/events", s.handleProviderEvent)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 }
 

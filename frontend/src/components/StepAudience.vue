@@ -163,6 +163,13 @@ const languageShares = computed(() => {
             </li>
           </ul>
           <p class="hint tight">Bir kanaldan gönderim için hem izin hem adres gerekir.</p>
+          <p v-if="audience.unsubscribed" class="hint tight" style="margin-top: 8px">
+            <span class="tag">Hariç</span> {{ audience.unsubscribed }} mesaj gönderilmeyecek: alıcı o kanalda abonelikten çıktı.
+          </p>
+          <p v-if="audience.suppressed" class="hint tight" style="margin-top: 8px">
+            <span class="tag">Hariç</span> {{ audience.suppressed }} mesaj gönderilmeyecek: bu adresler daha önce geçersiz çıktı (numara
+            kullanımda değil ya da posta kutusu yok).
+          </p>
         </section>
 
         <section v-if="languageShares.length > 1" class="card">

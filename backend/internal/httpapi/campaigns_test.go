@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,20 +29,33 @@ type fakeCampaigns struct {
 
 	cancelled int
 
-	recipientsStatus string
+	unsubscribed     []string
+	recipientsFilter campaign.RecipientFilter
 	recipientsLimit  int
 	recipientsOffset int
 }
 
-func (f *fakeCampaigns) Recipients(_ context.Context, id int64, status string, limit, offset int) (campaign.RecipientPage, error) {
+func (f *fakeCampaigns) Unsubscribe(_ context.Context, campaignID, userID int64, channel string, _ time.Time) (bool, error) {
+	if campaignID != 7 {
+		return false, campaign.ErrNotDelivered
+	}
+	ref := fmt.Sprintf("%d/%d/%s", campaignID, userID, channel)
+	if slices.Contains(f.unsubscribed, ref) {
+		return false, nil
+	}
+	f.unsubscribed = append(f.unsubscribed, ref)
+	return true, nil
+}
+
+func (f *fakeCampaigns) Recipients(_ context.Context, id int64, filter campaign.RecipientFilter, limit, offset int) (campaign.RecipientPage, error) {
 	if id != 7 {
 		return campaign.RecipientPage{}, campaign.ErrNotFound
 	}
-	if status == "lost" {
-		return campaign.RecipientPage{}, campaign.ErrUnknownStatus
+	if filter.Status == "lost" {
+		return campaign.RecipientPage{}, campaign.ErrInvalidFilter
 	}
-	f.recipientsStatus, f.recipientsLimit, f.recipientsOffset = status, limit, offset
-	return campaign.RecipientPage{Total: 3, Offset: offset, Recipients: []campaign.Recipient{
+	f.recipientsFilter, f.recipientsLimit, f.recipientsOffset = filter, limit, offset
+	return campaign.RecipientPage{Total: 3, Offset: offset, ByStatus: map[string]int{"failed": 3}, Recipients: []campaign.Recipient{
 		{UserID: 12, Name: "Ayşe Yılmaz", Channel: "sms", Address: "+90••••••••12", Language: "tr", Status: "failed", Attempts: 5, Error: "gave up after 5 attempts"},
 	}}, nil
 }
@@ -410,7 +425,8 @@ func TestCampaignCreateLocalized(t *testing.T) {
 // refuses what cannot be a filter or a page.
 func TestCampaignRecipients(t *testing.T) {
 	store := &fakeCampaigns{}
-	rec, body := campaignRequest(t, store, http.MethodGet, "/api/campaigns/7/recipients?status=failed&limit=20&offset=40", "")
+	rec, body := campaignRequest(t, store, http.MethodGet,
+		"/api/campaigns/7/recipients?status=failed&channel=sms&language=en&city=Ankara&q=ay%C5%9Fe&suppression=unsubscribed&limit=20&offset=40", "")
 	if rec.Code != http.StatusOK || body["total"] != float64(3) || body["offset"] != float64(40) {
 		t.Fatalf("status %d, body %v", rec.Code, body)
 	}
@@ -418,14 +434,18 @@ func TestCampaignRecipients(t *testing.T) {
 	if first["name"] != "Ayşe Yılmaz" || first["address"] != "+90••••••••12" || first["error"] != "gave up after 5 attempts" {
 		t.Errorf("recipient = %v", first)
 	}
-	if store.recipientsStatus != "failed" || store.recipientsLimit != 20 || store.recipientsOffset != 40 {
-		t.Errorf("store got status %q, limit %d, offset %d", store.recipientsStatus, store.recipientsLimit, store.recipientsOffset)
+	want := campaign.RecipientFilter{Status: "failed", Channel: "sms", Language: "en", City: "Ankara", Query: "ayşe", Suppression: "unsubscribed"}
+	if store.recipientsFilter != want || store.recipientsLimit != 20 || store.recipientsOffset != 40 {
+		t.Errorf("store got %+v, limit %d, offset %d", store.recipientsFilter, store.recipientsLimit, store.recipientsOffset)
+	}
+	if body["by_status"].(map[string]any)["failed"] != float64(3) {
+		t.Errorf("by_status = %v", body["by_status"])
 	}
 
 	// No parameters: everything, from the start; the store picks the page size.
 	if rec, _ := campaignRequest(t, store, http.MethodGet, "/api/campaigns/7/recipients", ""); rec.Code != http.StatusOK ||
-		store.recipientsStatus != "" || store.recipientsLimit != 0 || store.recipientsOffset != 0 {
-		t.Errorf("defaults: status %d, store got %q %d %d", rec.Code, store.recipientsStatus, store.recipientsLimit, store.recipientsOffset)
+		store.recipientsFilter != (campaign.RecipientFilter{}) || store.recipientsLimit != 0 || store.recipientsOffset != 0 {
+		t.Errorf("defaults: status %d, store got %+v %d %d", rec.Code, store.recipientsFilter, store.recipientsLimit, store.recipientsOffset)
 	}
 
 	for path, want := range map[string]int{
@@ -439,5 +459,54 @@ func TestCampaignRecipients(t *testing.T) {
 		if rec, _ := campaignRequest(t, store, http.MethodGet, path, ""); rec.Code != want {
 			t.Errorf("%s: status %d, want %d", path, rec.Code, want)
 		}
+	}
+}
+
+// The provider's "this person unsubscribed" event names one of our own
+// messages by the key we sent with it. Anything else is refused.
+func TestProviderUnsubscribeEvent(t *testing.T) {
+	store := &fakeCampaigns{}
+	send := func(secret, body string) (*httptest.ResponseRecorder, map[string]any) {
+		t.Helper()
+		srv := New(Options{DB: fakePinger{}, Campaigns: store, VarLengths: testLengths, WebhookSecret: "s3cret", Now: func() time.Time { return fixedNow }})
+		req := httptest.NewRequest(http.MethodPost, "/api/provider/events", strings.NewReader(body))
+		if secret != "" {
+			req.Header.Set(WebhookSecretHeader, secret)
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec, out
+	}
+	event := `{"type":"unsubscribed","reference":"campaign-7-user-12-sms"}`
+
+	rec, body := send("s3cret", event)
+	if rec.Code != http.StatusOK || body["recorded"] != true || len(store.unsubscribed) != 1 || store.unsubscribed[0] != "7/12/sms" {
+		t.Fatalf("status %d, body %v, store %v", rec.Code, body, store.unsubscribed)
+	}
+	// The provider may deliver an event more than once.
+	if rec, body := send("s3cret", event); rec.Code != http.StatusOK || body["recorded"] != false || len(store.unsubscribed) != 1 {
+		t.Errorf("repeat: status %d, body %v", rec.Code, body)
+	}
+
+	for name, tt := range map[string]struct {
+		secret, body string
+		status       int
+	}{
+		"no secret":            {"", event, 401},
+		"wrong secret":         {"guess", event, 401},
+		"unknown event":        {"s3cret", `{"type":"opened","reference":"campaign-7-user-12-sms"}`, 400},
+		"not our key":          {"s3cret", `{"type":"unsubscribed","reference":"+905321234567"}`, 400},
+		"trailing text":        {"s3cret", `{"type":"unsubscribed","reference":"campaign-7-user-12-sms; DROP TABLE users"}`, 400},
+		"negative id":          {"s3cret", `{"type":"unsubscribed","reference":"campaign-7-user--12-sms"}`, 400},
+		"no delivered message": {"s3cret", `{"type":"unsubscribed","reference":"campaign-8-user-12-sms"}`, 404},
+	} {
+		if rec, _ := send(tt.secret, tt.body); rec.Code != tt.status {
+			t.Errorf("%s: status %d, want %d", name, rec.Code, tt.status)
+		}
+	}
+	if len(store.unsubscribed) != 1 {
+		t.Errorf("a refused event reached the store: %v", store.unsubscribed)
 	}
 }

@@ -779,3 +779,111 @@ func TestRecipientWithoutTheirLanguageGetsTheDefault(t *testing.T) {
 		t.Errorf("%d calls (%d to English readers), queued %+v, readers %v", len(calls), english, created.Queued, readers)
 	}
 }
+
+// An address the provider says does not exist is not tried again: not in this
+// campaign, and not in the next one. The person's other channel is untouched,
+// and an ordinary rejection suppresses nobody.
+func TestInvalidAddressIsSuppressed(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 300, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	store := campaign.Store{DB: pool}
+	rule := cityRule("İstanbul")
+	first, err := store.Create(ctx, "first", rule, content.Single("tr", testContent), refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two phone numbers are dead; one email is refused for another reason.
+	var dead []string
+	rows, err := pool.Query(ctx, `SELECT u.phone FROM messages m JOIN users u ON u.id = m.user_id WHERE m.campaign_id = $1 AND m.channel = 'sms' ORDER BY m.id LIMIT 2`, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var phone string
+		if err := rows.Scan(&phone); err != nil {
+			t.Fatal(err)
+		}
+		dead = append(dead, phone)
+	}
+	rows.Close()
+	refusedEmail := scalar[string](t, pool, `SELECT u.email FROM messages m JOIN users u ON u.id = m.user_id WHERE m.campaign_id = $1 AND m.channel = 'email' ORDER BY m.id LIMIT 1`, first.ID)
+
+	provider := &scriptedProvider{fn: func(_ int, m delivery.Outbound) (string, error) {
+		switch {
+		case m.To == dead[0] || m.To == dead[1]:
+			return "", &delivery.SendError{Kind: delivery.Unreachable, Status: 422, Message: "number is not in service"}
+		case m.To == refusedEmail:
+			return "", &delivery.SendError{Kind: delivery.Permanent, Status: 400, Message: "malformed request"}
+		}
+		return "ok", nil
+	}}
+	st := runUntilDone(t, pool, first.ID, 30*time.Second, worker(pool, provider))
+	if st.Channels["sms"].Failed != 2 || st.Channels["email"].Failed != 1 {
+		t.Fatalf("first campaign: %+v", st.Channels)
+	}
+	// One attempt each: a dead number is not retried.
+	calls, _ := provider.snapshot()
+	tries := 0
+	for _, c := range calls {
+		if c.To == dead[0] || c.To == dead[1] {
+			tries++
+		}
+	}
+	if tries != 2 {
+		t.Errorf("dead numbers were tried %d times, want 2", tries)
+	}
+
+	// Exactly the two dead numbers are suppressed, on SMS, with their source.
+	if n := scalar[int](t, pool, `SELECT count(*) FROM suppressions`); n != 2 {
+		t.Fatalf("%d suppressions, want 2", n)
+	}
+	if n := scalar[int](t, pool, `SELECT count(*) FROM suppressions s JOIN users u ON u.id = s.user_id
+WHERE s.channel = 'sms' AND s.reason = 'invalid_address' AND s.campaign_id = $1 AND u.phone = ANY($2)`, first.ID, dead); n != 2 {
+		t.Errorf("suppressions do not match the dead numbers")
+	}
+
+	// The next campaign for the same audience leaves them out of SMS, keeps
+	// them on email, and still sends to the address that was merely refused.
+	second, err := store.Create(ctx, "second", rule, content.Single("tr", testContent), refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Queued["sms"] != first.Queued["sms"]-2 || second.Queued["email"] != first.Queued["email"] {
+		t.Fatalf("second campaign queued %+v, first %+v", second.Queued, first.Queued)
+	}
+	before := len(calls)
+	runUntilDone(t, pool, second.ID, 30*time.Second, worker(pool, provider))
+	calls, _ = provider.snapshot()
+	for _, c := range calls[before:] {
+		if c.To == dead[0] || c.To == dead[1] {
+			t.Fatalf("a suppressed number was sent to again: %s", c.To)
+		}
+	}
+}
+
+// A message queued before the address was found invalid is skipped when its
+// turn comes, like any recipient who stopped being reachable.
+func TestQueuedMessageToASuppressedAddressIsSkipped(t *testing.T) {
+	pool, created := smallCampaign(t)
+	ctx := context.Background()
+	// Half of the queued recipients are suppressed after approval.
+	if _, err := pool.Exec(ctx, `
+INSERT INTO suppressions (user_id, channel, reason)
+SELECT user_id, 'sms', 'invalid_address' FROM messages WHERE campaign_id = $1 AND channel = 'sms' AND id % 2 = 0`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	suppressed := scalar[int](t, pool, `SELECT count(*) FROM suppressions`)
+	if suppressed == 0 {
+		t.Fatal("nobody was suppressed")
+	}
+	provider := &scriptedProvider{}
+	st := runUntilDone(t, pool, created.ID, 30*time.Second, worker(pool, provider))
+	calls, _ := provider.snapshot()
+	if st.Channels["sms"].Skipped != suppressed || len(calls) != created.Queued["sms"]-suppressed {
+		t.Errorf("skipped %d, calls %d; suppressed %d of %d", st.Channels["sms"].Skipped, len(calls), suppressed, created.Queued["sms"])
+	}
+}

@@ -389,7 +389,7 @@ func TestRecipients(t *testing.T) {
 	exec(`UPDATE messages SET status = 'skipped', attempts = 1, last_error = 'recipient no longer reachable on this channel' WHERE id = ANY($1)`, ids(1))
 	exec(`UPDATE messages SET status = 'failed', attempts = 5, last_error = 'gave up after 5 attempts: 503' WHERE id = ANY($1)`, ids(2))
 
-	all, err := store.Recipients(ctx, created.ID, "", campaign.MaxRecipientPage, 0)
+	all, err := store.Recipients(ctx, created.ID, campaign.RecipientFilter{}, campaign.MaxRecipientPage, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,25 +414,127 @@ func TestRecipients(t *testing.T) {
 	}
 
 	// One status at a time; the total is that of the filter.
-	sent, err := store.Recipients(ctx, created.ID, "sent", 2, 0)
+	sent, err := store.Recipients(ctx, created.ID, campaign.RecipientFilter{Status: "sent"}, 2, 0)
 	if err != nil || sent.Total != 4 || len(sent.Recipients) != 2 || sent.Recipients[0].SentAt == nil {
 		t.Fatalf("sent = %+v, err = %v", sent, err)
 	}
 	// Pages do not overlap, and a page past the end is empty but still says how many there are.
-	next, err := store.Recipients(ctx, created.ID, "sent", 2, 2)
+	next, err := store.Recipients(ctx, created.ID, campaign.RecipientFilter{Status: "sent"}, 2, 2)
 	if err != nil || len(next.Recipients) != 2 || next.Recipients[0].UserID == sent.Recipients[0].UserID && next.Recipients[0].Channel == sent.Recipients[0].Channel {
 		t.Errorf("second page = %+v, err = %v", next, err)
 	}
-	past, err := store.Recipients(ctx, created.ID, "sent", 2, 10)
+	past, err := store.Recipients(ctx, created.ID, campaign.RecipientFilter{Status: "sent"}, 2, 10)
 	if err != nil || len(past.Recipients) != 0 || past.Total != 4 {
 		t.Errorf("past the end = %+v, err = %v", past, err)
 	}
 
-	if _, err := store.Recipients(ctx, created.ID+99, "", 10, 0); !errors.Is(err, campaign.ErrNotFound) {
+	if all.ByStatus["failed"] != 2 || all.ByStatus["skipped"] != 1 || all.ByStatus["sent"] != 4 || all.ByStatus["pending"] != total-7 {
+		t.Errorf("by status = %v", all.ByStatus)
+	}
+
+	if _, err := store.Recipients(ctx, created.ID+99, campaign.RecipientFilter{}, 10, 0); !errors.Is(err, campaign.ErrNotFound) {
 		t.Errorf("unknown campaign: err = %v", err)
 	}
-	if _, err := store.Recipients(ctx, created.ID, "sent'; DROP TABLE users; --", 10, 0); !errors.Is(err, campaign.ErrUnknownStatus) {
-		t.Errorf("status outside the set: err = %v", err)
+	for _, bad := range []campaign.RecipientFilter{
+		{Status: "sent'; DROP TABLE users; --"},
+		{Channel: "push"},
+		{Query: strings.Repeat("a", campaign.MaxRecipientQuery+1)},
+	} {
+		if _, err := store.Recipients(ctx, created.ID, bad, 10, 0); !errors.Is(err, campaign.ErrInvalidFilter) {
+			t.Errorf("%+v: err = %v", bad, err)
+		}
+	}
+}
+
+// Channel, language, city and name narrow the list; each agrees with a
+// hand-written count, and the status counts follow the other filters.
+func TestRecipientFilters(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 600, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	store := campaign.Store{DB: pool}
+	rule := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul", "Ankara"}},
+	}}
+	created, err := store.Create(ctx, "brief", rule, texts, refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func(where string, args ...any) int {
+		t.Helper()
+		var n int
+		err := pool.QueryRow(ctx, `SELECT count(*) FROM messages m JOIN users u ON u.id = m.user_id WHERE m.campaign_id = $1 AND `+where,
+			append([]any{created.ID}, args...)...).Scan(&n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	list := func(f campaign.RecipientFilter) campaign.RecipientPage {
+		t.Helper()
+		page, err := store.Recipients(ctx, created.ID, f, campaign.MaxRecipientPage, 0)
+		if err != nil {
+			t.Fatalf("%+v: %v", f, err)
+		}
+		return page
+	}
+
+	sms := list(campaign.RecipientFilter{Channel: "sms"})
+	if sms.Total != created.Queued["sms"] || sms.Total == 0 {
+		t.Errorf("sms: total %d, queued %d", sms.Total, created.Queued["sms"])
+	}
+	for _, r := range sms.Recipients {
+		if r.Channel != "sms" {
+			t.Fatalf("an email message in the SMS list: %+v", r)
+		}
+	}
+
+	english := list(campaign.RecipientFilter{Language: "en"})
+	if want := count(`u.language = 'en'`); english.Total != want || want == 0 {
+		t.Errorf("english: total %d, want %d", english.Total, want)
+	}
+	ankara := list(campaign.RecipientFilter{City: "Ankara", Channel: "email"})
+	if want := count(`u.city = 'Ankara' AND m.channel = 'email'`); ankara.Total != want || want == 0 {
+		t.Errorf("ankara email: total %d, want %d", ankara.Total, want)
+	}
+	for _, r := range ankara.Recipients {
+		if r.City != "Ankara" || r.Channel != "email" {
+			t.Fatalf("outside the filter: %+v", r)
+		}
+	}
+
+	// A name, in any case and from the middle of it.
+	var first string
+	if err := pool.QueryRow(ctx, `SELECT u.first_name FROM messages m JOIN users u ON u.id = m.user_id WHERE m.campaign_id = $1 LIMIT 1`, created.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	byName := list(campaign.RecipientFilter{Query: "  " + strings.ToUpper(first[1:]) + " "})
+	if want := count(`(u.first_name || ' ' || u.last_name) ILIKE $2`, "%"+first[1:]+"%"); byName.Total != want || want == 0 {
+		t.Errorf("name %q: total %d, want %d", first[1:], byName.Total, want)
+	}
+	// Wildcards in a search are characters, not patterns.
+	if page := list(campaign.RecipientFilter{Query: "%"}); page.Total != 0 {
+		t.Errorf(`"%%" matched %d recipients`, page.Total)
+	}
+	if page := list(campaign.RecipientFilter{Query: "_"}); page.Total != 0 {
+		t.Errorf(`"_" matched %d recipients`, page.Total)
+	}
+	if page := list(campaign.RecipientFilter{City: "Atlantis"}); page.Total != 0 || len(page.Recipients) != 0 {
+		t.Errorf("unknown city matched %d", page.Total)
+	}
+
+	// The status counts are those of the other filters: here, SMS only.
+	if _, err := pool.Exec(ctx, `UPDATE messages SET status = 'failed', last_error = 'x' WHERE campaign_id = $1 AND channel = 'email'`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	sms = list(campaign.RecipientFilter{Channel: "sms", Status: "failed"})
+	if sms.Total != 0 || sms.ByStatus["failed"] != 0 || sms.ByStatus["pending"] != created.Queued["sms"] {
+		t.Errorf("sms after email failures: total %d, by status %v", sms.Total, sms.ByStatus)
+	}
+	if all := list(campaign.RecipientFilter{Status: "failed"}); all.Total != created.Queued["email"] {
+		t.Errorf("failed: total %d, want %d", all.Total, created.Queued["email"])
 	}
 }
 
@@ -455,5 +557,93 @@ func TestMasking(t *testing.T) {
 		if got := campaign.MaskEmail(in); got != want {
 			t.Errorf("MaskEmail(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The scenario the feature exists for: a message is delivered, the person
+// unsubscribes, and the next campaign for the same audience does not reach
+// them on that channel, while everything else stays as it was.
+func TestUnsubscribedRecipientIsLeftOutOfTheNextCampaign(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 300, 7, refNow); err != nil {
+		t.Fatal(err)
+	}
+	store := campaign.Store{DB: pool}
+	rule := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+	}}
+	first, err := store.Create(ctx, "first", rule, texts, refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Someone queued on both channels.
+	var user int64
+	err = pool.QueryRow(ctx, `SELECT user_id FROM messages WHERE campaign_id = $1 GROUP BY user_id HAVING count(*) = 2 ORDER BY user_id LIMIT 1`, first.ID).Scan(&user)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing was delivered yet: there is nothing to unsubscribe from.
+	if _, err := store.Unsubscribe(ctx, first.ID, user, "sms", refNow); !errors.Is(err, campaign.ErrNotDelivered) {
+		t.Fatalf("before delivery: err = %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE messages SET status = 'sent', attempts = 1, sent_at = $2 WHERE campaign_id = $1`, first.ID, refNow); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := store.Unsubscribe(ctx, first.ID, user, "sms", refNow)
+	if err != nil || !added {
+		t.Fatalf("unsubscribe: added = %v, err = %v", added, err)
+	}
+	// Again, and for something that is not a channel, a person or a campaign of ours.
+	if again, err := store.Unsubscribe(ctx, first.ID, user, "sms", refNow); err != nil || again {
+		t.Errorf("second time: added = %v, err = %v", again, err)
+	}
+	if _, err := store.Unsubscribe(ctx, first.ID, user, "push", refNow); !errors.Is(err, campaign.ErrInvalidFilter) {
+		t.Errorf("unknown channel: err = %v", err)
+	}
+	if _, err := store.Unsubscribe(ctx, first.ID+50, user, "sms", refNow); !errors.Is(err, campaign.ErrNotDelivered) {
+		t.Errorf("unknown campaign: err = %v", err)
+	}
+
+	// The list of the first campaign shows it: the message stays "sent", and
+	// the person is marked on SMS only.
+	marked, err := store.Recipients(ctx, first.ID, campaign.RecipientFilter{Suppression: "unsubscribed"}, 10, 0)
+	if err != nil || marked.Total != 1 || marked.Recipients[0].UserID != user || marked.Recipients[0].Channel != "sms" ||
+		marked.Recipients[0].Status != "sent" || marked.Recipients[0].Suppression != "unsubscribed" {
+		t.Fatalf("marked = %+v, err = %v", marked, err)
+	}
+	if _, err := store.Recipients(ctx, first.ID, campaign.RecipientFilter{Suppression: "bored"}, 10, 0); !errors.Is(err, campaign.ErrInvalidFilter) {
+		t.Errorf("unknown suppression filter: err = %v", err)
+	}
+
+	// The next campaign: one SMS fewer, the same emails, and no SMS for them.
+	second, err := store.Create(ctx, "second", rule, texts, refNow, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Queued["sms"] != first.Queued["sms"]-1 || second.Queued["email"] != first.Queued["email"] {
+		t.Fatalf("second queued %+v, first %+v", second.Queued, first.Queued)
+	}
+	var channels []string
+	rows, err := pool.Query(ctx, `SELECT channel FROM messages WHERE campaign_id = $1 AND user_id = $2`, second.ID, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var ch string
+		if err := rows.Scan(&ch); err != nil {
+			t.Fatal(err)
+		}
+		channels = append(channels, ch)
+	}
+	rows.Close()
+	if len(channels) != 1 || channels[0] != "email" {
+		t.Errorf("the unsubscribed person is queued on %v, want email only", channels)
+	}
+	counts, err := audience.Counter{DB: pool}.Count(ctx, rule, refNow)
+	if err != nil || counts.Unsubscribed != 1 || counts.Suppressed != 0 {
+		t.Errorf("counts = %+v, err = %v", counts, err)
 	}
 }

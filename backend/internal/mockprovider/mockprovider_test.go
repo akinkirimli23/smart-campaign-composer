@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +155,104 @@ func TestRecentAndStatsEndpoints(t *testing.T) {
 	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats", nil))
 	if !strings.Contains(rec.Body.String(), `"accepted":4`) {
 		t.Errorf("stats = %s", rec.Body)
+	}
+}
+
+// Some recipients can never be reached. The provider refuses them the same
+// way every time, so the sender must give up instead of retrying.
+func TestUnreachableRecipients(t *testing.T) {
+	everyone := New(Config{UnreachableRate: 1})
+	rec, body := send(t, everyone, "sms", "k1", sms)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(body["error"].(string), "number is not in service") || body["code"] != "recipient_unreachable" {
+		t.Fatalf("status %d, body %v", rec.Code, body)
+	}
+	rec, body = send(t, everyone, "email", "k2", `{"to":"a@example.com","subject":"s","body":"b"}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(body["error"].(string), "mailbox does not exist") {
+		t.Fatalf("status %d, body %v", rec.Code, body)
+	}
+	if st := everyone.Stats(); st["sms"].Rejected != 1 || st["sms"].Accepted != 0 || len(everyone.Messages()) != 0 {
+		t.Errorf("stats = %+v", st)
+	}
+
+	// A share of the addresses, and always the same ones.
+	some := New(Config{UnreachableRate: 0.2})
+	refused := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		to := "+90555" + strings.Repeat("0", 3) + string(rune('0'+i%10)) + string(rune('0'+i/10%10)) + string(rune('0'+i/100))
+		rec, _ := send(t, some, "sms", "a"+to, `{"to":"`+to+`","body":"x"}`)
+		refused[to] = rec.Code == http.StatusUnprocessableEntity
+		again, _ := send(t, some, "sms", "b"+to, `{"to":"`+to+`","body":"x"}`)
+		if (again.Code == http.StatusUnprocessableEntity) != refused[to] {
+			t.Fatalf("%s was refused once and accepted once", to)
+		}
+	}
+	n := 0
+	for _, r := range refused {
+		if r {
+			n++
+		}
+	}
+	if n < 50 || n > 150 {
+		t.Errorf("%d of 500 addresses refused at a rate of 0.2", n)
+	}
+
+	// Email addresses share a long suffix; they must be spread just as evenly.
+	n = 0
+	for i := 0; i < 500; i++ {
+		to := "ayse.yilmaz." + strconv.Itoa(i) + "@example.com"
+		if rec, _ := send(t, some, "email", "e"+to, `{"to":"`+to+`","subject":"s","body":"x"}`); rec.Code == http.StatusUnprocessableEntity {
+			n++
+		}
+	}
+	if n < 50 || n > 150 {
+		t.Errorf("%d of 500 email addresses refused at a rate of 0.2", n)
+	}
+
+	if rec, _ := send(t, New(Config{}), "sms", "k", sms); rec.Code != http.StatusAccepted {
+		t.Errorf("rate 0: status %d", rec.Code)
+	}
+}
+
+// After a delivered message some recipients unsubscribe, and the provider
+// says so to the sender: which message, by the sender's own key.
+func TestReportsUnsubscribes(t *testing.T) {
+	type event struct {
+		secret string
+		body   map[string]string
+	}
+	got := make(chan event, 4)
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got <- event{r.Header.Get("X-Webhook-Secret"), body}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer hook.Close()
+
+	s := New(Config{UnsubscribeRate: 1, UnsubscribeDelay: 5 * time.Millisecond, WebhookURL: hook.URL, WebhookSecret: "s3cret"})
+	if rec, _ := send(t, s, "sms", "campaign-7-user-12-sms", sms); rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d", rec.Code)
+	}
+	select {
+	case e := <-got:
+		if e.secret != "s3cret" || e.body["type"] != "unsubscribed" || e.body["reference"] != "campaign-7-user-12-sms" {
+			t.Errorf("event = %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no unsubscribe was reported")
+	}
+	if st := s.Stats()["sms"]; st.Unsubscribed != 1 || st.Accepted != 1 {
+		t.Errorf("stats = %+v", st)
+	}
+
+	// A replayed key is not a new delivery, so nobody unsubscribes again.
+	send(t, s, "sms", "campaign-7-user-12-sms", sms)
+	// Without a webhook address, or at rate 0, nothing is reported.
+	send(t, New(Config{UnsubscribeRate: 1}), "sms", "k1", sms)
+	send(t, New(Config{WebhookURL: hook.URL, UnsubscribeDelay: time.Millisecond}), "sms", "k2", sms)
+	select {
+	case e := <-got:
+		t.Errorf("unexpected event %+v", e)
+	case <-time.After(150 * time.Millisecond):
 	}
 }

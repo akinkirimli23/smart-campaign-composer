@@ -60,7 +60,7 @@ async function storeAtContent() {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.resetAllMocks()
-  fake.listRecipients.mockResolvedValue({ recipients: [], total: 0, offset: 0 })
+  fake.listRecipients.mockResolvedValue({ recipients: [], total: 0, offset: 0, by_status: {} })
 })
 
 describe('audience', () => {
@@ -736,12 +736,15 @@ describe('home page', () => {
 })
 
 describe('recipients', () => {
+  const none = { status: '', channel: '', language: '', city: '', q: '', suppression: '' }
+
   const person = (id: number, status: Recipient['status'] = 'sent'): Recipient => ({
     user_id: id,
     name: `Kişi ${id}`,
     channel: 'sms',
     address: '+90••••••••12',
     language: 'tr',
+    city: 'İstanbul',
     status,
     attempts: 1,
   })
@@ -762,7 +765,7 @@ describe('recipients', () => {
 
     await store.openRecipients()
     expect(store.recipientsOpen).toBe(true)
-    expect(fake.listRecipients).toHaveBeenCalledWith(7, '', 0)
+    expect(fake.listRecipients).toHaveBeenCalledWith(7, none, 0)
     expect(store.recipients).toHaveLength(2)
     expect(store.recipientsTotal).toBe(120)
     expect(store.recipientsLoading).toBe(false)
@@ -776,8 +779,8 @@ describe('recipients', () => {
     const store = useCampaignStore()
     store.openCampaign(7)
     await store.openRecipients('failed')
-    expect(fake.listRecipients).toHaveBeenCalledWith(7, 'failed', 0)
-    expect(store.recipientsFilter).toBe('failed')
+    expect(fake.listRecipients).toHaveBeenCalledWith(7, { ...none, status: 'failed' }, 0)
+    expect(store.recipientsFilter.status).toBe('failed')
   })
 
   it('appends the next page and starts over when the filter changes', async () => {
@@ -788,14 +791,45 @@ describe('recipients', () => {
 
     fake.listRecipients.mockResolvedValue({ recipients: [person(3), person(4)], total: 5, offset: 2 })
     await store.loadRecipients(true)
-    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, '', 2)
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, none, 2)
     expect(store.recipients.map((r) => r.user_id)).toEqual([1, 2, 3, 4])
 
     fake.listRecipients.mockResolvedValue({ recipients: [person(9, 'failed')], total: 1, offset: 0 })
-    await store.filterRecipients('failed')
-    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, 'failed', 0)
+    await store.filterRecipients({ status: 'failed' })
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, { ...none, status: 'failed' }, 0)
     expect(store.recipients.map((r) => r.user_id)).toEqual([9])
     expect(store.recipientsTotal).toBe(1)
+  })
+
+  it('combines channel, language, city and name with the status, and clears them together', async () => {
+    fake.listRecipients.mockResolvedValue({ recipients: [person(1)], total: 1, offset: 0, by_status: { sent: 1, failed: 4 } })
+    const store = useCampaignStore()
+    store.openCampaign(7)
+    await store.openRecipients('failed')
+    expect(fake.segmentOptions).toHaveBeenCalledTimes(1) // the choices of the language and city filters
+    expect(store.recipientsFiltered).toBe(false)
+
+    await store.filterRecipients({ channel: 'sms' })
+    await store.filterRecipients({ language: 'en', city: 'Ankara' })
+    await store.filterRecipients({ q: 'ayşe' })
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, { status: 'failed', channel: 'sms', language: 'en', city: 'Ankara', q: 'ayşe', suppression: '' }, 0)
+
+    // Those who unsubscribed after their message was delivered.
+    await store.filterRecipients({ suppression: 'unsubscribed' })
+    expect(fake.listRecipients.mock.calls.at(-1)?.[1]).toMatchObject({ suppression: 'unsubscribed' })
+    expect(store.recipientsFiltered).toBe(true)
+    // The status buttons show the counts under the other filters.
+    expect(store.recipientsByStatus).toEqual({ sent: 1, failed: 4 })
+
+    await store.clearRecipientFilters()
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, none, 0)
+    expect(store.recipientsFiltered).toBe(false)
+
+    // Opening the panel again starts from the whole list.
+    await store.filterRecipients({ q: 'x' })
+    store.closeRecipients()
+    await store.openRecipients()
+    expect(fake.listRecipients).toHaveBeenLastCalledWith(7, none, 0)
   })
 
   it('ignores the answer to a request that a newer one has replaced', async () => {
@@ -805,14 +839,14 @@ describe('recipients', () => {
 
     const slow = deferred<{ recipients: Recipient[]; total: number; offset: number }>()
     fake.listRecipients.mockReturnValueOnce(slow.promise)
-    const first = store.filterRecipients('sent')
+    const first = store.filterRecipients({ status: 'sent' })
     fake.listRecipients.mockResolvedValueOnce({ recipients: [person(5, 'failed')], total: 1, offset: 0 })
-    await store.filterRecipients('failed')
+    await store.filterRecipients({ status: 'failed' })
 
     slow.resolve({ recipients: [person(1), person(2)], total: 2, offset: 0 }) // arrives late
     await first
     expect(store.recipients.map((r) => r.user_id)).toEqual([5])
-    expect(store.recipientsFilter).toBe('failed')
+    expect(store.recipientsFilter.status).toBe('failed')
   })
 
   it('keeps what is shown and reports the error when a page fails', async () => {
@@ -846,6 +880,6 @@ describe('recipients', () => {
     store.reset()
     expect(store.recipients).toEqual([])
     expect(store.recipientsOpen).toBe(false)
-    expect(store.recipientsFilter).toBe('')
+    expect(store.recipientsFilter).toEqual(none)
   })
 })

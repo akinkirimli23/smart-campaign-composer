@@ -18,6 +18,7 @@ import type {
   LocalizeEvent,
   MessageStatus,
   Recipient,
+  RecipientFilter,
   RuleOptions,
   SegmentResponse,
 } from '../api/types'
@@ -45,6 +46,10 @@ export interface Rejection {
 
 /** The language of a campaign whose audience names none. */
 const DEFAULT_LANGUAGE = 'tr'
+
+function noRecipientFilter(): RecipientFilter {
+  return { status: '', channel: '', language: '', city: '', q: '', suppression: '' }
+}
 
 function emptyContent(): Content {
   return { sms: '', email: { subject: '', body: '' } }
@@ -455,7 +460,9 @@ export const useCampaignStore = defineStore('campaign', () => {
   const recipientsOpen = ref(false)
   const recipients = ref<Recipient[]>([])
   const recipientsTotal = ref(0)
-  const recipientsFilter = ref<MessageStatus | ''>('')
+  const recipientsFilter = reactive<RecipientFilter>(noRecipientFilter())
+  // Messages per status under the other filters, for the status buttons.
+  const recipientsByStatus = ref<Partial<Record<MessageStatus, number>>>({})
   const recipientsLoading = ref(false)
   const recipientsError = ref<string | null>(null)
   // Only the answer to the latest request is used: a slow page for a filter
@@ -467,7 +474,8 @@ export const useCampaignStore = defineStore('campaign', () => {
     recipientsOpen.value = false
     recipients.value = []
     recipientsTotal.value = 0
-    recipientsFilter.value = ''
+    recipientsByStatus.value = {}
+    Object.assign(recipientsFilter, noRecipientFilter())
     recipientsLoading.value = false
     recipientsError.value = null
   }
@@ -480,10 +488,11 @@ export const useCampaignStore = defineStore('campaign', () => {
     recipientsLoading.value = true
     recipientsError.value = null
     try {
-      const page = await api.listRecipients(id, recipientsFilter.value, more ? recipients.value.length : 0)
+      const page = await api.listRecipients(id, { ...recipientsFilter }, more ? recipients.value.length : 0)
       if (request !== recipientsRequest) return
       recipients.value = more ? [...recipients.value, ...page.recipients] : page.recipients
       recipientsTotal.value = page.total
+      recipientsByStatus.value = page.by_status ?? {}
     } catch (err) {
       if (request !== recipientsRequest) return
       recipientsError.value = describe(err).message
@@ -492,15 +501,28 @@ export const useCampaignStore = defineStore('campaign', () => {
     }
   }
 
-  function filterRecipients(status: MessageStatus | '') {
-    recipientsFilter.value = status
+  /** Changes some of the filters and loads the first page of the result. */
+  function filterRecipients(change: Partial<RecipientFilter>) {
+    Object.assign(recipientsFilter, change)
     return loadRecipients()
   }
+
+  /** Back to the whole list. */
+  function clearRecipientFilters() {
+    return filterRecipients(noRecipientFilter())
+  }
+
+  /** Any filter besides the status buttons is set. */
+  const recipientsFiltered = computed(
+    () => recipientsFilter.channel !== '' || recipientsFilter.language !== '' || recipientsFilter.city !== '' || recipientsFilter.q !== '' ||
+      recipientsFilter.suppression !== '',
+  )
 
   /** Opens the panel, optionally on one status, and loads its first page. */
   function openRecipients(status: MessageStatus | '' = '') {
     recipientsOpen.value = true
-    return filterRecipients(status)
+    void loadRuleOptions() // the language and city choices of the filters
+    return filterRecipients({ ...noRecipientFilter(), status })
   }
 
   function closeRecipients() {
@@ -652,6 +674,7 @@ export const useCampaignStore = defineStore('campaign', () => {
     approving, approveError, campaign, status, done, statusError, approve,
     cancelling, cancelCampaign,
     recipients, recipientsTotal, recipientsFilter, recipientsLoading, recipientsError, loadRecipients, filterRecipients,
+    recipientsByStatus, recipientsFiltered, clearRecipientFilters,
     recipientsOpen, openRecipients, closeRecipients,
     view, standalone, campaigns, campaignsError, loadCampaigns, showHome, showCampaigns, openCampaign, route, navigate,
     reset,

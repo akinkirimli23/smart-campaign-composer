@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useCampaignStore } from '../stores/campaign'
-import type { Channel, ChannelCounts, MessageStatus, Recipient } from '../api/types'
+import type { Channel, ChannelCounts, MessageStatus, Recipient, Suppression } from '../api/types'
 import { formatDateTime } from '../lib/time'
 import AppIcon from './AppIcon.vue'
 
@@ -74,15 +74,47 @@ const byStatus = computed(() => {
 // The ones that need attention first, as in the list itself.
 const filters: MessageStatus[] = ['failed', 'skipped', 'cancelled', 'pending', 'sending', 'sent']
 
+/** Messages per status under the panel's other filters, as the backend counted them. */
+function listed(status: MessageStatus): number {
+  return store.recipientsByStatus[status] ?? 0
+}
+const listedTotal = computed(() => filters.reduce((sum, f) => sum + listed(f), 0))
+
+// The name search waits for a pause in typing before it asks the backend.
+const search = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+function onSearch() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => void store.filterRecipients({ q: search.value.trim() }), 300)
+}
+function clearFilters() {
+  clearTimeout(searchTimer)
+  search.value = ''
+  void store.clearRecipientFilters()
+}
+
+/** The provider said the address itself does not exist: it is suppressed from now on. */
+function invalidAddress(error: string): boolean {
+  return error.includes('recipient_unreachable')
+}
+
+/** Why a message failed, in the marketer's words. The provider's own text stays available on hover. */
+function failure(error: string): string {
+  if (error.includes('number is not in service')) return 'Numara kullanımda değil'
+  if (error.includes('mailbox does not exist')) return 'Böyle bir posta kutusu yok'
+  if (error.includes('gave up')) return 'Sağlayıcı yanıt vermedi; denemeler tükendi'
+  return 'Sağlayıcı mesajı reddetti'
+}
+
 /** What happened, in the marketer's words; the provider's own text is shown next to it. */
 function note(r: Recipient): string {
   switch (r.status) {
     case 'sent':
       return r.sent_at ? formatDateTime(new Date(r.sent_at)) : ''
     case 'skipped':
-      return 'Onaydan sonra izni ya da adresi kalktı'
+      return 'Onaydan sonra izni kalktı ya da adresi geçersiz çıktı'
     case 'failed':
-      return 'Gönderilemedi'
+      return failure(r.error ?? '')
     case 'cancelled':
       return 'Kampanya iptal edildi'
     case 'pending':
@@ -99,6 +131,7 @@ watch(
   () => store.recipientsOpen,
   async (open) => {
     document.body.classList.toggle('no-scroll', open)
+    search.value = ''
     if (open) {
       await nextTick()
       closeButton.value?.focus()
@@ -249,8 +282,8 @@ async function cancel() {
         <p class="muted">Alıcıları tek tek gör: kime teslim edildi, kime gitmedi ve neden.</p>
       </div>
       <div class="row" style="flex-wrap: wrap">
-        <button v-if="byStatus.failed + byStatus.skipped > 0" class="small" type="button" @click="store.openRecipients('failed')">
-          Yalnızca sorunlular <span class="muted">· {{ byStatus.failed + byStatus.skipped }}</span>
+        <button v-if="byStatus.failed > 0" class="small" type="button" @click="store.openRecipients('failed')">
+          Başarısız olanlar <span class="muted">· {{ byStatus.failed }}</span>
         </button>
         <button class="primary" type="button" @click="store.openRecipients()">
           <AppIcon name="users" :size="18" /> Alıcıları gör
@@ -275,19 +308,54 @@ async function cancel() {
       </div>
     </div>
 
+      <div class="filter-bar">
+        <input
+          v-model="search"
+          type="text"
+          class="search"
+          placeholder="İsimde ara"
+          aria-label="Alıcı adında ara"
+          maxlength="60"
+          @input="onSearch"
+        />
+        <select :value="store.recipientsFilter.channel" aria-label="Kanal" @change="store.filterRecipients({ channel: ($event.target as HTMLSelectElement).value as Channel | '' })">
+          <option value="">Tüm kanallar</option>
+          <option value="sms">SMS</option>
+          <option value="email">Email</option>
+        </select>
+        <select :value="store.recipientsFilter.language" aria-label="Dil" @change="store.filterRecipients({ language: ($event.target as HTMLSelectElement).value })">
+          <option value="">Tüm diller</option>
+          <option v-for="o in store.ruleOptions?.languages ?? []" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+        <select :value="store.recipientsFilter.city" aria-label="Şehir" @change="store.filterRecipients({ city: ($event.target as HTMLSelectElement).value })">
+          <option value="">Tüm şehirler</option>
+          <option v-for="o in store.ruleOptions?.cities ?? []" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+        <select
+          :value="store.recipientsFilter.suppression"
+          aria-label="Bundan sonra gönderilmeyecekler"
+          @change="store.filterRecipients({ suppression: ($event.target as HTMLSelectElement).value as Suppression | '' })"
+        >
+          <option value="">Herkes</option>
+          <option value="unsubscribed">Abonelikten çıkanlar</option>
+          <option value="invalid_address">Adresi geçersiz çıkanlar</option>
+        </select>
+        <button v-if="store.recipientsFiltered || store.recipientsFilter.status" class="ghost small" type="button" @click="clearFilters">Süzgeçleri temizle</button>
+      </div>
+
       <div class="filters" role="group" aria-label="Duruma göre süz">
-        <button class="filter" :class="{ on: store.recipientsFilter === '' }" type="button" @click="store.filterRecipients('')">
-          Hepsi <span>{{ totals.total }}</span>
+        <button class="filter" :class="{ on: store.recipientsFilter.status === '' }" type="button" @click="store.filterRecipients({ status: '' })">
+          Hepsi <span>{{ listedTotal }}</span>
         </button>
         <template v-for="f in filters" :key="f">
           <button
-            v-if="byStatus[f] > 0 || store.recipientsFilter === f"
+            v-if="listed(f) > 0 || store.recipientsFilter.status === f"
             class="filter"
-            :class="{ on: store.recipientsFilter === f }"
+            :class="{ on: store.recipientsFilter.status === f }"
             type="button"
-            @click="store.filterRecipients(f)"
+            @click="store.filterRecipients({ status: f })"
           >
-            {{ statusLabels[f] }} <span>{{ byStatus[f] }}</span>
+            {{ statusLabels[f] }} <span>{{ listed(f) }}</span>
           </button>
         </template>
       </div>
@@ -309,23 +377,29 @@ async function cancel() {
             <tr v-for="r in store.recipients" :key="r.user_id + r.channel">
               <td>
                 <strong>{{ r.name }}</strong>
-                <span class="sub">{{ r.address }}</span>
+                <span class="sub">{{ r.address }} · {{ r.city }}</span>
               </td>
               <td>
                 {{ r.channel === 'sms' ? 'SMS' : 'Email' }}
                 <span class="sub">{{ r.language.toUpperCase() }}</span>
               </td>
-              <td><span class="badge" :class="'m-' + r.status">{{ statusLabels[r.status] }}</span></td>
+              <td>
+                <span class="badge" :class="'m-' + r.status">{{ statusLabels[r.status] }}</span>
+                <!-- The message was delivered; its recipient then opted out. -->
+                <span v-if="r.suppression === 'unsubscribed'" class="badge m-unsubscribed">Abonelikten çıktı</span>
+              </td>
               <td class="num">{{ r.attempts }}</td>
               <td>
-                {{ note(r) }}
-                <code v-if="r.error && r.status !== 'skipped'" class="sub">{{ r.error }}</code>
+                <span :title="r.error">{{ note(r) }}</span>
+                <span v-if="r.suppression === 'unsubscribed'" class="sub">Bu kanaldan bir daha mesaj almayacak</span>
+                <span v-else-if="r.status === 'failed' && invalidAddress(r.error ?? '')" class="sub">Sonraki kampanyalara dahil edilmeyecek</span>
+                <span v-else-if="r.status === 'failed'" class="sub">Yeniden denenmez</span>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p v-else-if="!store.recipientsLoading && !store.recipientsError" class="hint">Bu durumda alıcı yok.</p>
+      <p v-else-if="!store.recipientsLoading && !store.recipientsError" class="hint">Bu süzgeçlere uyan alıcı yok.</p>
 
       <div v-if="store.recipients.length < store.recipientsTotal" class="more">
         <button type="button" :disabled="store.recipientsLoading" @click="store.loadRecipients(true)">

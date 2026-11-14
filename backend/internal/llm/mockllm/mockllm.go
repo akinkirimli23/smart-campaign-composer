@@ -155,6 +155,25 @@ var (
 	ordersRe = regexp.MustCompile(`en az (\d+) siparis|(\d+)\S*\s+fazla siparis`)
 	signupRe = regexp.MustCompile(`kayit ol|uye ol|yeni uye`)
 
+	excludeRe = regexp.MustCompile(`disinda|haric`)
+	ageSideRe = regexp.MustCompile(`(\d+)\s*yas\w*\s+(buyuk|kucuk|ustu|uzeri|alti)`)
+
+	// What the matcher would otherwise drop without a word. Each entry is a
+	// requirement the rule format (or this matcher) cannot express.
+	refusals = []struct {
+		pattern *regexp.Regexp
+		reason  string
+	}{
+		{regexp.MustCompile(`(yalnizca|sadece|yalniz)\s+(sms|email|e-posta|eposta|mail)|whatsapp|push|bildirim`),
+			"Kanal seçimi kural formatında yok: kampanya, izni olan herkese hem SMS hem email olarak gider. WhatsApp ve push desteklenmiyor."},
+		{regexp.MustCompile(`almanca|fransizca|arapca|rusca|ispanyolca|italyanca|kurtce`),
+			"Bu dil veride yok. Kullanıcıların dili Türkçe ya da İngilizce."},
+		{regexp.MustCompile(`(^|\s)-\s?\d+`),
+			"Negatif bir değer kitle koşulu olamaz."},
+		{regexp.MustCompile(`\b(users|customers|send|discount|who|the|last \d+ days)\b`),
+			"Mock LLM yalnızca Türkçe brief'leri tanır; başka dilde brief için gerçek modeli kullanın (ANTHROPIC_API_KEY)."},
+	}
+
 	categoryHints = []struct{ hint, category string }{
 		{"elektronik", "electronics"}, {"moda", "fashion"}, {"giyim", "fashion"},
 		{"kozmetik", "cosmetics"}, {"mobilya", "home"}, {"spor", "sports"}, {"kitap", "books"},
@@ -186,6 +205,24 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 				"kind":    "unsupported",
 				"reason":  "Kural formatı sıralama, doğum günü, sadakat seviyesi, cihaz ya da ürün görüntüleme koşullarını ifade edemiyor.",
 				"phrases": []string{original(brief, text, hint)},
+			}
+		}
+	}
+
+	// A requirement this matcher cannot express must not simply be dropped:
+	// the rest of the brief would then select a wider audience than was asked
+	// for, or send on a channel that was not. Refuse and say why.
+	for _, r := range refusals {
+		if m := r.pattern.FindString(text); m != "" {
+			return map[string]any{"kind": "unsupported", "reason": r.reason, "phrases": []string{original(brief, text, strings.TrimSpace(m))}}
+		}
+	}
+	if _, yes := firstMatch(text, purchased); yes {
+		if no, also := firstMatch(text, notPurchased); also {
+			return map[string]any{
+				"kind":    "unsupported",
+				"reason":  "Brief hem alışveriş yapanları hem yapmayanları istiyor; bu iki koşul aynı kişide birlikte sağlanamaz.",
+				"phrases": []string{original(brief, text, no)},
 			}
 		}
 	}
@@ -236,10 +273,18 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 		}
 	}
 	if len(cities) > 0 {
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: cities})
+		// "İstanbul dışındaki", "Ankara hariç": everyone but these cities.
+		op := segment.OpIn
+		if excludeRe.MatchString(text) {
+			op = segment.OpNotIn
+		}
+		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: op, Values: cities})
 	}
-	if strings.Contains(text, "ingilizce") {
+	switch english, turkish := strings.Contains(text, "ingilizce"), strings.Contains(text, "turkce"); {
+	case english && !turkish:
 		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"en"}})
+	case turkish && !english:
+		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"tr"}})
 	}
 	words := wordRe.FindAllString(text, -1)
 	hasWordPrefix := func(prefix string) bool {
@@ -260,6 +305,18 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 		lo, _ := strconv.Atoi(m[1])
 		hi, _ := strconv.Atoi(m[2])
 		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
+	} else if m := ageSideRe.FindStringSubmatch(text); m != nil {
+		// "25 yaşından büyük", "40 yaş altı": one bound; the other is the format's own.
+		age, _ := strconv.Atoi(m[1])
+		lo, hi, meaning := age+1, segment.MaxAge, fmt.Sprintf("%d yaş ve üzeri", age+1)
+		if strings.HasPrefix(m[2], "kucuk") || strings.HasPrefix(m[2], "alt") {
+			lo, hi, meaning = segment.MinAge, age-1, fmt.Sprintf("%d yaş ve altı", age-1)
+		}
+		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
+		assumptions = append(assumptions, segment.Assumption{
+			ConditionIndex: len(conditions) - 1, Phrase: original(brief, text, m[0]),
+			Interpretation: meaning + " olarak yorumlandı; " + strconv.Itoa(age) + " yaşın kendisi dahil değil.",
+		})
 	}
 
 	if signupRe.MatchString(text) {

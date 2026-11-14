@@ -9,7 +9,7 @@ import type {
   FieldError,
   LocalizedContent,
   LocalizeEvent,
-  MessageStatus,
+  RecipientFilter,
   RecipientPage,
   Rule,
   RuleOptions,
@@ -114,8 +114,11 @@ export const api = {
   listCampaigns: async () => (await getJSON<{ campaigns: CampaignSummary[] }>('/api/campaigns')).campaigns,
 
   /** One page of a campaign's recipients, the ones that need attention first. */
-  listRecipients: (id: number, status: MessageStatus | '', offset: number) =>
-    getJSON<RecipientPage>(`/api/campaigns/${id}/recipients?offset=${offset}${status ? `&status=${status}` : ''}`),
+  listRecipients: (id: number, filter: RecipientFilter, offset: number) => {
+    const query = new URLSearchParams({ offset: String(offset) })
+    for (const [key, value] of Object.entries(filter)) if (value) query.set(key, value)
+    return getJSON<RecipientPage>(`/api/campaigns/${id}/recipients?${query}`)
+  },
 
   /** Stops whatever has not been sent yet; returns the campaign's status. */
   cancelCampaign: (id: number) => postJSON<CampaignStatus>(`/api/campaigns/${id}/cancel`, {}),

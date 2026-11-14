@@ -229,3 +229,63 @@ func TestNoScheduleSuggested(t *testing.T) {
 		t.Errorf("without a clock no send time may be suggested: %+v", out.Schedule)
 	}
 }
+
+// A requirement the matcher cannot express is refused, never dropped: every
+// one of these used to produce a rule for a wider audience than was asked for.
+func TestRefusesWhatItWouldDrop(t *testing.T) {
+	for brief, phrase := range map[string]string{
+		"İstanbul'daki kullanıcılara yalnızca SMS gönder":                                          "yalnızca SMS",
+		"Ankara'daki kullanıcılara sadece email gönder":                                            "sadece email",
+		"Ankara'daki kullanıcılara WhatsApp mesajı gönder":                                         "WhatsApp",
+		"İstanbul'daki Almanca konuşan kullanıcılara gönder":                                       "Almanca",
+		"-500 TL üzeri harcayanlara gönder":                                                        "-500",
+		"Son 30 günde alışveriş yapan ve son 30 günde hiç alışveriş yapmayan kullanıcılara gönder": "alışveriş yapmayan",
+		"Send a 20% discount to users in Istanbul who added to cart in the last 14 days":           "Send",
+	} {
+		out := generate(t, brief)
+		if out.Unsupported == nil || out.Rule != nil {
+			t.Errorf("brief %q: want unsupported, got %+v", brief, out.Rule)
+			continue
+		}
+		if len(out.Unsupported.Phrases) != 1 || out.Unsupported.Phrases[0] != phrase {
+			t.Errorf("brief %q: phrases = %q, want %q", brief, out.Unsupported.Phrases, phrase)
+		}
+	}
+}
+
+// "Outside İstanbul" excludes the city; it used to select it.
+func TestCityExclusion(t *testing.T) {
+	for _, brief := range []string{"İstanbul dışındaki kullanıcılara kampanya gönder", "Ankara ve İzmir hariç herkese kampanya gönder"} {
+		out := generate(t, brief)
+		if out.Rule == nil || len(out.Rule.Conditions) != 1 || out.Rule.Conditions[0].Op != segment.OpNotIn {
+			t.Errorf("brief %q: got %+v", brief, out.Rule)
+		}
+	}
+	if out := generate(t, "İstanbul'daki kullanıcılara kampanya gönder"); out.Rule.Conditions[0].Op != segment.OpIn {
+		t.Errorf("plain city: got %+v", out.Rule.Conditions[0])
+	}
+}
+
+// One-sided ages become a range instead of being ignored, and say how the
+// boundary was read.
+func TestOneSidedAge(t *testing.T) {
+	out := generate(t, "25 yaşından büyük erkeklere kampanya gönder")
+	want := []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"male"}},
+		{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: 26, Max: segment.MaxAge},
+	}
+	if out.Rule == nil || !reflect.DeepEqual(out.Rule.Conditions, want) {
+		t.Fatalf("got %+v", out.Rule)
+	}
+	if len(out.Assumptions) != 1 || out.Assumptions[0].ConditionIndex != 1 || !strings.Contains(out.Assumptions[0].Interpretation, "26 yaş ve üzeri") {
+		t.Errorf("assumptions = %+v", out.Assumptions)
+	}
+
+	out = generate(t, "40 yaş altı kadınlara kampanya gönder")
+	if c := out.Rule.Conditions[1]; c.Min != segment.MinAge || c.Max != 39 {
+		t.Errorf("under 40: got %+v", c)
+	}
+	if out := generate(t, "Türkçe konuşan kullanıcılara kampanya gönder"); out.Rule == nil || out.Rule.Conditions[0].Values[0] != "tr" {
+		t.Errorf("turkish speakers: got %+v", out.Rule)
+	}
+}

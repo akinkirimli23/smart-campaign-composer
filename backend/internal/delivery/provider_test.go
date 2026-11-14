@@ -52,6 +52,8 @@ func TestHTTPProviderClassifiesFailures(t *testing.T) {
 		{"rate limited with a date", 429, "Wed, 11 Nov 2026 12:00:00 GMT", ``, RateLimited, 0},
 		{"bad request", 400, "", `{"error":"to is required"}`, Permanent, 0},
 		{"unprocessable", 422, "", ``, Permanent, 0},
+		{"address does not exist", 422, "", `{"error":"recipient unreachable: number is not in service","code":"recipient_unreachable"}`, Unreachable, 0},
+		{"the wording alone does not count", 422, "", `{"error":"recipient unreachable: number is not in service"}`, Permanent, 0},
 		{"success without an id", 200, "", `{}`, Retryable, 0},
 	}
 	for _, tt := range tests {

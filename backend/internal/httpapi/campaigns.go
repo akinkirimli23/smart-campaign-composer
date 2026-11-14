@@ -25,7 +25,8 @@ type CampaignStore interface {
 	Status(ctx context.Context, id int64) (campaign.Status, error)
 	Totals(ctx context.Context) (campaign.Totals, error)
 	List(ctx context.Context, now time.Time) ([]campaign.Summary, error)
-	Recipients(ctx context.Context, id int64, status string, limit, offset int) (campaign.RecipientPage, error)
+	Recipients(ctx context.Context, id int64, f campaign.RecipientFilter, limit, offset int) (campaign.RecipientPage, error)
+	Unsubscriber
 }
 
 // MaxScheduleAhead bounds how far in the future a campaign may be scheduled;
@@ -152,11 +153,11 @@ func (s *Server) handleCampaignCancel(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /api/campaigns/{id}/recipients?status=failed&offset=0&limit=50
+// GET /api/campaigns/{id}/recipients?status=failed&channel=sms&language=en&city=Ankara&q=ayşe&offset=0&limit=50
 //
 // The people behind the dashboard's numbers: who each message is for and what
-// became of it, the ones that need attention first. status is optional and
-// must be a message status; addresses are masked.
+// became of it, the ones that need attention first. Every filter is optional;
+// q searches the recipient's name. Addresses are masked.
 func (s *Server) handleCampaignRecipients(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -172,12 +173,16 @@ func (s *Server) handleCampaignRecipients(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	page, err := s.campaigns.Recipients(ctx, id, query.Get("status"), limit, offset)
+	filter := campaign.RecipientFilter{
+		Status: query.Get("status"), Channel: query.Get("channel"), Language: query.Get("language"),
+		City: query.Get("city"), Query: query.Get("q"), Suppression: query.Get("suppression"),
+	}
+	page, err := s.campaigns.Recipients(ctx, id, filter, limit, offset)
 	switch {
 	case errors.Is(err, campaign.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "Kampanya bulunamadı", nil)
-	case errors.Is(err, campaign.ErrUnknownStatus):
-		writeError(w, http.StatusBadRequest, "invalid_request", "bilinmeyen durum: "+query.Get("status"), nil)
+	case errors.Is(err, campaign.ErrInvalidFilter):
+		writeError(w, http.StatusBadRequest, "invalid_request", "geçersiz süzgeç değeri", nil)
 	case err != nil:
 		slog.Error("campaign recipients", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "Alıcılar okunamadı", nil)

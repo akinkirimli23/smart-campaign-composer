@@ -307,6 +307,12 @@ func (w *Worker) deliver(ctx context.Context, limiter Waiter, m claimed) {
 	case ctx.Err() != nil:
 		// We are shutting down and the send was cut short. Give the attempt back.
 		w.retry(m, w.Now(), m.attempts-1, "interrupted by shutdown")
+	case errors.As(err, &sendErr) && sendErr.Kind == Unreachable:
+		// The address does not exist. This message fails, and no later
+		// campaign should try the same address again (DECISIONS 35).
+		count("unreachable")
+		w.suppress(m, err.Error())
+		w.finish(m, "failed", "", err.Error())
 	case errors.As(err, &sendErr) && sendErr.Kind == Permanent:
 		count("rejected")
 		w.finish(m, "failed", "", err.Error())
@@ -331,6 +337,18 @@ func (w *Worker) deliver(ctx context.Context, limiter Waiter, m claimed) {
 
 // finish records a final state. The WHERE clause is a fence: if the lease was
 // lost and the row re-claimed (attempts moved on), this stale result is dropped.
+// suppress records that the recipient cannot be reached on this channel.
+// Reachability (audience.SMSReachable / EmailReachable) reads this table, so
+// later campaigns do not queue a message for them and one already queued is
+// skipped. Finding the same address invalid twice changes nothing.
+func (w *Worker) suppress(m claimed, detail string) {
+	w.update(m, `
+INSERT INTO suppressions (user_id, channel, reason, campaign_id, detail, created_at)
+VALUES ($1, $2, 'invalid_address', $3, $4, $5)
+ON CONFLICT (user_id, channel) DO NOTHING`,
+		m.userID, m.channel, m.campaignID, detail, w.Now().UTC())
+}
+
 func (w *Worker) finish(m claimed, status, providerID, lastError string) {
 	now := w.Now().UTC()
 	var sentAt *time.Time

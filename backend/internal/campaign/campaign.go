@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/content"
@@ -34,6 +35,7 @@ type DB interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 type Store struct{ DB DB }

@@ -80,7 +80,9 @@ dönülebilir; her adımın ana düğmeleri ekranın altında sabit durur.
 Sağ üstteki **Kampanyalar** tüm kampanyaları listeler: zamanlanmış, gönderilen, tamamlanmış
 ve iptal edilmiş olanlar. Bir satıra tıklayınca o kampanyanın panosu açılır; zamanlanmış bir
 kampanya oradan iptal edilir. Panodaki "Alıcıları gör" butonu, mesajların kimlere gittiğini ve gitmeyenlerin nedenini
-gösteren bir panel açar (adresler maskeli). Ekranlar adreslenebilir (`#/olustur`, `#/kampanyalar`, `#/kampanya/12`), yani
+gösteren bir panel açar (adresler maskeli); liste duruma, kanala, dile, şehre ve ada göre
+süzülür. Kampanyalar listesi de duruma ve metne göre süzülür. Mock sağlayıcı alıcıların yaklaşık
+%2'sini kalıcı olarak reddettiği için her kampanyada birkaç "başarısız" mesaj görülür. Ekranlar adreslenebilir (`#/olustur`, `#/kampanyalar`, `#/kampanya/12`), yani
 sayfa yenilense de aynı yerde kalır.
 
 Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
@@ -112,7 +114,8 @@ deneme ekranda görülür.
 | `GET /api/campaigns` | Son 100 kampanya, en yenisi üstte: brief, başlangıç zamanı, durum (`scheduled`, `sending`, `done`, `cancelled`) ve mesaj sayıları |
 | `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at`, metin dilleri (`languages`) ve `done` |
 | `POST /api/campaigns/{id}/cancel` | Henüz gönderilmemiş mesajları iptal eder; gönderilenler kalır. Tekrarlanabilir |
-| `GET /api/campaigns/{id}/recipients` | Kampanyanın alıcıları: ad, kanal, dil, durum, deneme sayısı, teslim zamanı, varsa son hata. `?status=` (bir mesaj durumu), `?offset=`, `?limit=` (varsayılan 50, en fazla 100). Dikkat isteyenler önce gelir; telefon ve email maskelenir |
+| `GET /api/campaigns/{id}/recipients` | Kampanyanın alıcıları: ad, şehir, kanal, dil, durum, deneme sayısı, teslim zamanı, varsa son hata. Süzgeçler: `?status=`, `?channel=`, `?language=`, `?city=`, `?q=` (adda arama), `?suppression=` (`unsubscribed` / `invalid_address`); sayfa: `?offset=`, `?limit=` (varsayılan 50, en fazla 100). `by_status` diğer süzgeçlere uyan mesajları duruma göre sayar. Dikkat isteyenler önce gelir; telefon ve email maskelenir |
+| `POST /api/provider/events` | Sağlayıcının webhook'u: `{"type": "unsubscribed", "reference": "campaign-7-user-12-sms"}`. Teslim edilmiş bir mesajın alıcısı abonelikten çıktığında çağrılır; kişi o kanalda bastırılır. `X-Webhook-Secret` başlığı doğrulanır; yinelenen olay zararsızdır |
 | `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
 | `GET /metrics` | Prometheus metin formatı: `scc_campaigns`, `scc_messages{channel,status}`, `scc_provider_requests_total{channel,outcome}` |
 
@@ -160,8 +163,14 @@ Limitler değişkenler doldurulduktan sonra ölçülür: `{{first_name}}`, `{{la
 | `GET /stats` | Kanal başına sayaçlar: `accepted`, `duplicates`, `rate_limited`, `errors`, `lost_replies` |
 
 Varsayılan olarak isteklerin %5'ine 5xx, %1'ine 429 (`Retry-After` ile) döner, %1'inde mesajı
-kabul edip yanıtı "kaybeder" (504) ve her isteği 20–250 ms bekletir. Oranlar `.env` içindeki
-`MOCK_*` değişkenleriyle değişir.
+kabul edip yanıtı "kaybeder" (504) ve her isteği 20–250 ms bekletir. Bunlar geçici hatalardır;
+yeniden denemeyle aşılır. Ayrıca alıcıların %2'sini kalıcı olarak reddeder (`422`: numara
+kullanımda değil / posta kutusu yok); aynı adres her seferinde reddedilir, worker yeniden denemez
+ve mesaj "başarısız" olur (DECISIONS 34). O adres bastırılır: sonraki kampanyalarda kuyruğa
+girmez ve kitle ekranında "hariç" olarak sayılır (DECISIONS 35). Ayrıca mesajı teslim ettiği
+alıcıların %2'si birkaç saniye sonra abonelikten çıkar; sağlayıcı bunu API'nin webhook'una
+bildirir ve o kişi o kanalda bir daha mesaj almaz (DECISIONS 37, `MOCK_UNSUBSCRIBE_RATE`). Oranlar `.env` içindeki `MOCK_*` değişkenleriyle
+değişir (`MOCK_UNREACHABLE_RATE=0` kalıcı reddi kapatır).
 
 Bir kampanya bittiğinde `GET /stats` içindeki `accepted`, `GET /api/campaigns/{id}` içindeki
 `sent` ile aynı olmalıdır: her alıcıya tam bir kez.
@@ -266,6 +275,23 @@ CI (GitHub Actions) her push'ta üç iş çalıştırır: backend (gofmt, vet, y
 testler, Postgres'e karşı), frontend (tip kontrolü, testler, derleme) ve `docker compose up` ile
 kurulumun kendisi.
 
+Uç durum brief seti (51 brief: yazım, veride olmayan istekler, çelişkiler, sınır değerleri,
+enjeksiyon denemeleri) `python scripts/brief-seti.py` ile çalışan bir yığına karşı koşturulur;
+ne denediği ve ilk çalıştırmada ne bulunduğu `docs/brief-seti.md` içinde.
+
+### Bir alıcı listede nasıl görünür
+
+| Durum | Ne oldu | O kampanyada | Sonraki kampanyada |
+|---|---|---|---|
+| Teslim edildi | Mesaj ulaştı | Teslim sayısında | Olağan alıcı |
+| Teslim edildi + "Abonelikten çıktı" | Mesaj ulaştı, kişi sonra o kanaldan çıktı | Teslim sayısında; başarısız değil | Kuyruğa girmez |
+| Başarısız | Adres geçersiz (tek deneme) ya da sağlayıcı beş denemede yanıt vermedi | Başarısız sayısında | Adres geçersizse kuyruğa girmez |
+| Atlandı | Mesaj kuyruktaydı; gönderilmeden önce kişi çıktı ya da izni kalktı | Atlandı sayısında | — |
+| İptal edildi | Kampanya gönderilmeden durduruldu | İptal sayısında | Olağan alıcı |
+
+Kuyruğa girmeyenler sonraki kampanyanın alıcı listesinde yer almaz; kitle ekranında nedenine
+göre toplu sayılır ("N mesaj gönderilmeyecek: …"). Hepsi kanal bazındadır (DECISIONS 35, 37).
+
 ## Bilinen eksikler
 
 - Brief'ten gönderim zamanı okuma yalnızca mock LLM ile denendi; mock birkaç sabit kalıbı
@@ -280,8 +306,16 @@ kurulumun kendisi.
   değil. Varsayılan tema krem; koyu tema üst menüdeki düğmeyle seçilir ve daha az denendi.
 - Açılış sayfası case'in istediği bir şey değil, sunum için eklendi; araç ondan bağımsız çalışır
   (DECISIONS 32).
-- Alıcı listesinde arama, kanala göre süzme ve dışa aktarma yok; gönderim sürerken sayfalar
-  arasında bir satır yer değiştirebilir, "Yenile" düzeltir (DECISIONS 33).
+- Alıcı listesinde dışa aktarma yok; gönderim sürerken sayfalar arasında bir satır yer
+  değiştirebilir, "Yenile" düzeltir. Ad araması veritabanının harf kurallarına bağlıdır
+  (DECISIONS 33).
+- Geçersiz çıkan adres bastırılır ve sonraki kampanyalara dahil edilmez (DECISIONS 35), ama
+  bastırmayı kaldırmanın arayüzü yok ve tek bir ret yeterli sayılıyor.
+- Abonelikten çıkma yalnızca sağlayıcının bildirimiyle işlenir (DECISIONS 37): gelen STOP mesajı
+  ayrıştırılmaz, emailde çıkma bağlantısı ve yeniden abone olma yoktur; webhook basit bir
+  paylaşılan anahtarla korunur.
+- Kampanyada kanal seçilemiyor: her kampanya izni olan herkese hem SMS hem email olarak gider.
+  Uç durum brief setinde bulunan diğer açıklar `docs/brief-seti.md` içinde.
 - Ekran bileşenleri için otomatik test yok; mantık ve durum birim testleriyle, ekranlar tarayıcıda
   elle denendi.
 - Oluşturma adımlarındayken (brief, kitle, içerik) sayfa yenilenirse akış baştan başlar.

@@ -13,6 +13,9 @@
 package mockprovider
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -27,14 +30,26 @@ import (
 // Config sets how often and how the provider misbehaves. Rates are
 // probabilities per request in [0, 1].
 type Config struct {
-	ErrorRate     float64       // answer 500 / 503 without accepting
-	RateLimitRate float64       // answer 429 with Retry-After
-	LostReplyRate float64       // accept the message, then answer 504
-	MinLatency    time.Duration // every request takes between Min and Max
-	MaxLatency    time.Duration
-	RetryAfter    time.Duration // advertised on 429, rounded up to whole seconds
-	Seed          uint64        // same seed, same sequence of faults
-	Keep          int           // accepted messages remembered for inspection; 0 means 200
+	ErrorRate     float64 // answer 500 / 503 without accepting
+	RateLimitRate float64 // answer 429 with Retry-After
+	LostReplyRate float64 // accept the message, then answer 504
+	// UnreachableRate is the share of recipients that can never be reached: a
+	// number out of service, a mailbox that does not exist. The same address
+	// is always refused (422), so no amount of retrying helps.
+	UnreachableRate float64
+	// UnsubscribeRate is the share of recipients who unsubscribe after a
+	// message reached them. The provider then tells the sender through
+	// WebhookURL, as real providers do. Like UnreachableRate it depends on
+	// the address, so it is always the same people.
+	UnsubscribeRate  float64
+	UnsubscribeDelay time.Duration // how long after delivery; 0 means 2s
+	WebhookURL       string        // where to report it; empty disables it
+	WebhookSecret    string        // sent as X-Webhook-Secret
+	MinLatency       time.Duration // every request takes between Min and Max
+	MaxLatency       time.Duration
+	RetryAfter       time.Duration // advertised on 429, rounded up to whole seconds
+	Seed             uint64        // same seed, same sequence of faults
+	Keep             int           // accepted messages remembered for inspection; 0 means 200
 }
 
 // Message is one accepted message.
@@ -55,6 +70,8 @@ type Stats struct {
 	Errors      int `json:"errors"`       // 5xx responses without delivery
 	LostReplies int `json:"lost_replies"` // delivered, but the client was told 504
 	Rejected    int `json:"rejected"`     // invalid requests (4xx)
+	// Unsubscribed counts delivered messages whose recipient then opted out.
+	Unsubscribed int `json:"unsubscribed"`
 }
 
 const (
@@ -113,6 +130,54 @@ func (s *Server) Messages() []Message {
 	defer s.mu.Unlock()
 	return append([]Message(nil), s.recent...)
 }
+
+// chosen decides from the address alone, so the answer for one recipient
+// never changes between attempts or restarts. what keeps the two decisions
+// (unreachable, unsubscribes) independent of each other.
+func chosen(what, to string, rate float64) bool {
+	if rate <= 0 {
+		return false
+	}
+	// A cryptographic hash, not FNV: addresses differ in a few characters
+	// before a long common suffix ("...@example.com"), which a weak hash
+	// does not spread evenly.
+	sum := sha256.Sum256([]byte(what + ":" + to))
+	return float64(binary.BigEndian.Uint32(sum[:4])%10000) < rate*10000
+}
+
+// reportUnsubscribe tells the sender that the recipient of a delivered
+// message opted out. reference is the sender's own idempotency key: it says
+// which message without the provider having to know the sender's ids. A few
+// attempts, then it gives up; the sender treats repeats as harmless.
+func (s *Server) reportUnsubscribe(reference string) {
+	delay := s.cfg.UnsubscribeDelay
+	if delay <= 0 {
+		delay = 2 * time.Second
+	}
+	time.Sleep(delay)
+	body, _ := json.Marshal(map[string]string{"type": "unsubscribed", "reference": reference})
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, s.cfg.WebhookURL, bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if s.cfg.WebhookSecret != "" {
+			req.Header.Set("X-Webhook-Secret", s.cfg.WebhookSecret)
+		}
+		resp, err := webhookClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			// 404 means the sender has not recorded the delivery yet; try again.
+			if resp.StatusCode < 300 || (resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound && resp.StatusCode < 500) {
+				return
+			}
+		}
+		time.Sleep(time.Duration(attempt) * delay)
+	}
+}
+
+var webhookClient = &http.Client{Timeout: 5 * time.Second}
 
 type fault int
 
@@ -187,6 +252,19 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if chosen("unreachable", in.To, s.cfg.UnreachableRate) {
+		reason := "number is not in service"
+		if channel == "email" {
+			reason = "mailbox does not exist"
+		}
+		s.mu.Lock()
+		s.stats[channel].Rejected++
+		s.mu.Unlock()
+		// The code is what a sender should act on; the text is for people.
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "recipient unreachable: " + reason, "code": "recipient_unreachable"})
+		return
+	}
+
 	s.mu.Lock()
 	latency, f := s.roll()
 	s.mu.Unlock()
@@ -238,7 +316,16 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	if f == faultLostReply {
 		st.LostReplies++
 	}
+	unsubscribes := s.cfg.WebhookURL != "" && chosen("unsubscribe", in.To, s.cfg.UnsubscribeRate)
+	if unsubscribes {
+		st.Unsubscribed++
+	}
 	s.mu.Unlock()
+
+	if unsubscribes {
+		// The message was delivered; a little later its recipient opts out.
+		go s.reportUnsubscribe(key)
+	}
 
 	if f == faultLostReply {
 		// The message went out, the confirmation did not. Only the idempotency

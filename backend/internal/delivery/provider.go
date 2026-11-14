@@ -38,7 +38,15 @@ const (
 	RateLimited
 	// Permanent: the request itself was rejected; retrying cannot help.
 	Permanent
+	// Unreachable: the recipient's address does not exist. Permanent, and it
+	// is about the address, not this message: sending to it again in another
+	// campaign cannot work either.
+	Unreachable
 )
+
+// CodeRecipientUnreachable is the provider's error code for an address that
+// does not exist.
+const CodeRecipientUnreachable = "recipient_unreachable"
 
 // SendError classifies a failed send for the retry policy.
 type SendError struct {
@@ -106,7 +114,16 @@ func (p HTTPProvider) Send(ctx context.Context, m Outbound) (string, error) {
 	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout:
 		return "", &SendError{Kind: Retryable, Status: resp.StatusCode, Message: snippet(raw)}
 	default:
-		return "", &SendError{Kind: Permanent, Status: resp.StatusCode, Message: snippet(raw)}
+		// Told apart by the provider's error code, never by the wording of
+		// its message: a rejected request must not suppress a good address.
+		var body struct {
+			Code string `json:"code"`
+		}
+		kind := Permanent
+		if json.Unmarshal(raw, &body) == nil && body.Code == CodeRecipientUnreachable {
+			kind = Unreachable
+		}
+		return "", &SendError{Kind: kind, Status: resp.StatusCode, Message: snippet(raw)}
 	}
 }
 
