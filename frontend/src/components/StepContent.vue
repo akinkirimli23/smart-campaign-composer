@@ -4,6 +4,7 @@ import { useCampaignStore } from '../stores/campaign'
 import { renderSample, SAMPLE_RECIPIENT } from '../lib/template'
 import type { FieldError } from '../api/types'
 import AppIcon from './AppIcon.vue'
+import BriefNote from './BriefNote.vue'
 import ErrorBox from './ErrorBox.vue'
 
 const store = useCampaignStore()
@@ -89,6 +90,7 @@ const otherApproveErrors = computed<FieldError[]>(() =>
       </p>
     </div>
   </div>
+  <BriefNote />
 
   <!-- A rejected attempt is shown, not hidden: it explains the wait. -->
   <div v-for="r in store.rejections" :key="r.attempt" class="alert warn">

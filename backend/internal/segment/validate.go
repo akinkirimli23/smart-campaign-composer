@@ -2,6 +2,7 @@ package segment
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -30,8 +31,8 @@ func (r Rule) validate(skip map[int]bool) []FieldError {
 		// An empty rule would select every user; that must be an explicit choice
 		// in the product, not something an LLM can produce by omission.
 		col.add("conditions", "en az bir koşul gerekli")
-	case n > MaxConditions:
-		col.add("conditions", "en fazla %d koşul olabilir (%d verildi)", MaxConditions, n)
+	case len(r.Leaves()) > MaxConditions:
+		col.add("conditions", "en fazla %d koşul olabilir (%d verildi, gruplardakiler dahil)", MaxConditions, len(r.Leaves()))
 	}
 
 	for i, c := range r.Conditions {
@@ -39,31 +40,74 @@ func (r Rule) validate(skip map[int]bool) []FieldError {
 		if skip[i] {
 			continue
 		}
-		switch c.Type {
-		case TypeAttribute:
-			if c.Field == FieldAge {
-				validateAge(&col, path, c)
-			} else if f, ok := setFields[c.Field]; ok {
-				validateSet(&col, path, c, f)
-			} else {
-				col.add(path+".field", "%q bilinmeyen bir alan; izinli alanlar: %s", c.Field, strings.Join(attributeNames, ", "))
-			}
-		case TypeEvent:
-			validateEvent(&col, path, c)
-		case TypeSignup:
-			validateSignup(&col, path, c)
-		case TypeMetric:
-			validateMetric(&col, path, c)
-		default:
-			col.add(path+".type", "%q bilinmeyen bir koşul tipi; izinli değerler: %s", c.Type, strings.Join(conditionTypes, ", "))
+		if c.Type == TypeGroup {
+			validateGroup(&col, path, c, r.Match)
+			continue
 		}
+		validateLeaf(&col, path, c)
 	}
 
 	// Cross-condition checks only make sense once each condition is valid.
 	if len(col.errs) == 0 && len(skip) == 0 {
-		r.validateTogether(&col)
+		validateTogether(&col, "conditions", r.Conditions, r.Match)
+		for i, c := range r.Conditions {
+			if c.Type != TypeGroup {
+				continue
+			}
+			validateTogether(&col, fmt.Sprintf("conditions[%d].conditions", i), c.Conditions, c.Match)
+			// The same group twice adds nothing and reads as a mistake.
+			for j, other := range r.Conditions[:i] {
+				if other.Type == TypeGroup && reflect.DeepEqual(other.Conditions, c.Conditions) {
+					col.add(fmt.Sprintf("conditions[%d]", i), "conditions[%d] ile aynı grup", j)
+				}
+			}
+		}
 	}
 	return col.errs
+}
+
+// validateLeaf checks one plain condition.
+func validateLeaf(col *collector, path string, c Condition) {
+	switch c.Type {
+	case TypeAttribute:
+		if c.Field == FieldAge {
+			validateAge(col, path, c)
+		} else if f, ok := setFields[c.Field]; ok {
+			validateSet(col, path, c, f)
+		} else {
+			col.add(path+".field", "%q bilinmeyen bir alan; izinli alanlar: %s", c.Field, strings.Join(attributeNames, ", "))
+		}
+	case TypeEvent:
+		validateEvent(col, path, c)
+	case TypeSignup:
+		validateSignup(col, path, c)
+	case TypeMetric:
+		validateMetric(col, path, c)
+	case TypeGroup:
+		// Reached only for a rule built in Go; Parse refuses it earlier.
+		col.add(path+".type", "grup içinde grup olamaz; kural en fazla bir seviye grup içerir")
+	default:
+		col.add(path+".type", "%q bilinmeyen bir koşul tipi; izinli değerler: %s", c.Type, strings.Join(conditionTypes, ", "))
+	}
+}
+
+// validateGroup checks a group: a real second level, not a restatement of
+// the rule it sits in.
+func validateGroup(col *collector, path string, g Condition, parent Match) {
+	switch {
+	case g.Match != MatchAll && g.Match != MatchAny:
+		col.add(path+".match", "%q geçersiz; izinli değerler: %s, %s", g.Match, MatchAll, MatchAny)
+	case g.Match == parent:
+		// "(A and B) and C" is just "A and B and C": one way to write a rule
+		// keeps what the marketer reads unambiguous.
+		col.add(path+".match", "grup, içinde bulunduğu kuralla aynı bağlacı (%s) kullanıyor; koşulları gruba almadan doğrudan yazın", g.Match)
+	}
+	if len(g.Conditions) < MinGroupConditions {
+		col.add(path+".conditions", "bir grup en az %d koşul içermeli", MinGroupConditions)
+	}
+	for j, member := range g.Conditions {
+		validateLeaf(col, fmt.Sprintf("%s.conditions[%d]", path, j), member)
+	}
 }
 
 func validateSet(col *collector, path string, c Condition, f setField) {
@@ -131,7 +175,15 @@ func validateEvent(col *collector, path string, c Condition) {
 		col.add(path+".min_count", "%d geçersiz; 1 ile %d arasında olmalı", c.MinCount, MaxMinCount)
 	case c.MinCount > 1 && !c.Exists:
 		// "did not do it at least 3 times" has no single obvious meaning.
-		col.add(path+".min_count", "exists: false ile kullanılamaz; \"en fazla N kez\" bu formatta ifade edilemez")
+		col.add(path+".min_count", "exists: false ile kullanılamaz; \"hiç yapmadı\" koşulunda sayı verilmez")
+	}
+	switch {
+	case c.MaxCount < 0 || c.MaxCount > MaxMinCount:
+		col.add(path+".max_count", "%d geçersiz; 1 ile %d arasında olmalı", c.MaxCount, MaxMinCount)
+	case c.MaxCount > 0 && !c.Exists:
+		col.add(path+".max_count", "exists: false ile kullanılamaz; \"hiç yapmadı\" koşulunda sayı verilmez")
+	case c.MaxCount > 0 && c.MaxCount < c.MinCount:
+		col.add(path+".max_count", "%d, en az sayısından (%d) küçük; ikisi birlikte kimseyi seçmez", c.MaxCount, c.MinCount)
 	}
 }
 
@@ -156,48 +208,61 @@ func validateMetric(col *collector, path string, c Condition) {
 	case !known:
 	case c.Value < 0 || c.Value > limit:
 		col.add(path+".value", "%d geçersiz; 0 ile %d arasında olmalı", c.Value, limit)
-	case c.Value == 0 && c.Op == OpGTE:
+	case c.Value == 0 && c.Op == OpGTE && c.Metric != MetricAvgOrderValue:
 		// Everyone has spent at least 0; the condition would silently do nothing.
 		col.add(path+".value", "\"en az 0\" herkesi seçer, koşul hiçbir şeyi filtrelemiyor; koşulu kaldırın")
 	}
 	if c.WithinDays != 0 && (c.WithinDays < MinWithinDays || c.WithinDays > MaxWithinDays) {
 		col.add(path+".within_days", "%d geçersiz; %d ile %d arasında olmalı (tüm zamanlar için alanı kaldırın)", c.WithinDays, MinWithinDays, MaxWithinDays)
 	}
+	if c.Category != "" && !slices.Contains(categories(), c.Category) {
+		col.add(path+".category", "%q geçerli bir kategori değil%s; geçerli değerler: %s",
+			c.Category, suggestion(c.Category, categories()), strings.Join(categories(), ", "))
+	}
 }
 
 // validateTogether rejects condition combinations that are individually valid
 // but redundant or contradictory, so a compiled rule always means something.
-func (r Rule) validateTogether(col *collector) {
+//
+// It looks at one scope at a time: the rule's own plain conditions, or the
+// members of one group. scope is the path of that list ("conditions",
+// "conditions[2].conditions"); groups inside it are skipped here and get a
+// call of their own.
+func validateTogether(col *collector, scope string, conditions []Condition, match Match) {
+	at := func(i int) string { return fmt.Sprintf("%s[%d]", scope, i) }
 	firstAttr := map[string]int{}
-	for i, c := range r.Conditions {
-		path := fmt.Sprintf("conditions[%d]", i)
+	for i, c := range conditions {
+		path := at(i)
+		if c.Type == TypeGroup {
+			continue
+		}
 		if c.Type == TypeAttribute {
 			if j, dup := firstAttr[c.Field]; dup {
-				col.add(path+".field", "%s alanı conditions[%d] içinde zaten kullanılmış; tek koşulda birleştirin", c.Field, j)
+				col.add(path+".field", "%s alanı %s içinde zaten kullanılmış; tek koşulda birleştirin", c.Field, at(j))
 			} else {
 				firstAttr[c.Field] = i
 			}
 			continue
 		}
 		if c.Type == TypeSignup || c.Type == TypeMetric {
-			r.validateRange(col, path, i, c)
+			validateRange(col, scope, conditions, match, i)
 			continue
 		}
-		for j, other := range r.Conditions[:i] {
+		for j, other := range conditions[:i] {
 			if other.Type != TypeEvent || other.Event != c.Event {
 				continue
 			}
 			if other.Category == c.Category && other.WithinDays == c.WithinDays {
-				if other.Exists == c.Exists && other.MinCount != c.MinCount {
-					col.add(path, "conditions[%d] ile aynı olay ve dönem; tek koşulda birleştirin", j)
+				if other.Exists == c.Exists && (other.MinCount != c.MinCount || other.MaxCount != c.MaxCount) {
+					col.add(path, "%s ile aynı olay ve dönem; tek koşulda birleştirin", at(j))
 				} else if other.Exists == c.Exists {
-					col.add(path, "conditions[%d] ile aynı koşul", j)
-				} else if r.Match == MatchAll {
-					col.add(path, "conditions[%d] ile çelişiyor; ikisi birlikte kimseyi seçmez", j)
+					col.add(path, "%s ile aynı koşul", at(j))
+				} else if match == MatchAll {
+					col.add(path, "%s ile çelişiyor; ikisi birlikte kimseyi seçmez", at(j))
 				}
 				continue
 			}
-			if r.Match == MatchAll && other.Exists != c.Exists {
+			if match == MatchAll && other.Exists != c.Exists {
 				pos, neg := other, c
 				if c.Exists {
 					pos, neg = c, other
@@ -205,7 +270,7 @@ func (r Rule) validateTogether(col *collector) {
 				// "did X within 7 days" AND "did not do X within 30 days" is empty
 				// whenever the negative condition covers the positive one.
 				if neg.WithinDays >= pos.WithinDays && (neg.Category == "" || neg.Category == pos.Category) {
-					col.add(path, "conditions[%d] ile çelişiyor; ikisi birlikte kimseyi seçmez", j)
+					col.add(path, "%s ile çelişiyor; ikisi birlikte kimseyi seçmez", at(j))
 				}
 			}
 		}
@@ -216,16 +281,18 @@ func (r Rule) validateTogether(col *collector) {
 // on the same quantity. Two bounds on it are fine when they form a range
 // ("joined 30 to 90 days ago", "spent between 500 and 1000"); the same bound
 // twice, or bounds that exclude each other, are not.
-func (r Rule) validateRange(col *collector, path string, i int, c Condition) {
-	for j, other := range r.Conditions[:i] {
-		if other.Type != c.Type || other.Metric != c.Metric || (c.Type == TypeMetric && other.WithinDays != c.WithinDays) {
+func validateRange(col *collector, scope string, conditions []Condition, match Match, i int) {
+	at := func(i int) string { return fmt.Sprintf("%s[%d]", scope, i) }
+	c, path := conditions[i], at(i)
+	for j, other := range conditions[:i] {
+		if other.Type != c.Type || other.Metric != c.Metric || (c.Type == TypeMetric && (other.WithinDays != c.WithinDays || other.Category != c.Category)) {
 			continue
 		}
 		if other.Op == c.Op {
-			col.add(path, "conditions[%d] ile aynı sınır iki kez verilmiş; tek koşulda birleştirin", j)
+			col.add(path, "%s ile aynı sınır iki kez verilmiş; tek koşulda birleştirin", at(j))
 			continue
 		}
-		if r.Match != MatchAll {
+		if match != MatchAll {
 			continue
 		}
 		empty := false
@@ -244,7 +311,7 @@ func (r Rule) validateRange(col *collector, path string, i int, c Condition) {
 			empty = atLeast.Value > atMost.Value
 		}
 		if empty {
-			col.add(path, "conditions[%d] ile çelişiyor; ikisi birlikte kimseyi seçmez", j)
+			col.add(path, "%s ile çelişiyor; ikisi birlikte kimseyi seçmez", at(j))
 		}
 	}
 }

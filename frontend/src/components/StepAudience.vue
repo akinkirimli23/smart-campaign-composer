@@ -4,6 +4,7 @@ import { useCampaignStore } from '../stores/campaign'
 import type { Rule } from '../api/types'
 import { formatDateTime, fromLocalInput } from '../lib/time'
 import AppIcon from './AppIcon.vue'
+import BriefNote from './BriefNote.vue'
 import ErrorBox from './ErrorBox.vue'
 import RuleEditor from './RuleEditor.vue'
 
@@ -69,6 +70,7 @@ const languageShares = computed(() => {
         <p class="lead">Brief'teki bir istek, kitle kurallarıyla ifade edilemiyor.</p>
       </div>
     </div>
+    <BriefNote />
     <section class="card">
       <div class="alert warn" role="alert">
         <strong>{{ segment.unsupported?.reason }}</strong>
@@ -91,6 +93,7 @@ const languageShares = computed(() => {
         <p class="lead">Brief'inden çıkardığımız kitle bu. Uygun değilse koşulları düzenleyebilirsin; gönderimde tam olarak bu kitle kullanılır.</p>
       </div>
     </div>
+    <BriefNote />
 
     <div class="layout">
       <section class="card">
@@ -123,7 +126,14 @@ const languageShares = computed(() => {
             <li v-for="(line, i) in segment.description?.conditions ?? []" :key="i">
               <span class="check"><AppIcon name="check" :size="14" /></span>
               <div>
-                {{ line }}
+                <!-- A group: its heading, then its members as a list of their own. -->
+                <template v-if="segment.description?.groups?.[i]">
+                  <strong>{{ segment.description.groups[i]!.label }}</strong>
+                  <ul class="members">
+                    <li v-for="member in segment.description.groups[i]!.conditions" :key="member">{{ member }}</li>
+                  </ul>
+                </template>
+                <template v-else>{{ line }}</template>
                 <p v-for="a in assumptionsFor(i)" :key="a.phrase" class="assumption">
                   <span class="tag">Yorum</span> “{{ a.phrase }}” → {{ a.interpretation }}
                 </p>

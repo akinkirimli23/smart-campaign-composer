@@ -7,8 +7,19 @@ import (
 
 // Description is the human-readable form of a rule shown to the marketer.
 type Description struct {
-	Summary    string   `json:"summary"`
-	Conditions []string `json:"conditions"` // one line per condition, same order as the rule
+	Summary string `json:"summary"`
+	// Conditions has one line per condition, in the order of the rule. A
+	// group is a single line that names all of its members.
+	Conditions []string `json:"conditions"`
+	// Groups runs parallel to Conditions: for a group, the same content in
+	// parts, so a screen can show its members as a list; nil otherwise.
+	Groups []*GroupDescription `json:"groups"`
+}
+
+// GroupDescription is a group condition in parts.
+type GroupDescription struct {
+	Label      string   `json:"label"`      // "Şunlardan en az biri"
+	Conditions []string `json:"conditions"` // one line per member
 }
 
 var (
@@ -34,8 +45,26 @@ func Describe(r Rule) Description {
 	if len(r.Conditions) == 1 {
 		d.Summary = "Aşağıdaki koşulu sağlayan kullanıcılar"
 	}
+	grouped := false
 	for _, c := range r.Conditions {
-		d.Conditions = append(d.Conditions, describeCondition(c))
+		if c.Type != TypeGroup {
+			d.Conditions = append(d.Conditions, describeCondition(c))
+			d.Groups = append(d.Groups, nil)
+			continue
+		}
+		g := &GroupDescription{Label: "Şunların hepsi"}
+		if c.Match == MatchAny {
+			g.Label = "Şunlardan en az biri"
+		}
+		for _, member := range c.Conditions {
+			g.Conditions = append(g.Conditions, describeCondition(member))
+		}
+		d.Conditions = append(d.Conditions, g.Label+": "+strings.Join(g.Conditions, "; "))
+		d.Groups = append(d.Groups, g)
+		grouped = true
+	}
+	if !grouped {
+		d.Groups = nil // a flat rule reads exactly as it did before groups existed
 	}
 	return d
 }
@@ -47,7 +76,15 @@ func describeCondition(c Condition) string {
 		if c.Category != "" {
 			scope += " " + label(categoryLabels, c.Category) + " kategorisinde"
 		}
-		if c.Exists && c.MinCount > 1 {
+		switch {
+		case !c.Exists:
+		case c.MaxCount > 0 && c.MaxCount == max(c.MinCount, 1):
+			scope += fmt.Sprintf(" yalnızca %d kez", c.MaxCount)
+		case c.MaxCount > 0 && c.MinCount > 1:
+			scope += fmt.Sprintf(" %d–%d kez", c.MinCount, c.MaxCount)
+		case c.MaxCount > 0:
+			scope += fmt.Sprintf(" en fazla %d kez", c.MaxCount)
+		case c.MinCount > 1:
 			scope += fmt.Sprintf(" en az %d kez", c.MinCount)
 		}
 		switch {
@@ -70,10 +107,17 @@ func describeCondition(c Condition) string {
 		if c.Op == OpLTE {
 			bound = "en fazla"
 		}
-		text := fmt.Sprintf("Sipariş sayısı: %s %d", bound, c.Value)
-		if c.Metric == MetricTotalSpent {
-			text = fmt.Sprintf("Toplam harcama: %s %d TL", bound, c.Value)
+		name, unit := "Sipariş sayısı", ""
+		switch c.Metric {
+		case MetricTotalSpent:
+			name, unit = "Toplam harcama", " TL"
+		case MetricAvgOrderValue:
+			name, unit = "Ortalama sipariş tutarı", " TL"
 		}
+		if c.Category != "" {
+			name += " (" + label(categoryLabels, c.Category) + " kategorisinde)"
+		}
+		text := fmt.Sprintf("%s: %s %d%s", name, bound, c.Value, unit)
 		if c.WithinDays > 0 {
 			return text + fmt.Sprintf(" (son %d günde)", c.WithinDays)
 		}

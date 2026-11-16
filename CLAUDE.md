@@ -53,7 +53,10 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
    `LLM_MODE=auto` iken key yoksa mock kullanılır.
 8. **Seed deterministik.** Aynı `SEED_USERS` / `SEED_RANDOM` her makinede aynı veriyi üretir.
    Varsayılan veride örnek brief 381 kişi verir (222 SMS, 254 email, 58 ulaşılamaz);
-   segment derleyicisinin testleri bu sayıyı referans alabilir.
+   segment derleyicisinin testleri bu sayıyı referans alabilir. Şehirler 81 il (DECISIONS 39):
+   İstanbul dışındakilerin bir kısmı `seed.resettle` ile diğer illere taşınır; bu, üreteçten sayı
+   çekmez ve İstanbul'a dokunmaz. Şehir dağılımını değiştirirken bu ikisini koru, yoksa
+   referans sayılar kayar.
 
 ## Kod düzeni
 
@@ -161,7 +164,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (37 kayıt) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (40 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 13 Kasım'da güncellendi (açılış sayfası, yeni tasarım ve alıcı listesi dahil); sonrasında çalışılırsa yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
@@ -183,8 +186,16 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   (Claude'a verilen şema, aynı tablolardan üretilir), `Generator` (LLM + hata geri besleme, en
   fazla 3 deneme).
 - Koşul tipleri: `attribute` (şehir, dil, cinsiyet, yaş), `event` (sepet / satın alma, isteğe
-  bağlı `min_count`), `signup` (üyelik tarihi), `metric` (`total_spent`, `order_count`). Son üçü
-  DECISIONS 25 ile eklendi.
+  bağlı `min_count` ve `max_count`), `signup` (üyelik tarihi), `metric` (`total_spent`,
+  `order_count`, `avg_order_value`; isteğe bağlı `category`). Son üçü DECISIONS 25 ile eklendi;
+  `max_count`, ortalama ve metrik kategorisi DECISIONS 40 ile. Alışverişi olmayanın ortalaması
+  yoktur: `avg_order_value` koşuluna hiçbir yönde girmez (SQL'de `COALESCE(…, false)`).
+- `group` (DECISIONS 38): kendi `match`'iyle bağlı düz koşullar; kuralın tek bir koşulu sayılır.
+  Derinlik en fazla iki (grup içinde grup reddedilir), grubun bağlacı kuralınkinin tersi olmalı,
+  en az iki üye. Doğrulama her listeyi ayrı denetler (`validateTogether`); derleyici grubu
+  parantezli tek ifade yapar (`compileLeaf` + `join`); şema üyeler için düz koşul şemalarını
+  yeniden listeler, özyineleme yok. Daha derin iç içelik ekleme: açıklama, form ve model şeması
+  iki seviyeye göre kuruldu.
 - Yeni bir alan / operatör eklemek: `rule.go` tabloları, `validate.go`, `compile.go`,
   `describe.go`, `schema.go` ve testler. Tablolar tek kaynak; SQL'e giden kolon adı oradan gelir.
 - Claude'un çıktısı ya `rule` ya `unsupported`. Açıklama metni Claude'dan alınmaz; Claude
@@ -289,7 +300,13 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Kitle kuralı formla düzenlenir (`components/RuleEditor.vue`, mantığı `lib/rule.ts`; DECISIONS
   26). Seçenekler `GET /api/segments/options`'tan gelir; arayüze değer listesi gömme. Geçerlilik
   kararı backend'de: taslak `applyRule` ile gider, hatalar satırın altında gösterilir. JSON
-  görünümü yalnızca `?debug` ile.
+  görünümü yalnızca `?debug` ile. Tek koşulun formu `ConditionFields.vue`; grup, içinde aynı
+  formların durduğu bir kutudur ve bağlacı sorulmaz (kuralınkinin tersi, `normaliseRule` zorlar).
+- Uzun kümeler (81 il, DECISIONS 39) kutucukla değil `OptionPicker.vue` ile seçilir: seçilenler
+  etiket, gerisi arama (`searchOptions`, `foldTr` `lib/rule.ts` içinde). Eşik seçenek sayısıdır.
+  Brief, kitle ve mesaj adımlarında `BriefNote.vue` ile görünür kalır.
+- Mock LLM şehirleri kelime olarak tanır (`wordCity`, `citiesIn`, `cityAliases`); alt dizi
+  aramasına dönme: "müşteri" içinde Muş bulur.
 - Diller (DECISIONS 30): `store.languages` kitle yanıtından gelir (etiketleriyle; arayüze dil
   listesi gömme). `store.content` ana dildeki metin, `store.variants` diğer diller,
   `store.activeLanguage` düzenlenen dil; `store.localize()` diğer dilleri tek istekte yazdırır.

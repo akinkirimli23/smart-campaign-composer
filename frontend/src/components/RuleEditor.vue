@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { FieldError, Rule, RuleOptions } from '../api/types'
+import type { FieldError, GroupCondition, Rule, RuleOptions } from '../api/types'
 import {
   addableKinds,
+  canAddGroup,
   cloneRule,
   defaultCondition,
+  defaultGroup,
   errorsFor,
   generalErrors,
-  kindOf,
+  groupErrors,
+  GROUP_LABELS,
+  isGroup,
   KIND_LABELS,
+  memberErrors,
   normaliseRule,
+  opposite,
   sameRule,
-  valuesOf,
   type ConditionKind,
 } from '../lib/rule'
+import ConditionFields from './ConditionFields.vue'
 
 const props = defineProps<{
   rule: Rule
@@ -30,10 +36,13 @@ const emit = defineEmits<{
 
 // The draft is a copy: nothing changes for real until the backend accepts it.
 const draft = ref<Rule>(cloneRule(props.rule))
-const limits = computed(() => props.options.limits)
 const dirty = computed(() => !sameRule(draft.value, props.rule))
-const canAdd = computed(() => addableKinds(draft.value, props.options))
+const canAdd = computed(() => addableKinds(draft.value.conditions, draft.value, props.options))
 const newKind = ref<ConditionKind | ''>('')
+
+// A group joins its members with the connector the rule does not use, so its
+// heading follows the rule's own choice above.
+const groupLabel = computed(() => GROUP_LABELS[opposite(draft.value.match)])
 
 function add() {
   if (newKind.value === '') return
@@ -41,14 +50,18 @@ function add() {
   newKind.value = ''
 }
 
+function addGroup() {
+  draft.value.conditions.push(defaultGroup(draft.value, props.options))
+}
+
 function remove(index: number) {
   draft.value.conditions.splice(index, 1)
 }
 
-function toggle(values: string[], value: string) {
-  const at = values.indexOf(value)
-  if (at >= 0) values.splice(at, 1)
-  else values.push(value)
+function addMember(group: GroupCondition, event: Event) {
+  const select = event.target as HTMLSelectElement
+  if (select.value) group.conditions.push(defaultCondition(select.value as ConditionKind, props.options))
+  select.value = ''
 }
 
 function apply() {
@@ -71,108 +84,57 @@ function apply() {
 
     <p v-if="draft.conditions.length === 0" class="hint">Henüz koşul yok. En az bir koşul gerekli.</p>
 
-    <fieldset v-for="(c, i) in draft.conditions" :key="i" class="condition">
-      <legend>{{ KIND_LABELS[kindOf(c)] }}</legend>
+    <template v-for="(c, i) in draft.conditions" :key="i">
+      <!-- A group: its own box, with the same condition forms inside. -->
+      <fieldset v-if="isGroup(c)" class="group">
+        <legend>{{ groupLabel }}</legend>
+        <p class="hint tight">
+          Bu kutudaki koşullar kendi aralarında “{{ draft.match === 'all' ? 'veya' : 've' }}” ile bağlanır; kutu, kuralın tek bir koşulu sayılır.
+        </p>
 
-      <!-- City, language, gender: pick from the closed set. -->
-      <template v-if="c.type === 'attribute' && c.field !== 'age'">
-        <div class="inline">
-          <select v-model="c.op" :aria-label="KIND_LABELS[c.field] + ' koşulu türü'">
-            <option value="in">Şunlardan biri</option>
-            <option value="not_in">Şunların dışında</option>
-          </select>
-        </div>
-        <div class="choices">
-          <label v-for="o in valuesOf(c.field, options)" :key="o.value" class="choice">
-            <input type="checkbox" :checked="c.values.includes(o.value)" @change="toggle(c.values, o.value)" />
-            {{ o.label }}
-          </label>
-        </div>
-      </template>
+        <ConditionFields
+          v-for="(member, j) in c.conditions"
+          :key="j"
+          :condition="member"
+          :options="options"
+          :errors="memberErrors(errors, i, j)"
+          @remove="c.conditions.splice(j, 1)"
+        />
 
-      <template v-else-if="c.type === 'attribute'">
-        <div class="inline">
-          <label>En az <input v-model.number="c.min" type="number" :min="limits.min_age" :max="limits.max_age" /></label>
-          <label>En çok <input v-model.number="c.max" type="number" :min="limits.min_age" :max="limits.max_age" /> yaş</label>
-        </div>
-      </template>
+        <p v-for="message in groupErrors(errors, i)" :key="message" class="field-error">{{ message }}</p>
 
-      <template v-else-if="c.type === 'event'">
-        <div class="inline">
-          <label>Son <input v-model.number="c.within_days" type="number" :min="limits.min_within_days" :max="limits.max_within_days" /> günde</label>
-          <select v-model="c.event" aria-label="Davranış">
-            <option v-for="o in options.events" :key="o.value" :value="o.value">{{ o.label }}</option>
-          </select>
-          <select v-model="c.exists" aria-label="Yaptı ya da yapmadı">
-            <option :value="true">yaptı</option>
-            <option :value="false">hiç yapmadı</option>
-          </select>
-        </div>
-        <div class="inline">
-          <label>
-            Kategori
-            <select v-model="c.category">
-              <option :value="null">Tümü</option>
-              <option v-for="o in options.categories" :key="o.value" :value="o.value">{{ o.label }}</option>
+        <div class="inline add">
+          <template v-if="addableKinds(c.conditions, draft, options).length">
+            <label :for="'group-add-' + i">Bu gruba koşul ekle</label>
+            <select :id="'group-add-' + i" @change="addMember(c, $event)">
+              <option value="">Seç…</option>
+              <option v-for="kind in addableKinds(c.conditions, draft, options)" :key="kind" :value="kind">{{ KIND_LABELS[kind] }}</option>
             </select>
-          </label>
-          <label v-if="c.exists">
-            En az
-            <input v-model.number="c.min_count" type="number" min="1" :max="limits.max_min_count" placeholder="1" />
-            kez
-          </label>
+          </template>
+          <button class="ghost danger" type="button" @click="remove(i)">Grubu kaldır</button>
         </div>
+      </fieldset>
+
+      <ConditionFields v-else :condition="c" :options="options" :errors="errorsFor(errors, i)" @remove="remove(i)" />
+    </template>
+
+    <div class="inline add">
+      <template v-if="canAdd.length">
+        <label for="rule-add">Koşul ekle</label>
+        <select id="rule-add" v-model="newKind" @change="add">
+          <option value="" disabled>Seç…</option>
+          <option v-for="kind in canAdd" :key="kind" :value="kind">{{ KIND_LABELS[kind] }}</option>
+        </select>
       </template>
-
-      <template v-else-if="c.type === 'signup'">
-        <div class="inline">
-          <select v-model="c.op" aria-label="Üyelik tarihi koşulu türü">
-            <option value="within">Son … günde üye oldu</option>
-            <option value="older_than">… günden daha önce üye oldu</option>
-          </select>
-          <label><input v-model.number="c.days" type="number" min="1" :max="limits.max_signup_days" /> gün</label>
-        </div>
-      </template>
-
-      <template v-else>
-        <div class="inline">
-          <select v-model="c.metric" aria-label="Metrik">
-            <option v-for="o in options.metrics" :key="o.value" :value="o.value">{{ o.label }}</option>
-          </select>
-          <select v-model="c.op" aria-label="Karşılaştırma">
-            <option value="gte">en az</option>
-            <option value="lte">en fazla</option>
-          </select>
-          <input v-model.number="c.value" type="number" min="0" aria-label="Değer" />
-        </div>
-        <div class="inline">
-          <label>
-            Dönem
-            <select
-              :value="c.within_days === null ? 'all' : 'window'"
-              @change="c.within_days = ($event.target as HTMLSelectElement).value === 'all' ? null : 30"
-            >
-              <option value="all">Tüm zamanlar</option>
-              <option value="window">Son … gün</option>
-            </select>
-          </label>
-          <label v-if="c.within_days !== null">
-            <input v-model.number="c.within_days" type="number" :min="limits.min_within_days" :max="limits.max_within_days" /> gün
-          </label>
-        </div>
-      </template>
-
-      <p v-for="message in errorsFor(errors, i)" :key="message" class="field-error">{{ message }}</p>
-
-      <button class="ghost danger" type="button" @click="remove(i)">Koşulu kaldır</button>
-    </fieldset>
-
-    <div v-if="canAdd.length" class="inline add">
-      <label for="rule-add">Koşul ekle</label>
-      <select id="rule-add" v-model="newKind" @change="add">
-        <option value="" disabled>Seç…</option>
-        <option v-for="kind in canAdd" :key="kind" :value="kind">{{ KIND_LABELS[kind] }}</option>
-      </select>
+      <button
+        v-if="canAddGroup(draft, options)"
+        class="small"
+        type="button"
+        :title="'İçindeki koşullardan ' + (draft.match === 'all' ? 'en az birinin' : 'hepsinin') + ' sağlanması gereken bir kutu'"
+        @click="addGroup"
+      >
+        + Grup ekle <span class="muted">({{ groupLabel.toLocaleLowerCase('tr') }})</span>
+      </button>
     </div>
 
     <div v-if="generalErrors(errors).length" class="alert error" role="alert">

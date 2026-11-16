@@ -45,6 +45,11 @@ Hepsi düzeltildi: ifade edilebilenler artık ifade ediliyor (şehir hariç tutm
 edilemeyenler nedeniyle reddediliyor (kanal seçimi, veride olmayan dil, negatif değer, çelişki,
 Türkçe olmayan brief). Ayrıntı ve tablo: DECISIONS 36.
 
+**15 Kasım: VEYA.** "Farklı koşullar arası VEYA" brief'i artık reddedilmiyor: kural tek seviye
+grup taşıyabiliyor (DECISIONS 38). Sete iki brief eklendi: VE ile VEYA'nın karıştığı ve
+gruplamanın yorum olarak gösterilmesi gereken bir brief, ve mock'un hâlâ reddetmesi gereken
+üçlü VEYA.
+
 ## Açık kalanlar
 
 Bunlar mock'un değil ürünün sınırları; gerçek modelle de geçerli.
@@ -58,3 +63,17 @@ Bunlar mock'un değil ürünün sınırları; gerçek modelle de geçerli.
 - **Gerçek Claude ile çalıştırılmadı.** Bu setin asıl değeri orada: modelin "desteklenmiyor"
   deme disiplini, çelişkileri fark etmesi ve talimat enjeksiyonuna direnci yalnızca gerçek
   modelle ölçülebilir. API key gelince ilk yapılacak iş bu.
+
+**15 Kasım: 81 il.** Veri on beş şehirden 81 ile genişledi (DECISIONS 39), bu yüzden "veride
+olmayan şehir" brief'leri artık kural üretir. Yerlerine il adlarının sıradan kelimelerle
+karışmadığını deneyen brief'ler eklendi: "Muş'taki müşterilere karşı konulmaz…" yalnızca Muş'u
+seçer ("müşteri" Muş, "karşı" Kars sayılmaz); "Ordulu", "Urfadakiler", "Antep" gibi ekli ve halk
+arasındaki adlar tanınır; "ordusu", "bölüm", "musluk", "ağrısız" şehir sayılmaz.
+
+Bilinen sınır: mock, bir brief'teki şehirlerin ya hepsini dahil eder ya hepsini hariç tutar.
+"Ankara dışındaki Urfalılar" gibi ikisini karıştıran bir brief'te iki şehri de hariç tutar;
+kitle ekranındaki açıklama bunu gösterir ama doğrusu gerçek modelden beklenir.
+
+**15 Kasım: iki kitleli "veya".** "İstanbul'da … sepete ekleyen veya Ankara'da … 1000 TL üzeri
+harcayan" brief'i yanlış okunuyordu (şehirler birleşiyordu). Artık iki yan ayrı kitle sayılır;
+ayrıntı DECISIONS 38'in ek notunda.

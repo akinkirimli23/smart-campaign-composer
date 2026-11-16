@@ -92,6 +92,45 @@ func TestCountsMatchReferenceEvaluation(t *testing.T) {
 		"big spender or new member": {Match: segment.MatchAny, Conditions: cond(
 			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 3000},
 			segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: 30})},
+		// One level of grouping (DECISIONS 38), in both directions.
+		"istanbul and (cart or big spender)": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+			segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAny, Conditions: cond(
+				segment.Condition{Type: segment.TypeEvent, Event: "cart_add", WithinDays: 30, Exists: true},
+				segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 2000})})},
+		"(ankara and female) or new member": {Match: segment.MatchAny, Conditions: cond(
+			segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAll, Conditions: cond(
+				segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"Ankara"}},
+				segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}})},
+			segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: 30})},
+		"(izmir or english) and (never ordered or lapsed)": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAny, Conditions: cond(
+				segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İzmir"}},
+				segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"en"}})},
+			segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAny, Conditions: cond(
+				segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpLTE, Value: 0},
+				segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: 60, Exists: false})})},
+		"two all-groups joined by or": {Match: segment.MatchAny, Conditions: cond(
+			segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAll, Conditions: cond(
+				segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"male"}},
+				segment.Condition{Type: segment.TypeEvent, Event: "purchase", Category: "electronics", WithinDays: 90, Exists: true})},
+			segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAll, Conditions: cond(
+				segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: 18, Max: 25},
+				segment.Condition{Type: segment.TypeEvent, Event: "cart_add", WithinDays: 14, Exists: true})})},
+		// Counts with an upper bound, the average, metrics per category.
+		"bought exactly once in 180 days": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: 180, Exists: true, MaxCount: 1})},
+		"two to four cart adds": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeEvent, Event: "cart_add", WithinDays: 90, Exists: true, MinCount: 2, MaxCount: 4})},
+		"average order at least 800": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricAvgOrderValue, Op: segment.OpGTE, Value: 800})},
+		"average order at most 300, in a year": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricAvgOrderValue, Op: segment.OpLTE, Value: 300, WithinDays: 365})},
+		"spent 1500 on electronics": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Category: "electronics", Op: segment.OpGTE, Value: 1500})},
+		"low average or two fashion orders": {Match: segment.MatchAny, Conditions: cond(
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricAvgOrderValue, Op: segment.OpLTE, Value: 200},
+			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Category: "fashion", Op: segment.OpGTE, Value: 2})},
 		"any": {Match: segment.MatchAny, Conditions: cond(
 			segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"Trabzon"}},
 			segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: "books", WithinDays: 7, Exists: true},
@@ -135,8 +174,30 @@ func TestCountsMatchReferenceEvaluation(t *testing.T) {
 
 // matches is the reference semantics of a rule, written without SQL.
 func matches(r segment.Rule, u seed.User, events []seed.Event, asOf time.Time) bool {
+	return allOrAny(r.Match, r.Conditions, func(c segment.Condition) bool {
+		if c.Type == segment.TypeGroup {
+			return allOrAny(c.Match, c.Conditions, func(member segment.Condition) bool { return holds(member, u, events, asOf) })
+		}
+		return holds(c, u, events, asOf)
+	})
+}
+
+func allOrAny(match segment.Match, conditions []segment.Condition, holds func(segment.Condition) bool) bool {
 	hit := 0
-	for _, c := range r.Conditions {
+	for _, c := range conditions {
+		if holds(c) {
+			hit++
+		}
+	}
+	if match == segment.MatchAny {
+		return hit > 0
+	}
+	return hit == len(conditions)
+}
+
+// holds evaluates one plain condition for one user, in plain Go.
+func holds(c segment.Condition, u seed.User, events []seed.Event, asOf time.Time) bool {
+	{
 		var ok bool
 		switch {
 		case c.Type == segment.TypeEvent:
@@ -148,7 +209,11 @@ func matches(r segment.Rule, u seed.User, events []seed.Event, asOf time.Time) b
 					n++
 				}
 			}
-			ok = (n >= max(c.MinCount, 1)) == c.Exists
+			if c.Exists {
+				ok = n >= max(c.MinCount, 1) && (c.MaxCount == 0 || n <= c.MaxCount)
+			} else {
+				ok = n == 0
+			}
 		case c.Type == segment.TypeSignup:
 			cutoff := asOf.AddDate(0, 0, -c.Days)
 			if c.Op == segment.OpWithin {
@@ -167,17 +232,27 @@ func matches(r segment.Rule, u seed.User, events []seed.Event, asOf time.Time) b
 				if c.WithinDays > 0 && e.OccurredAt.Before(asOf.AddDate(0, 0, -c.WithinDays)) {
 					continue
 				}
+				if c.Category != "" && e.Category != c.Category {
+					continue
+				}
 				orders++
 				kurus += int64(math.Round(*e.Amount * 100))
 			}
 			have, want := orders, int64(c.Value)
-			if c.Metric == segment.MetricTotalSpent {
+			switch c.Metric {
+			case segment.MetricTotalSpent:
 				have, want = kurus, int64(c.Value)*100
+			case segment.MetricAvgOrderValue:
+				// kurus / orders against value, without dividing.
+				have, want = kurus, int64(c.Value)*100*orders
 			}
 			if c.Op == segment.OpGTE {
 				ok = have >= want
 			} else {
 				ok = have <= want
+			}
+			if c.Metric == segment.MetricAvgOrderValue && orders == 0 {
+				ok = false // no purchases, no average
 			}
 		case c.Field == segment.FieldAge:
 			age := asOf.Year() - u.BirthYear
@@ -186,14 +261,8 @@ func matches(r segment.Rule, u seed.User, events []seed.Event, asOf time.Time) b
 			value := map[string]string{"city": u.City, "language": u.Language, "gender": u.Gender}[c.Field]
 			ok = slices.Contains(c.Values, value) == (c.Op == segment.OpIn)
 		}
-		if ok {
-			hit++
-		}
+		return ok
 	}
-	if r.Match == segment.MatchAny {
-		return hit > 0
-	}
-	return hit == len(r.Conditions)
 }
 
 // An invalid rule never reaches the database.

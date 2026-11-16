@@ -248,7 +248,7 @@ ai-sessions/       Claude oturum export'ları
 
 ## Veri modeli
 
-- **users**: ad, soyad, email, telefon, şehir, dil (`tr` / `en`), cinsiyet, doğum yılı,
+- **users**: ad, soyad, email, telefon, şehir (81 il; DECISIONS 39), dil (`tr` / `en`), cinsiyet, doğum yılı,
   kayıt tarihi, kanal izinleri (`email_opt_in`, `sms_opt_in`).
 - **events**: `cart_add` ve `purchase` olayları; kategori, tutar, zaman.
 - **campaigns**: brief, onaylanan kural ve içerik (JSON; içerik dil başına bir set), kitlenin hesaplandığı an, gönderimin
@@ -332,10 +332,11 @@ göre toplu sayılır ("N mesaj gönderilmeyecek: …"). Hepsi kanal bazındadı
 |---|---|
 | Şehir, dil, cinsiyet (dahil / hariç), yaş aralığı | "Ankara ve İzmir'deki 25-34 yaş kadınlar" |
 | Sepete ekleme / satın alma: yaptı ya da yapmadı, son N günde, isteğe bağlı kategori | "Son 7 günde elektronikte sepete ekleyenler", "60 gündür alışveriş yapmayanlar" |
-| Olay sayısı | "Son 30 günde en az 3 kez sepete ekleyenler" |
+| Olay sayısı: en az, en fazla, tam (DECISIONS 40) | "Son 30 günde en az 3 kez sepete ekleyenler", "son 90 günde yalnızca bir kez alışveriş yapanlar" |
 | Üyelik tarihi | "Son 7 günde kayıt olanlar", "1 yıldan eski üyeler" |
-| Toplam harcama, sipariş sayısı (tüm zamanlar ya da son N gün) | "1000 TL üzeri harcayanlar", "en az 5 sipariş verenler" |
-| Koşulların hepsi (VE) ya da herhangi biri (VEYA), tek seviye | |
+| Toplam harcama, sipariş sayısı, ortalama sipariş tutarı (tüm zamanlar ya da son N gün; isteğe bağlı kategori) | "1000 TL üzeri harcayanlar", "en az 5 sipariş verenler", "ortalama sepet tutarı 800 TL üzeri olanlar", "elektronikte 2000 TL üzeri harcayanlar" |
+| Koşulların hepsi (VE) ya da herhangi biri (VEYA) | "Kadınlar veya son 7 günde sepete ekleyenler" |
+| Tek seviye grup: VE ile VEYA birlikte (DECISIONS 38) | "İstanbul'da yaşayan ve (sepete ekleyen veya 1000 TL üzeri harcayan)" |
 
 Formatın ifade edemediği bir istekte kural üretilmez; arayüz neyin desteklenmediğini gösterir.
 Eksik koşullu bir kural daha geniş bir kitle demek olurdu.
@@ -372,8 +373,8 @@ Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
 | Konu | Not |
 |---|---|
 | Tüm kullanıcılara gönderim ("herkese gönder") | Koşulsuz kural bilerek yasak: modelin koşulları unutup herkese gönderim yapmasını önler. Açık bir "tüm kullanıcılar" seçeneği sonradan eklenebilir |
-| Segment kuralında iç içe VE / VEYA grupları | Bilinçli olarak yok (DECISIONS 13) |
-| Kesin "büyüktür", "en fazla N kez", kategori bazında harcama | Karşılaştırmalar kapsayıcı; ayrıntılar DECISIONS 25 |
+| İki seviyeden derin VE / VEYA | Tek seviye grup var (DECISIONS 38); "A ve (B veya (C ve D))" gibi daha derin istekler ifade edilemez ve reddedilir |
+| Kesin "büyüktür" ("en fazla N kez" ve kategori bazında harcama DECISIONS 40 ile eklendi) | Karşılaştırmalar kapsayıcı; ayrıntılar DECISIONS 25 |
 | Ülke, sadakat seviyesi, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
 | Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
 | Zamanlanmış kampanyayı düzenleme, alıcının yerel saatinde gönderim | Zamanlanan kampanya yalnızca iptal edilebilir; saat pazarlamacının saat dilimindedir (DECISIONS 27) |

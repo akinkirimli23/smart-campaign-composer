@@ -96,3 +96,50 @@ func assertBetween(t *testing.T, name string, v, lo, hi float64) {
 		t.Errorf("%s = %.3f, want between %.2f and %.2f", name, v, lo, hi)
 	}
 }
+
+// All 81 provinces are in the closed set, each once, and the data reaches
+// beyond the fifteen large cities without touching İstanbul.
+func TestProvinces(t *testing.T) {
+	cities := Cities()
+	seen := map[string]bool{}
+	for _, c := range cities {
+		if seen[c] {
+			t.Errorf("%s listed twice", c)
+		}
+		seen[c] = true
+	}
+	if len(cities) != 81 || cities[0] != "İstanbul" {
+		t.Fatalf("%d cities, first %q", len(cities), cities[0])
+	}
+
+	users, _ := Generate(5000, 42, refNow)
+	perCity := map[string]int{}
+	for _, u := range users {
+		if !seen[u.City] {
+			t.Fatalf("user %d lives in %q, which is not in the set", u.ID, u.City)
+		}
+		perCity[u.City]++
+	}
+	if len(perCity) != 81 {
+		t.Errorf("users live in %d provinces, want all 81", len(perCity))
+	}
+	// İstanbul keeps exactly the people the fifteen-city data gave it; the
+	// example brief's reference numbers depend on that.
+	if perCity["İstanbul"] != 1516 {
+		t.Errorf("%d users in İstanbul, want 1516", perCity["İstanbul"])
+	}
+	other := 0
+	for _, p := range otherProvinces {
+		other += perCity[p]
+	}
+	if share := float64(other) / float64(len(users)-perCity["İstanbul"]); share < 0.17 || share > 0.27 {
+		t.Errorf("%.0f%% of the users outside İstanbul live in the other provinces", share*100)
+	}
+	// Decided from the id and the seed, so it is the same on every run.
+	if a, b := resettle("Ankara", 17, 42), resettle("Ankara", 17, 42); a != b {
+		t.Errorf("resettle is not deterministic: %q, %q", a, b)
+	}
+	if resettle("İstanbul", 17, 42) != "İstanbul" {
+		t.Error("someone was moved out of İstanbul")
+	}
+}

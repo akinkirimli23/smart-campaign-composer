@@ -82,6 +82,12 @@ func parseRule(col *collector, data []byte) (rule Rule, malformed map[int]bool, 
 }
 
 func parseCondition(col *collector, path string, data []byte) (Condition, bool) {
+	return parseConditionAt(col, path, data, false)
+}
+
+// parseConditionAt decodes one condition. inGroup is true for the members of
+// a group, where another group is not allowed.
+func parseConditionAt(col *collector, path string, data []byte, inGroup bool) (Condition, bool) {
 	obj, ok := object(col, path, data)
 	if !ok {
 		return Condition{}, false
@@ -99,6 +105,27 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 	before := len(col.errs)
 	c := Condition{Type: typ}
 	switch typ {
+	case TypeGroup:
+		if inGroup {
+			col.add(joinPath(path, "type"), "grup içinde grup olamaz; kural en fazla bir seviye grup içerir")
+			return Condition{}, false
+		}
+		checkKeys(col, path, obj, []string{"type", "match", "conditions"}, nil)
+		if s, ok := str(col, joinPath(path, "match"), obj["match"]); ok {
+			c.Match = Match(s)
+		}
+		if raw, present := obj["conditions"]; present {
+			var items []json.RawMessage
+			if isNull(raw) || json.Unmarshal(raw, &items) != nil {
+				col.add(joinPath(path, "conditions"), "dizi olmalı")
+			}
+			for i, item := range items {
+				// A member that cannot be decoded makes the whole group
+				// unusable; its errors are already recorded.
+				member, _ := parseConditionAt(col, fmt.Sprintf("%s.conditions[%d]", path, i), item, true)
+				c.Conditions = append(c.Conditions, member)
+			}
+		}
 	case TypeAttribute:
 		rawField, present := obj["field"]
 		if !present {
@@ -124,7 +151,7 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 		}
 		c.Op, _ = str(col, joinPath(path, "op"), obj["op"])
 	case TypeEvent:
-		checkKeys(col, path, obj, []string{"type", "event", "within_days", "exists"}, []string{"category", "min_count"})
+		checkKeys(col, path, obj, []string{"type", "event", "within_days", "exists"}, []string{"category", "min_count", "max_count"})
 		c.Event, _ = str(col, joinPath(path, "event"), obj["event"])
 		c.WithinDays, _ = integer(col, joinPath(path, "within_days"), obj["within_days"])
 		c.Exists, _ = boolean(col, joinPath(path, "exists"), obj["exists"])
@@ -144,12 +171,21 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 				c.MinCount = n
 			}
 		}
+		// max_count is optional; null means "no upper bound", like leaving it out.
+		if raw, present := obj["max_count"]; present && !isNull(raw) {
+			if n, ok := integer(col, joinPath(path, "max_count"), raw); ok {
+				if n < 1 {
+					col.add(joinPath(path, "max_count"), "%d geçersiz; 1 ile %d arasında olmalı (üst sınır yoksa alanı kaldırın)", n, MaxMinCount)
+				}
+				c.MaxCount = n
+			}
+		}
 	case TypeSignup:
 		checkKeys(col, path, obj, []string{"type", "op", "days"}, nil)
 		c.Op, _ = str(col, joinPath(path, "op"), obj["op"])
 		c.Days, _ = integer(col, joinPath(path, "days"), obj["days"])
 	case TypeMetric:
-		checkKeys(col, path, obj, []string{"type", "metric", "op", "value"}, []string{"within_days"})
+		checkKeys(col, path, obj, []string{"type", "metric", "op", "value"}, []string{"within_days", "category"})
 		c.Metric, _ = str(col, joinPath(path, "metric"), obj["metric"])
 		c.Op, _ = str(col, joinPath(path, "op"), obj["op"])
 		c.Value, _ = integer(col, joinPath(path, "value"), obj["value"])
@@ -160,6 +196,13 @@ func parseCondition(col *collector, path string, data []byte) (Condition, bool) 
 					col.add(joinPath(path, "within_days"), "%d geçersiz; %d ile %d arasında olmalı (tüm zamanlar için alanı kaldırın)", n, MinWithinDays, MaxWithinDays)
 				}
 				c.WithinDays = n
+			}
+		}
+		// category is optional; null means purchases in any category.
+		if raw, present := obj["category"]; present && !isNull(raw) {
+			c.Category, _ = str(col, joinPath(path, "category"), raw)
+			if c.Category == "" && len(col.errs) == before {
+				col.add(joinPath(path, "category"), "boş olamaz; tüm kategoriler için alanı kaldırın")
 			}
 		}
 	default:

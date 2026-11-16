@@ -32,6 +32,8 @@ export interface EventCondition {
   exists: boolean
   /** At least this many times; null means at least once. */
   min_count: number | null
+  /** At most this many times (and still at least once); null means no upper bound. */
+  max_count: number | null
 }
 
 export interface SignupCondition {
@@ -47,9 +49,23 @@ export interface MetricCondition {
   value: number
   /** Only purchases in the last N days; null means all time. */
   within_days: number | null
+  /** Only purchases in this category; null means all categories. */
+  category: string | null
 }
 
-export type Condition = SetCondition | AgeCondition | EventCondition | SignupCondition | MetricCondition
+export type PlainCondition = SetCondition | AgeCondition | EventCondition | SignupCondition | MetricCondition
+
+/**
+ * Plain conditions joined by their own AND / OR, inside a rule that uses the
+ * other one: "(A or B) and C". One level only; a group never holds a group.
+ */
+export interface GroupCondition {
+  type: 'group'
+  match: 'all' | 'any'
+  conditions: PlainCondition[]
+}
+
+export type Condition = PlainCondition | GroupCondition
 
 export interface Rule {
   match: 'all' | 'any'
@@ -110,7 +126,13 @@ export interface AudienceLanguage {
 export interface SegmentResponse {
   status: 'ok' | 'unsupported'
   rule?: Rule
-  description?: { summary: string; conditions: string[] }
+  description?: {
+    summary: string
+    /** One line per condition; a group is one line naming all its members. */
+    conditions: string[]
+    /** Parallel to conditions: a group in parts, null for a plain condition. Absent for a flat rule. */
+    groups?: ({ label: string; conditions: string[] } | null)[] | null
+  }
   assumptions?: Assumption[]
   audience?: Audience
   /** Languages of the reachable audience, largest first. */

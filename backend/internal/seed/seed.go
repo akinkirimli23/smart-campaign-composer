@@ -56,13 +56,54 @@ var cityWeights = []struct {
 	{"Eskişehir", 3}, {"Kayseri", 3}, {"Samsun", 3}, {"Trabzon", 2}, {"Diyarbakır", 2},
 }
 
-// Cities returns the closed set of city names present in the data.
+// otherProvinces are Turkey's remaining 66 provinces, in alphabetical order.
+// Together with cityWeights they make all 81 (DECISIONS 39).
+var otherProvinces = []string{
+	"Adıyaman", "Afyonkarahisar", "Ağrı", "Aksaray", "Amasya", "Ardahan", "Artvin", "Aydın", "Balıkesir", "Bartın",
+	"Batman", "Bayburt", "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Çanakkale", "Çankırı", "Çorum",
+	"Denizli", "Düzce", "Edirne", "Elazığ", "Erzincan", "Erzurum", "Giresun", "Gümüşhane", "Hakkari", "Hatay",
+	"Iğdır", "Isparta", "Kahramanmaraş", "Karabük", "Karaman", "Kars", "Kastamonu", "Kilis", "Kırıkkale", "Kırklareli",
+	"Kırşehir", "Kütahya", "Malatya", "Manisa", "Mardin", "Muğla", "Muş", "Nevşehir", "Niğde", "Ordu",
+	"Osmaniye", "Rize", "Sakarya", "Sinop", "Sivas", "Siirt", "Şanlıurfa", "Şırnak", "Tekirdağ", "Tokat",
+	"Tunceli", "Uşak", "Van", "Yalova", "Yozgat", "Zonguldak",
+}
+
+// resettledPercent is the share of people outside İstanbul who live in one of
+// the other provinces instead of the big city the weighted draw gave them.
+const resettledPercent = 22
+
+// Cities returns the closed set of city names present in the data: the
+// fifteen large cities first, then the other provinces.
 func Cities() []string {
-	out := make([]string, len(cityWeights))
-	for i, c := range cityWeights {
-		out[i] = c.Name
+	out := make([]string, 0, len(cityWeights)+len(otherProvinces))
+	for _, c := range cityWeights {
+		out = append(out, c.Name)
 	}
-	return out
+	return append(out, otherProvinces...)
+}
+
+// resettle moves some users to one of the other provinces.
+//
+// It is decided from the user's id and the random seed alone, without
+// drawing from the generator: every other attribute of every user stays
+// exactly what it was when the data had fifteen cities. İstanbul is left
+// untouched, so the reference numbers of the example brief (381 / 222 / 254 /
+// 58) are the same as before.
+func resettle(city string, id, randomSeed int64) string {
+	if city == cityWeights[0].Name {
+		return city
+	}
+	// splitmix64: a well-mixed number from the two inputs.
+	h := uint64(id)*0x9E3779B97F4A7C15 + uint64(randomSeed)
+	h ^= h >> 30
+	h *= 0xBF58476D1CE4E5B9
+	h ^= h >> 27
+	h *= 0x94D049BB133111EB
+	h ^= h >> 31
+	if h%100 >= resettledPercent {
+		return city
+	}
+	return otherProvinces[(h/100)%uint64(len(otherProvinces))]
 }
 
 var (
@@ -104,6 +145,7 @@ func Generate(count int, randomSeed int64, now time.Time) ([]User, []Event) {
 
 	for i := 1; i <= count; i++ {
 		u := User{ID: int64(i), City: pickCity()}
+		u.City = resettle(u.City, u.ID, randomSeed)
 
 		u.Language = "tr"
 		if r.Float64() < 0.10 {

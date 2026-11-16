@@ -121,6 +121,9 @@ değeri reddeder.
 bu durumu sessizce sıfır kişilik bir kitleye dönüştürmek yerine açık bir doğrulama hatasına
 çevirir; bu hata Claude'a geri verilip düzeltmesi istenebilir.
 
+**Güncelleme (15 Kasım, karar 39).** Şehir kümesi 15'ten 81 ile çıktı. Karar aynı: küme hâlâ
+kapalı ve `seed.Cities()` tek kaynağı; yalnızca daha büyük.
+
 ---
 
 ## 8. Migration'lar binary'ye gömülü, advisory lock ile korunuyor
@@ -241,6 +244,11 @@ kampanyaya böler.
 
 **Ne zaman değişir.** İç içe mantık gerçekten gerekirse tek seviye grup eklenir (koşul listesi
 yerine grup listesi); bu hâlâ özyinelemesiz bir şemadır.
+
+**Güncelleme (15 Kasım).** "Düz liste" kısmı karar 38 ile bir adım genişledi: kural artık tek
+seviye grup içerebilir. Bu kararın gerekçeleri (kapalı kümeler, tipli koşullar, modelin serbest
+metin değil yapı üretmesi) aynen geçerli; değişen yalnızca VE ile VEYA'nın tek kuralda birlikte
+kullanılabilmesi.
 
 ---
 
@@ -1312,3 +1320,227 @@ kişi "başarısız" mı sayılır, yoksa hiç mi görünmez? Yanıt, hangi kamp
 - "Atlandı" yalnızca arada kalan mesaj içindir: çıkma anında başka bir kampanyanın (örneğin
   önceden zamanlanmış) mesajı kuyruktaysa gönderilmez ve o kampanyada böyle görünür.
 - Hepsi kanal bazındadır: SMS'ten çıkan kişi email kanalında olağan alıcıdır.
+
+---
+
+## 38. Kuralda tek seviye grup: "(A veya B) ve C" ifade edilebilir
+
+**Bağlam.** Kural düz bir listeydi ve tek bir bağlaç taşıyordu (13): koşulların ya hepsi ya
+herhangi biri. İkisi karıştırılamıyordu; "İstanbul'da yaşayan **ve** (sepete ekleyen **veya**
+1000 TL üzeri harcayan)" gibi sıradan bir brief "desteklenmiyor" yanıtı alıyordu. Bu, karar 20'de
+bilerek ertelenmişti. Üç seçenek konuşuldu.
+
+| | A: Tek seviye grup | B: Tam ağaç | C: Yapma |
+|---|---|---|---|
+| Karşıladığı | "(A veya B) ve (C veya D)", "(A ve B) veya C": pazarlama brief'lerinin neredeyse tamamı | Her şey | — |
+| Model şeması | Özyineleme yok | Özyinelemeli; hata ihtimali daha yüksek | Değişmez |
+| Açıklama ve form | İki seviye okunur kalır | Derinleştikçe okunmaz | Değişmez |
+
+**Karar: A.** Beşinci bir koşul tipi eklendi: `group`. Bir grup, kendi bağlacıyla (`match`)
+bağlanmış düz koşullardan oluşur ve kuralın tek bir koşulu sayılır.
+
+```json
+{"match": "all", "conditions": [
+  {"type": "attribute", "field": "city", "op": "in", "values": ["İstanbul"]},
+  {"type": "group", "match": "any", "conditions": [
+    {"type": "event", "event": "cart_add", "within_days": 30, "exists": true},
+    {"type": "metric", "metric": "total_spent", "op": "gte", "value": 1000}
+  ]}
+]}
+```
+
+Kurallar:
+- **Derinlik en fazla iki.** Grup içinde grup reddedilir; hem JSON'dan gelen hem Go'da kurulan
+  kuralda.
+- **Grup, kuralın kullanmadığı bağlacı kullanır.** "(A ve B) ve C" zaten "A ve B ve C"dir;
+  aynı bağlaçlı grup reddedilir. Böylece bir kuralın tek bir yazılışı olur ve pazarlamacının
+  okuduğu şey belirsiz kalmaz.
+- Bir grup en az iki koşul içerir; aynı grup iki kez yazılamaz; 10 koşul sınırı gruplardakileri
+  de sayar.
+- Çelişki ve yineleme denetimleri her liste için ayrı çalışır (kuralın kendi koşulları, her
+  grubun üyeleri). "Satın aldı" ile "satın almadı" bir VEYA grubunda yan yana durabilir; bir VE
+  listesinde duramaz.
+
+**Neden.**
+- **Yeni tip, yeni biçim değil.** Kuralın kendisi (`match` + `conditions`) aynı kaldı; düz
+  kurallar olduğu gibi geçerli. Kayıtlı kampanyalar, arayüzün gönderdiği kurallar ve bütün eski
+  testler dokunulmadan çalıştı; veri taşıma gerekmedi.
+- **SQL derleyicide küçük bir ek.** Grup, üyeleri kendi bağlacıyla birleştirilmiş parantezli bir
+  ifadedir; bağlama parametreleri aynı sayaçla devam eder. Kuraldan SQL metnine yine hiçbir şey
+  geçmez (kural 1).
+- **En güçlü güvence aynı test.** Derlenen SQL'i Go'da yazılmış bağımsız bir hesapla
+  karşılaştıran test dört gruplu kuralla genişletildi (iki yön, iki grup birden); sayılar
+  tutuyor. Elle yazılmış bir sorgu da aynı sayıyı verdi (951 kişi).
+- **Model şeması özyinelemesiz.** Grubun üyeleri için düz koşul şemaları yeniden listelenir;
+  şema modelden iki seviyeden derin bir şey isteyemez. Bir test bunu kontrol eder.
+- **Belirsizlik saklanmaz.** "A ve B veya C" noktalama olmadan iki şekilde okunur. Prompt modele
+  bir okuma seçip bunu grubun yorumu olarak yazmasını söyler; kitle ekranı "…koşullarından en az
+  biri yeterli sayıldı" notunu gösterir.
+
+**Arayüz.**
+- Kitle ekranı grubu başlığıyla ("Şunlardan en az biri") ve üyelerini alt liste olarak gösterir.
+- Kural düzenleyicisinde grup bir kutudur; içinde aynı koşul formları, "bu gruba koşul ekle" ve
+  "grubu kaldır" vardır. Grubun bağlacı sorulmaz: kuralın bağlacının tersidir ve o değişince
+  kendiliğinden döner. Teknik olmayan biri için seçilecek tek şey kalır: kuralın kendisi.
+
+**Mock LLM.** Farklı koşulları bağlayan "veya"yı eskiden reddediyordu (ondan önce sessizce "ve"
+sayıyordu, karar 36). Artık "veya"nın hemen solundaki ve sağındaki koşulu bir VEYA çifti yapar,
+kalan koşulları VE ile bırakır ve gruplamayı yorum olarak yazar. Brief'te başka koşul yoksa düz
+bir VEYA kuralı üretir. Birden fazla "veya" yine reddedilir.
+
+**Bedeli / sınırı.**
+- İki seviyeden derin istekler ("A ve (B veya (C ve D))") yine ifade edilemez ve
+  "desteklenmiyor" yanıtı alır.
+- Listeler arası çelişkiler aranmaz: kuralda "satın almadı", bir grupta "satın aldı" olabilir;
+  bu geçerli ama anlamsız olabilir. Sonuç kitle sayısında görünür.
+- Mock'un "veya" okuması kabadır: koşulların cümledeki yerine değil tanıma sırasına bakar.
+  Yorumu yazdığı için yanlış okuma görünür olur, ama doğrusu gerçek modelden beklenir.
+- Model şeması büyüdü (düz koşul şemaları iki kez geçiyor). Gerçek Claude ile denenmediği için
+  yapılandırılmış çıktının bu şemayı kabul ettiği doğrulanmadı; kabul etmezse grup üyeleri için
+  `$ref` kullanmak ilk denenecek şey.
+- Düzenleyicide bir koşul gruba sürüklenemez; kaldırıp grubun içinde yeniden eklemek gerekir.
+
+**Alternatifler.** Tam ağaç (B): her şeyi ifade eder, ama model şemasını özyinelemeli, açıklamayı
+ve formu okunmaz yapar. Yapmamak (C): en güvenlisi, ama en sık görülen brief kalıplarından biri
+desteklenmemiş kalırdı.
+
+---
+
+## 39. 81 il: veri genişler, örnek brief'in sayıları değişmez; arayüzde aranabilir seçici
+
+**Bağlam.** Veride on beş büyük şehir vardı. "Van'daki kullanıcılara" gibi bir brief
+"desteklenmiyor" yanıtı alıyordu; gerçek bir müşteri tabanında ise her ilden kullanıcı olur.
+İstek: 81 ilin hepsi olsun, ama arayüz 81 kutucukla dolmasın.
+
+**Karar.**
+1. `seed.Cities()` 81 ili döner: önce eski on beş şehir (aynı sırayla), sonra kalan 66 il.
+2. Kullanıcılar şöyle dağıtılır: ağırlıklı çekiliş aynen eskisi gibi yapılır (aynı rastgele sayı
+   tüketimi), sonra **İstanbul dışındaki** kullanıcıların %22'si kalan 66 ilden birine taşınır.
+   Kimin taşınacağı ve nereye gideceği yalnızca kullanıcı numarası ile `SEED_RANDOM`'dan
+   hesaplanan bir özetle belirlenir (`seed.resettle`); üreteçten ek sayı çekilmez.
+3. Kural düzenleyicisinde uzun kümeler (12'den fazla seçenek) kutucuk yerine aranabilir seçiciyle
+   gösterilir (`OptionPicker.vue`): seçilenler kaldırılabilir etiketler olarak durur, altında
+   arama kutusu ve yazmadan önce ilk on beş (büyük şehirler) öneri olarak görünür. Arama büyük /
+   küçük harf ve Türkçe karakter ayırmaz ("sanli" Şanlıurfa'yı bulur), adı sorguyla başlayanlar
+   önce gelir, Enter ilk eşleşmeyi seçer.
+4. Mock LLM şehirleri alt dizi olarak değil **kelime** olarak tanır.
+
+**Neden böyle.**
+- **Referans sayılar korunur.** Örnek brief İstanbul'u hedefler ve 381 / 222 / 254 / 58 verir;
+  bu sayı testlerde, CI'da, README'de ve açılış sayfasında geçer (CLAUDE.md kural 8). İstanbul'a
+  dokunulmadığı ve üreteçten ek sayı çekilmediği için her kullanıcının diğer bütün özellikleri
+  (ad, izinler, olaylar) eskisiyle bire bir aynıdır; yalnızca bazılarının şehri değişir. Bir
+  test İstanbul'da tam 1516 kişi kaldığını ve 81 ilin hepsinde kullanıcı olduğunu kontrol eder.
+- **Kapalı küme kuralı (karar 7) aynen geçerli.** Küme büyüdü ama hâlâ tek kaynaktan geliyor:
+  doğrulayıcı, model şeması, `GET /api/segments/options` ve arayüz aynı listeyi kullanır.
+  Arayüze il listesi gömülmedi.
+- **Kelime bazlı eşleştirme zorunluydu.** 81 il adıyla alt dizi araması sıradan kelimelerde il
+  bulur: "müşteri" içinde Muş, "karşı" içinde Kars, "ordusu" içinde Ordu, "bölüm" içinde Bolu.
+  Mock artık bir kelimeyi yalnızca adın kendisi, kesme işaretinden önceki ad ("Muş'taki") ya da
+  ad + birkaç belirli ek ("vandaki", "Ordulu", "İstanbulluları") ise şehir sayar. Halk arasındaki
+  adlar da tanınır (Antep, Urfa, Maraş, Afyon, İzmit, Antakya, Adapazarı, İçel).
+- **Seçici, kutucuk duvarından iyi.** 81 kutucuk formun yarısını kaplardı. Seçilenler her zaman
+  görünür, geri kalanı iki üç harfle bulunur. Kısa kümeler (dil, cinsiyet) kutucuk olarak kaldı;
+  eşik seçenek sayısıdır, alan adı değil.
+
+**Bedeli / sınırı.**
+- Diğer illerde kişi sayısı azdır (5000 kullanıcıda il başına ortalama 11-12 kişi). Küçük bir ili
+  hedefleyen kampanya küçük kitle verir; bu gerçekçi, ama demo için büyük şehirler daha gösterişli.
+- Mock'un "veride olmayan şehir" reddi kaldırıldı: bütün iller veride olduğu için bulacağı bir
+  şey kalmadı. İl olmayan bir yer adı ("Lefkoşa", "Kadıköy") mock tarafından eskiden de
+  tanınmıyordu, yine tanınmaz; gerçek modelde şema kapalı küme olduğu için böyle bir değer
+  doğrulamada reddedilir.
+- Daha önce seed edilmiş bir veritabanı eski on beş şehirle kalır; `make reset` ile yeniden
+  seed edilmelidir (seed, kullanıcı varsa hiçbir şey yapmaz).
+
+**Alternatifler.**
+- *Ağırlık tablosuna 66 il eklemek.* En basit kod, ama çekilişin sonuçları kayar: İstanbul'daki
+  kişiler ve dolayısıyla 381 / 222 / 254 / 58 değişir; bütün referans sayılar, CI ve dokümanlar
+  yeniden yazılmak zorunda kalırdı. Teslime iki gün kala gereksiz risk.
+- *İlleri yalnızca kümeye ekleyip kullanıcı atamamak.* Seçilebilir ama sıfır kişilik iller
+  olurdu; "kümede olan değer veride vardır" beklentisini bozar.
+
+## Ek not (karar 38'e): mock'un "veya" okuması ve reddettikleri (15 Kasım)
+
+Sınırları zorlayan brief'ler denenirken mock'ta üç sessiz hata bulundu ve düzeltildi; hepsi
+karar 36'daki ilkenin uygulamasıdır (ifade et ya da reddet, sessizce atma):
+- "veya" artık tanıma sırasına göre değil, cümlede **hemen solundaki ve sağındaki** koşulu
+  bağlar (karar 38'in "Bedeli" bölümündeki "tanıma sırasına bakar" notu artık geçerli değil).
+- Brief iki ayrı dönem taşıyorsa ("son 90 günde … son 30 günde …") reddedilir; mock tek dönem
+  tanır ve ilkini hepsine uygulamak ikinci koşulun anlamını değiştirirdi.
+- Alışverişten söz eden ama tanınmayan bir ifade ("elektronik alışverişi olanlar") reddedilir;
+  eskiden koşul sessizce düşüyordu. "alışveriş yaptı / satın aldı / almadı" kalıpları eklendi.
+- "veya"nın **iki yanında da ayrı bir şehir** varsa brief iki ayrı kitle olarak okunur:
+  "İstanbul'da yaşayan ve son 30 günde sepete ekleyen veya Ankara'da yaşayan ve 1000 TL üzeri
+  harcayan" → (İstanbul VE sepet) VEYA (Ankara VE harcama). Eskiden iki şehir tek koşulda
+  birleşiyor, "veya" yalnızca yanındaki iki koşulu bağlıyordu: İstanbul'da 1000 TL harcayan da
+  kitleye giriyordu. Her yan kendi başına eşleştirilir (`clauses`); okuma yorum olarak gösterilir.
+  Çalışan sistemde sayı, iki yarının ayrı sayımlarının toplamına eşit çıktı (733 + 245 = 978).
+  Şehir yalnızca bir yanda ise eski okuma geçerlidir: şehir VE (A VEYA B).
+
+---
+
+## 40. Koşul çeşitleri: "en fazla N kez", ortalama sipariş tutarı, metriklerde kategori
+
+**Bağlam.** Kural düzenleyicisinde "Davranış" yalnızca yaptı / yapmadı / en az N kez,
+"Harcama / sipariş" yalnızca toplam harcama ve sipariş sayısı sunuyordu. İstek: seçenekleri
+çeşitlendirmek. Karar 25 bu üçünü ("en fazla N kez", kategori bazında harcama) bilerek dışarıda
+bırakmıştı; model için "desteklenmiyor" listesindeydiler.
+
+**Karar.** Yeni olay türü eklemek yerine mevcut veriden (sepete ekleme ve satın alma olayları)
+üç seçenek:
+1. **`max_count` (olay koşulu).** "Yaptı" ile birlikte: olay dönemde en fazla N kez olmuş, yine
+   de en az bir kez (ya da `min_count` kez). "Yalnızca bir kez alışveriş yapanlar" = `max_count: 1`.
+2. **`avg_order_value` (metrik).** Satın almaların ortalama tutarı, TL.
+3. **`category` (metrik koşulu, isteğe bağlı).** Üç metrik de tek bir kategorinin alışverişleriyle
+   sınırlanabilir: "elektronikte 2000 TL üzeri harcayanlar".
+
+**Neden bunlar.**
+- **Seed'e dokunmuyor.** Hepsi `events` tablosundaki mevcut kolonlardan (`amount`, `category`)
+  hesaplanıyor. Veri ve referans sayılar (381 / 222 / 254 / 58) aynı; migration yok.
+- **Pazarlamada karşılığı olan kalıplar.** "Tek seferlik alıcıyı ikinci siparişe taşı",
+  "sepet ortalaması yüksek olana premium ürün", "bir kategoride çok harcayana aksesuar".
+- **Biçim geriye uyumlu.** Üç alan da isteğe bağlı; eski kurallar ve kayıtlı kampanyalar olduğu
+  gibi geçerli.
+
+**Anlamlar (savunulacak ayrıntılar).**
+- *"En fazla N kez" sıfırı kapsamaz.* `exists: true` ile kullanılır ve "yaptı, ama en fazla N kez"
+  demektir (SQL: sayı `BETWEEN max(min_count, 1) AND max_count`). Hiç yapmayanlar için zaten
+  `exists: false` var; ikisini karıştırmak "en fazla 2 kez alışveriş yapanlar" kitlesine hiç
+  alışveriş yapmamış binlerce kişiyi sessizce katardı. `exists: false` ile sayı vermek ve
+  `max_count < min_count` doğrulama hatasıdır.
+- *Alışverişi olmayanın ortalaması yoktur.* Böyle bir kullanıcı ortalama koşuluna ne "en az" ne
+  "en fazla" yönünde girer. SQL'de `avg` NULL döner ve `COALESCE(…, false)` ile açıkça "eşleşmez"
+  yapılır (VEYA içinde de). Aksi halde "ortalaması en fazla 300 TL" koşulu hiç alışveriş
+  yapmamış herkesi seçerdi. Form bunu koşulun altında not olarak söyler.
+- *Kategorili metrik ayrı bir büyüklüktür.* "Kitapta en az 500 TL" ile "modada en az 900 TL"
+  aynı kuralda birlikte durabilir; aynı metrik + dönem + kategori için aynı sınır iki kez
+  verilirse yine reddedilir.
+- Açıklama satırları kuraldan türetilir: "Son 90 günde yalnızca 1 kez satın alma yaptı",
+  "Son 30 günde moda kategorisinde 2–5 kez sepete ürün ekledi", "Toplam harcama (elektronik
+  kategorisinde): en az 2000 TL (tüm zamanlar)".
+
+**Kural 1 korunuyor.** Yeni alan adları ve kategori değerleri beyaz listeden gelir, eşikler ve
+kategori bağlama parametresidir; bir test derlenen SQL metninde hiçbirinin geçmediğini kontrol
+eder.
+
+**Doğrulama.** Derlenen SQL'i Go'da yazılmış bağımsız hesapla karşılaştıran teste altı kural
+eklendi (tam bir kez, 2–4 kez, ortalama iki yönde, kategorili toplam, VEYA içinde ortalama).
+Çalışan sistemde dört koşul elle yazılmış SQL ile aynı sayıyı verdi (1259, 2669, 68, 631).
+
+**Mock LLM.** "en fazla N kez", "yalnızca / sadece bir kez", "ortalama sepet / sipariş tutarı"
+kalıplarını tanır ("ortalama sepet tutarı"ndaki "sepet" artık sepete ekleme sayılmaz). Brief'te
+kategori var ama onu taşıyacak sepet / satın alma koşulu yoksa kategori harcama koşuluna
+verilir ve bu bir yorum olarak gösterilir; eskiden kategori sessizce düşüyordu.
+
+**Bedeli / sınırı.**
+- Model şeması üç alan büyüdü; gerçek Claude ile denenmedi (diğer şema değişiklikleri gibi).
+- Ortalama yalnızca tam TL eşikle karşılaştırılır (diğer metrikler gibi).
+- Yeni davranış türü yok: ürün görüntüleme, favoriye ekleme gibi olaylar veride bulunmuyor.
+
+**Alternatif.** Seed'e yeni olay türleri eklemek (ürün görüntüleme, favori): Davranış listesini
+gerçekten uzatırdı, ama veri üretimini değiştirir, referans sayıları korumak için özel bir yol
+ister ve teslime iki gün kala en riskli seçenekti. "Sonraya bırakılanlar"a uygun bir iş.
+
+**Güncelleme notu (karar 25).** Karar 25'in "ifade edilemeyenler" listesindeki "en fazla N kez"
+ve "kategori bazında harcama" bu kararla ifade edilebilir oldu; kesin "büyüktür" hâlâ yok.

@@ -150,7 +150,13 @@ var (
 	// for these so that path can be demoed without a real model.
 	unsupportedHints = []string{"dogum gun", "en cok", "sadik", "goruntule", "gold", "silver", "bronze", "ios", "android"}
 
-	timesRe  = regexp.MustCompile(`en az (\d+) (kez|kere|defa)`)
+	timesRe = regexp.MustCompile(`en az (\d+) (kez|kere|defa)`)
+	// "en fazla 2 kez", and "yalnızca 1 kez" / "sadece bir kere" (exactly N).
+	atMostRe = regexp.MustCompile(`en fazla (\d+) (kez|kere|defa)`)
+	onlyRe   = regexp.MustCompile(`(yalnizca|sadece|yalniz) (\d+|bir) (kez|kere|defa)`)
+	// "ortalama sipariş tutarı", "ortalama sepet tutarı": the amount that
+	// follows is an average per order, not a total.
+	avgRe    = regexp.MustCompile(`ortalama (siparis|sepet)\S*( tutar\S*)?`)
 	spentRe  = regexp.MustCompile(`(\d+)\s*(tl|lira)\S*\s+(uzeri|ustu|fazla|ve uzeri|alti|altinda|az)`)
 	ordersRe = regexp.MustCompile(`en az (\d+) siparis|(\d+)\S*\s+fazla siparis`)
 	signupRe = regexp.MustCompile(`kayit ol|uye ol|yeni uye`)
@@ -178,8 +184,8 @@ var (
 		{"elektronik", "electronics"}, {"moda", "fashion"}, {"giyim", "fashion"},
 		{"kozmetik", "cosmetics"}, {"mobilya", "home"}, {"spor", "sports"}, {"kitap", "books"},
 	}
-	notPurchased = []string{"alisveris yapmayan", "satin almayan", "alisveris yapmamis", "satin almamis", "almayan"}
-	purchased    = []string{"alisveris yapan", "satin alan", "alisveris yapmis", "satin almis"}
+	notPurchased = []string{"alisveris yapmayan", "satin almayan", "alisveris yapmamis", "satin almamis", "alisveris yapmadi", "satin almadi", "almayan"}
+	purchased    = []string{"alisveris yapan", "satin alan", "alisveris yapmis", "satin almis", "alisveris yapti", "satin aldi"}
 )
 
 func firstMessage(req llm.Request) string {
@@ -229,145 +235,271 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 
 	// A city the data does not cover must not simply be ignored: the rest of
 	// the brief would then select a much wider audience than was asked for.
-	if city, ok := unknownCity(brief, text); ok {
-		return map[string]any{
-			"kind": "unsupported",
-			"reason": fmt.Sprintf("%s sistemdeki şehirler arasında yok. Geçerli şehirler: %s.",
-				city, strings.Join(seed.Cities(), ", ")),
-			"phrases": []string{city},
+	days := 30
+	windows := map[int]string{}
+	for _, m := range windowRe.FindAllStringSubmatch(text, -1) {
+		n, _ := strconv.Atoi(m[1])
+		n *= map[string]int{"gun": 1, "hafta": 7, "ay": 30}[m[2]]
+		if len(windows) == 0 {
+			days = n
 		}
+		windows[n] = m[0]
 	}
-
-	// "A veya B" between two cities is one condition (city in A, B). Any other
-	// "or" joins different conditions, which this matcher would silently turn
-	// into "and", i.e. a different audience. Refuse instead.
-	if phrase, ok := orBetweenConditions(text); ok {
+	if len(windows) > 1 {
+		// This matcher has one window for the whole brief. Using the first for
+		// every condition would change what the second one means.
+		var phrases []string
+		for _, phrase := range windows {
+			phrases = append(phrases, original(brief, text, phrase))
+		}
+		slices.Sort(phrases)
 		return map[string]any{
 			"kind":    "unsupported",
-			"reason":  "Mock LLM \"veya\" ile bağlanan farklı koşulları ayırt edemiyor; koşulları \"ve\" ile bağlayın ya da gerçek modeli kullanın.",
-			"phrases": []string{original(brief, text, phrase)},
+			"reason":  "Mock LLM bir brief'te tek bir dönem (\"son N gün\") tanır; koşullar farklı dönemler taşıyorsa gerçek modeli kullanın.",
+			"phrases": phrases,
 		}
 	}
 
-	days := 30
-	if m := windowRe.FindStringSubmatch(text); m != nil {
-		n, _ := strconv.Atoi(m[1])
-		days = n * map[string]int{"gun": 1, "hafta": 7, "ay": 30}[m[2]]
-	}
-
-	category := ""
+	category, categoryHint := "", ""
 	for _, h := range categoryHints {
 		if strings.Contains(text, h.hint) {
-			category = h.category
+			category, categoryHint = h.category, h.hint
 			break
 		}
 	}
 
-	var conditions []segment.Condition
-	var assumptions []segment.Assumption
+	// matchIn recognises the conditions in text. It is the whole brief, or
+	// one side of an "or" with the other side blanked out, so positions still
+	// line up with the brief.
+	matchIn := func(text string) ([]segment.Condition, []segment.Assumption) {
+		var conditions []segment.Condition
+		var assumptions []segment.Assumption
 
-	var cities []string
-	for _, city := range seed.Cities() {
-		if strings.Contains(text, segment.Fold(city)) {
-			cities = append(cities, city)
+		cities := citiesIn(text)
+		if len(cities) > 0 {
+			// "İstanbul dışındaki", "Ankara hariç": everyone but these cities.
+			op := segment.OpIn
+			if excludeRe.MatchString(text) {
+				op = segment.OpNotIn
+			}
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: op, Values: cities})
 		}
-	}
-	if len(cities) > 0 {
-		// "İstanbul dışındaki", "Ankara hariç": everyone but these cities.
-		op := segment.OpIn
-		if excludeRe.MatchString(text) {
-			op = segment.OpNotIn
+		switch english, turkish := strings.Contains(text, "ingilizce"), strings.Contains(text, "turkce"); {
+		case english && !turkish:
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"en"}})
+		case turkish && !english:
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"tr"}})
 		}
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: op, Values: cities})
-	}
-	switch english, turkish := strings.Contains(text, "ingilizce"), strings.Contains(text, "turkce"); {
-	case english && !turkish:
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"en"}})
-	case turkish && !english:
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "language", Op: segment.OpIn, Values: []string{"tr"}})
-	}
-	words := wordRe.FindAllString(text, -1)
-	hasWordPrefix := func(prefix string) bool {
-		for _, w := range words {
-			if strings.HasPrefix(w, prefix) {
-				return true
+		words := wordRe.FindAllString(text, -1)
+		hasWordPrefix := func(prefix string) bool {
+			for _, w := range words {
+				if strings.HasPrefix(w, prefix) {
+					return true
+				}
+			}
+			return false
+		}
+		switch female, male := hasWordPrefix("kadin"), hasWordPrefix("erkek"); {
+		case female && !male:
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}})
+		case male && !female:
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"male"}})
+		}
+		if m := ageRe.FindStringSubmatch(text); m != nil {
+			lo, _ := strconv.Atoi(m[1])
+			hi, _ := strconv.Atoi(m[2])
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
+		} else if m := ageSideRe.FindStringSubmatch(text); m != nil {
+			// "25 yaşından büyük", "40 yaş altı": one bound; the other is the format's own.
+			age, _ := strconv.Atoi(m[1])
+			lo, hi, meaning := age+1, segment.MaxAge, fmt.Sprintf("%d yaş ve üzeri", age+1)
+			if strings.HasPrefix(m[2], "kucuk") || strings.HasPrefix(m[2], "alt") {
+				lo, hi, meaning = segment.MinAge, age-1, fmt.Sprintf("%d yaş ve altı", age-1)
+			}
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
+			assumptions = append(assumptions, segment.Assumption{
+				ConditionIndex: len(conditions) - 1, Phrase: original(brief, text, m[0]),
+				Interpretation: meaning + " olarak yorumlandı; " + strconv.Itoa(age) + " yaşın kendisi dahil değil.",
+			})
+		}
+
+		if signupRe.MatchString(text) {
+			conditions = append(conditions, segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: days})
+		}
+		average := avgRe.MatchString(text)
+		if m := spentRe.FindStringSubmatch(text); m != nil {
+			value, _ := strconv.Atoi(m[1])
+			op, bound := segment.OpGTE, "en az"
+			if strings.HasPrefix(m[3], "alt") || m[3] == "az" {
+				op, bound = segment.OpLTE, "en fazla"
+			}
+			metric, name := segment.MetricTotalSpent, "toplam harcama"
+			if average {
+				metric, name = segment.MetricAvgOrderValue, "ortalama sipariş tutarı"
+			}
+			conditions = append(conditions, segment.Condition{Type: segment.TypeMetric, Metric: metric, Op: op, Value: value})
+			assumptions = append(assumptions, segment.Assumption{
+				ConditionIndex: len(conditions) - 1, Phrase: original(brief, text, m[0]),
+				Interpretation: fmt.Sprintf("Tüm zamanlardaki %s %s %d TL olarak yorumlandı; %d TL'nin kendisi dahil.", name, bound, value, value),
+			})
+		}
+		// From here on "ortalama sepet tutarı" must not read as a cart event.
+		text = avgRe.ReplaceAllStringFunc(text, func(m string) string { return strings.Repeat(" ", len(m)) })
+		if m := ordersRe.FindStringSubmatch(text); m != nil {
+			value, _ := strconv.Atoi(m[1] + m[2])
+			if m[2] != "" {
+				value++ // "3'ten fazla" means at least 4
+			}
+			conditions = append(conditions, segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpGTE, Value: value})
+		}
+		minCount, maxCount := 0, 0
+		if m := timesRe.FindStringSubmatch(text); m != nil {
+			minCount, _ = strconv.Atoi(m[1])
+		}
+		if m := atMostRe.FindStringSubmatch(text); m != nil {
+			maxCount, _ = strconv.Atoi(m[1])
+		}
+		if m := onlyRe.FindStringSubmatch(text); m != nil {
+			n := 1
+			if m[2] != "bir" {
+				n, _ = strconv.Atoi(m[2])
+			}
+			maxCount = n
+			if n > 1 {
+				minCount = n
 			}
 		}
-		return false
-	}
-	switch female, male := hasWordPrefix("kadin"), hasWordPrefix("erkek"); {
-	case female && !male:
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}})
-	case male && !female:
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"male"}})
-	}
-	if m := ageRe.FindStringSubmatch(text); m != nil {
-		lo, _ := strconv.Atoi(m[1])
-		hi, _ := strconv.Atoi(m[2])
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
-	} else if m := ageSideRe.FindStringSubmatch(text); m != nil {
-		// "25 yaşından büyük", "40 yaş altı": one bound; the other is the format's own.
-		age, _ := strconv.Atoi(m[1])
-		lo, hi, meaning := age+1, segment.MaxAge, fmt.Sprintf("%d yaş ve üzeri", age+1)
-		if strings.HasPrefix(m[2], "kucuk") || strings.HasPrefix(m[2], "alt") {
-			lo, hi, meaning = segment.MinAge, age-1, fmt.Sprintf("%d yaş ve altı", age-1)
+
+		hasCart := strings.Contains(text, "sepet")
+		if hasCart {
+			conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: category, WithinDays: days, Exists: true, MinCount: minCount, MaxCount: maxCount})
 		}
-		conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: segment.FieldAge, Op: segment.OpBetween, Min: lo, Max: hi})
-		assumptions = append(assumptions, segment.Assumption{
-			ConditionIndex: len(conditions) - 1, Phrase: original(brief, text, m[0]),
-			Interpretation: meaning + " olarak yorumlandı; " + strconv.Itoa(age) + " yaşın kendisi dahil değil.",
-		})
+		if phrase, ok := firstMatch(text, notPurchased); ok {
+			phrase = original(brief, text, phrase)
+			conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: days, Exists: false})
+			interpretation := fmt.Sprintf("Son %d günde hiç satın alma yapmamış olarak yorumlandı.", days)
+			if hasCart {
+				interpretation = fmt.Sprintf("Son %d günde hiç satın alma yapmamış olarak yorumlandı; sepete eklenen ürünün sonradan alınıp alınmadığına bakılmıyor.", days)
+			}
+			assumptions = append(assumptions, segment.Assumption{ConditionIndex: len(conditions) - 1, Phrase: phrase, Interpretation: interpretation})
+		} else if _, ok := firstMatch(text, purchased); ok {
+			cat := category
+			if hasCart {
+				cat = "" // the category hint already went to the cart condition
+			}
+			count, most := minCount, maxCount
+			if hasCart {
+				count, most = 0, 0 // "en az N kez" already went to the cart condition
+			}
+			conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "purchase", Category: cat, WithinDays: days, Exists: true, MinCount: count, MaxCount: most})
+		}
+
+		// A category with no cart or purchase condition to carry it belongs to
+		// the spend / order figures: "elektronikte 2000 TL üzeri harcayanlar".
+		if category != "" {
+			carried := false
+			for _, c := range conditions {
+				carried = carried || (c.Type == segment.TypeEvent && c.Category == category)
+			}
+			for i := range conditions {
+				if carried || conditions[i].Type != segment.TypeMetric {
+					continue
+				}
+				conditions[i].Category = category
+				line := segment.Describe(segment.Rule{Match: segment.MatchAll, Conditions: conditions[i : i+1]}).Conditions[0]
+				assumptions = append(assumptions, segment.Assumption{
+					ConditionIndex: i, Phrase: original(brief, text, categoryHint),
+					Interpretation: "Yalnızca bu kategorideki alışverişler sayıldı: " + line + ".",
+				})
+			}
+		}
+		return conditions, assumptions
 	}
 
-	if signupRe.MatchString(text) {
-		conditions = append(conditions, segment.Condition{Type: segment.TypeSignup, Op: segment.OpWithin, Days: days})
-	}
-	if m := spentRe.FindStringSubmatch(text); m != nil {
-		value, _ := strconv.Atoi(m[1])
-		op, bound := segment.OpGTE, "en az"
-		if strings.HasPrefix(m[3], "alt") || m[3] == "az" {
-			op, bound = segment.OpLTE, "en fazla"
+	match := segment.MatchAll
+	conditions, assumptions := matchIn(text)
+
+	// "A veya B" between two cities is one condition (city in A, B). Any other
+	// "or" joins different conditions. Treating it as "and" would select a
+	// different audience, so it becomes what it says: an "or" of the condition
+	// just before it and the one just after it (DECISIONS 38).
+	if ors := orsBetweenConditions(text); len(ors) > 1 {
+		return map[string]any{
+			"kind":    "unsupported",
+			"reason":  "Mock LLM bir brief'te farklı koşulları bağlayan tek bir \"veya\" tanır; birden fazlası için gerçek modeli kullanın.",
+			"phrases": []string{original(brief, text, ors[1].phrase)},
 		}
-		conditions = append(conditions, segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: op, Value: value})
-		assumptions = append(assumptions, segment.Assumption{
-			ConditionIndex: len(conditions) - 1, Phrase: original(brief, text, m[0]),
-			Interpretation: fmt.Sprintf("Tüm zamanlardaki toplam harcama %s %d TL olarak yorumlandı; %d TL'nin kendisi dahil.", bound, value, value),
-		})
-	}
-	if m := ordersRe.FindStringSubmatch(text); m != nil {
-		value, _ := strconv.Atoi(m[1] + m[2])
-		if m[2] != "" {
-			value++ // "3'ten fazla" means at least 4
+	} else if sides, notes, ok := clauses(brief, text, ors, matchIn); ok {
+		// Each side of the "or" names its own city: two separate audiences.
+		match, conditions, assumptions = segment.MatchAny, sides, notes
+	} else if len(ors) == 1 {
+		// The pair is the recognised condition nearest before the "or" and the
+		// nearest after it, by where their words are in the sentence.
+		or := ors[0]
+		left, right := -1, -1
+		leftAt, rightAt := -1, len(text)+1
+		for i, c := range conditions {
+			switch p := positionOf(c, text); {
+			case p < 0:
+			case p < or.start && p > leftAt:
+				left, leftAt = i, p
+			case p >= or.end && p < rightAt:
+				right, rightAt = i, p
+			}
 		}
-		conditions = append(conditions, segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Op: segment.OpGTE, Value: value})
-	}
-	minCount := 0
-	if m := timesRe.FindStringSubmatch(text); m != nil {
-		minCount, _ = strconv.Atoi(m[1])
+		if left < 0 || right < 0 {
+			return map[string]any{
+				"kind":    "unsupported",
+				"reason":  "\"veya\"nın iki yanında da tanınan bir koşul olmalı; mock LLM birini bulamadı.",
+				"phrases": []string{original(brief, text, or.phrase)},
+			}
+		}
+		if len(conditions) == 2 {
+			// Nothing else in the brief: a plain "any" rule, no group needed.
+			match = segment.MatchAny
+		} else {
+			first, second := min(left, right), max(left, right)
+			either := []segment.Condition{conditions[left], conditions[right]}
+			lines := segment.Describe(segment.Rule{Match: segment.MatchAny, Conditions: either}).Conditions
+			// The group takes the place of whichever of the two came first.
+			moved := make([]int, len(conditions))
+			var grouped []segment.Condition
+			for i, c := range conditions {
+				switch i {
+				case first:
+					moved[i] = len(grouped)
+					grouped = append(grouped, segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAny, Conditions: either})
+				case second:
+					moved[i] = moved[first]
+				default:
+					moved[i] = len(grouped)
+					grouped = append(grouped, c)
+				}
+			}
+			for i := range assumptions {
+				assumptions[i].ConditionIndex = moved[assumptions[i].ConditionIndex]
+			}
+			assumptions = append(assumptions, segment.Assumption{
+				ConditionIndex: moved[first], Phrase: original(brief, text, or.phrase),
+				Interpretation: fmt.Sprintf("“%s” ile “%s” koşullarından en az biri yeterli sayıldı; diğer koşulların hepsi ayrıca sağlanmalı.", lines[0], lines[1]),
+			})
+			conditions = grouped
+		}
 	}
 
-	hasCart := strings.Contains(text, "sepet")
-	if hasCart {
-		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: category, WithinDays: days, Exists: true, MinCount: minCount})
-	}
-	if phrase, ok := firstMatch(text, notPurchased); ok {
-		phrase = original(brief, text, phrase)
-		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "purchase", WithinDays: days, Exists: false})
-		interpretation := fmt.Sprintf("Son %d günde hiç satın alma yapmamış olarak yorumlandı.", days)
-		if hasCart {
-			interpretation = fmt.Sprintf("Son %d günde hiç satın alma yapmamış olarak yorumlandı; sepete eklenen ürünün sonradan alınıp alınmadığına bakılmıyor.", days)
+	// A purchase that was mentioned but not recognised must not vanish.
+	if strings.Contains(text, "alisveris") || strings.Contains(text, "satin al") {
+		understood := false
+		for _, c := range (segment.Rule{Conditions: conditions}).Leaves() {
+			understood = understood || (c.Type == segment.TypeEvent && c.Event == "purchase")
 		}
-		assumptions = append(assumptions, segment.Assumption{ConditionIndex: len(conditions) - 1, Phrase: phrase, Interpretation: interpretation})
-	} else if _, ok := firstMatch(text, purchased); ok {
-		cat := category
-		if hasCart {
-			cat = "" // the category hint already went to the cart condition
+		if !understood {
+			return map[string]any{
+				"kind":    "unsupported",
+				"reason":  "Brief bir alışverişten söz ediyor ama mock LLM bu ifadeyi tanımadı; \"alışveriş yapan\" ya da \"satın almayan\" gibi yazın ya da gerçek modeli kullanın.",
+				"phrases": []string{},
+			}
 		}
-		count := minCount
-		if hasCart {
-			count = 0 // "en az N kez" already went to the cart condition
-		}
-		conditions = append(conditions, segment.Condition{Type: segment.TypeEvent, Event: "purchase", Category: cat, WithinDays: days, Exists: true, MinCount: count})
 	}
 
 	if len(conditions) == 0 {
@@ -382,83 +514,198 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 	}
 	return map[string]any{
 		"kind":        "rule",
-		"rule":        segment.Rule{Match: segment.MatchAll, Conditions: conditions},
+		"rule":        segment.Rule{Match: match, Conditions: conditions},
 		"assumptions": assumptions,
 		"schedule":    schedule,
 	}
 }
 
-// provinces are Turkey's provinces (and two common short names), folded. The
-// mock uses them only to notice a city that is not in the seed data.
-var provinces = strings.Fields(`adana adiyaman afyonkarahisar afyon agri aksaray amasya ankara antalya ardahan
-artvin aydin balikesir bartin batman bayburt bilecik bingol bitlis bolu burdur bursa canakkale cankiri corum
-denizli diyarbakir duzce edirne elazig erzincan erzurum eskisehir gaziantep giresun gumushane hakkari hatay
-igdir isparta istanbul izmir kahramanmaras karabuk karaman kars kastamonu kayseri kilis kirikkale kirklareli
-kirsehir kocaeli konya kutahya malatya manisa mardin mersin mugla mus nevsehir nigde ordu osmaniye rize
-sakarya samsun sanliurfa urfa siirt sinop sirnak sivas tekirdag tokat trabzon tunceli usak van yalova yozgat
-zonguldak`)
-
-// unknownCity returns the first word of the brief that names a province with
-// no users in the data, in the marketer's own spelling. A word counts only
-// when it is the name itself or the name followed by an apostrophe suffix
-// ("Elazığ'daki"), so ordinary words that merely start like a province do not.
-func unknownCity(brief, folded string) (string, bool) {
-	supported := map[string]bool{}
-	for _, c := range seed.Cities() {
-		supported[segment.Fold(c)] = true
+// clauses reads a brief whose single "or" separates two audiences, each with
+// a city of its own: "İstanbul'da sepete ekleyen veya Ankara'da 1000 TL
+// harcayan". Reading the whole sentence at once would merge the two cities
+// into one condition and lose which requirement belongs to which. Each side
+// is matched on its own and becomes one condition of an "any" rule: a group
+// when it has several conditions, the condition itself when it has one.
+func clauses(brief, text string, ors []orPhrase, matchIn func(string) ([]segment.Condition, []segment.Assumption)) ([]segment.Condition, []segment.Assumption, bool) {
+	if len(ors) != 1 {
+		return nil, nil, false
 	}
-	original := strings.Fields(strings.TrimSpace(brief))
-	words := strings.Fields(folded)
-	for i, w := range words {
-		name := strings.TrimRight(w, ".,;:!?)")
-		for _, sep := range []string{"'", "’"} {
-			if at := strings.Index(name, sep); at >= 0 {
-				name = name[:at]
-			}
+	or := ors[0]
+	// The other side is blanked, not cut, so positions still match the brief.
+	left := text[:or.start] + strings.Repeat(" ", len(text)-or.start)
+	right := strings.Repeat(" ", or.end) + text[or.end:]
+	if len(citiesIn(left)) == 0 || len(citiesIn(right)) == 0 {
+		return nil, nil, false
+	}
+	var sides []segment.Condition
+	var notes []segment.Assumption
+	var lines []string
+	several := false
+	for _, side := range []string{left, right} {
+		conditions, assumptions := matchIn(side)
+		for _, a := range assumptions {
+			a.ConditionIndex = len(sides)
+			notes = append(notes, a)
 		}
-		if supported[name] || !slices.Contains(provinces, name) {
+		lines = append(lines, strings.Join(segment.Describe(segment.Rule{Match: segment.MatchAll, Conditions: conditions}).Conditions, " + "))
+		if len(conditions) == 1 {
+			sides = append(sides, conditions[0])
 			continue
 		}
-		if i < len(original) {
-			shown := strings.TrimRight(original[i], ".,;:!?)")
-			for _, sep := range []string{"'", "’"} {
-				if at := strings.Index(shown, sep); at >= 0 {
-					shown = shown[:at]
-				}
-			}
-			return shown, true
-		}
-		return name, true
+		several = true
+		sides = append(sides, segment.Condition{Type: segment.TypeGroup, Match: segment.MatchAll, Conditions: conditions})
 	}
-	return "", false
+	if !several {
+		// Two bare cities: the ordinary reading (city in A, B) already says it.
+		return nil, nil, false
+	}
+	notes = append(notes, segment.Assumption{
+		ConditionIndex: 0, Phrase: original(brief, text, or.phrase),
+		Interpretation: fmt.Sprintf("Brief iki ayrı kitle olarak okundu: “%s” ya da “%s”. Birini sağlayan kullanıcı kitleye girer.", lines[0], lines[1]),
+	})
+	return sides, notes, true
 }
 
-// orBetweenConditions finds an "or" that does not simply join two city names.
-func orBetweenConditions(text string) (string, bool) {
-	isCity := func(word string) bool {
-		for _, city := range seed.Cities() {
-			if strings.HasPrefix(word, segment.Fold(city)) {
-				return true
+// positionOf says where in the folded brief a condition was read from, so
+// conditions can be related to the words around them. -1 when unknown.
+func positionOf(c segment.Condition, text string) int {
+	first := func(words ...string) int {
+		at := -1
+		for _, w := range words {
+			if i := strings.Index(text, w); i >= 0 && (at < 0 || i < at) {
+				at = i
 			}
 		}
-		return false
+		return at
 	}
-	words := strings.Fields(text)
-	for i, w := range words {
-		phrase, next := "", i+1
+	match := func(re *regexp.Regexp) int {
+		if loc := re.FindStringIndex(text); loc != nil {
+			return loc[0]
+		}
+		return -1
+	}
+	switch {
+	case c.Type == segment.TypeSignup:
+		return match(signupRe)
+	case c.Type == segment.TypeMetric && c.Metric != segment.MetricOrderCount:
+		return match(spentRe)
+	case c.Type == segment.TypeMetric:
+		return match(ordersRe)
+	case c.Type == segment.TypeEvent && c.Event == "cart_add":
+		return first("sepet")
+	case c.Type == segment.TypeEvent:
+		return first(append(append([]string{}, notPurchased...), purchased...)...)
+	case c.Field == segment.FieldAge:
+		if at := match(ageRe); at >= 0 {
+			return at
+		}
+		return match(ageSideRe)
+	case c.Field == "city":
+		for _, span := range wordAtRe.FindAllStringIndex(text, -1) {
+			if city := wordCity(text[span[0]:span[1]]); city != "" && slices.Contains(c.Values, city) {
+				return span[0]
+			}
+		}
+		return -1
+	case c.Field == "language":
+		return first("ingilizce", "turkce")
+	case c.Field == "gender":
+		return first("kadin", "erkek")
+	}
+	return -1
+}
+
+// cityAliases are common other names of a province, folded.
+var cityAliases = map[string]string{
+	"afyon": "Afyonkarahisar", "urfa": "Şanlıurfa", "maras": "Kahramanmaraş", "antep": "Gaziantep",
+	"izmit": "Kocaeli", "icel": "Mersin", "adapazari": "Sakarya", "antakya": "Hatay",
+}
+
+// citySuffixRe is what may follow a city name written without an apostrophe:
+// "istanbulda", "ankaradakilere", "izmirli", "istanbulluları". Bare vowels
+// and "-luk" are left out on purpose, so "karşı" is not Kars, "müşteri" is
+// not Muş and "musluk" is not either.
+var citySuffixRe = regexp.MustCompile(`^([dt][ae]|[dt][ae]ki[a-z]*|[dt][ae]n|l[iu]|l[iu]y[aeiu]|l[iu]l[ae]r[a-z]{0,4})$`)
+
+var cityByFold = func() map[string]string {
+	out := map[string]string{}
+	for _, city := range seed.Cities() {
+		out[segment.Fold(city)] = city
+	}
+	for alias, city := range cityAliases {
+		out[alias] = city
+	}
+	return out
+}()
+
+// wordCity returns the city a folded word names, or "". With 81 provinces a
+// substring search would find Muş in "müşteri" and Ordu in "ordusu", so a
+// word counts only when it is the name itself, the name before an
+// apostrophe, or the name with one of a few suffixes.
+func wordCity(word string) string {
+	w := strings.Trim(word, ".,;:!?()\"")
+	if i := strings.IndexAny(w, "'’"); i >= 0 {
+		return cityByFold[w[:i]]
+	}
+	if city, ok := cityByFold[w]; ok {
+		return city
+	}
+	best := ""
+	for name := range cityByFold {
+		if len(name) > len(best) && strings.HasPrefix(w, name) && citySuffixRe.MatchString(w[len(name):]) {
+			best = name
+		}
+	}
+	return cityByFold[best]
+}
+
+// citiesIn lists the cities a folded text names, in the order of the data.
+func citiesIn(text string) []string {
+	named := map[string]bool{}
+	for _, w := range strings.Fields(text) {
+		if city := wordCity(w); city != "" {
+			named[city] = true
+		}
+	}
+	var out []string
+	for _, city := range seed.Cities() {
+		if named[city] {
+			out = append(out, city)
+		}
+	}
+	return out
+}
+
+// orPhrase is an "or" in the brief that joins two different conditions.
+type orPhrase struct {
+	phrase     string
+	start, end int // byte offsets in the folded text
+}
+
+var wordAtRe = regexp.MustCompile(`\S+`)
+
+// orsBetweenConditions finds every "veya" / "ya da" that is not between two
+// cities (which is a single condition: city in A, B).
+func orsBetweenConditions(text string) []orPhrase {
+	isCity := func(word string) bool { return wordCity(word) != "" }
+	spans := wordAtRe.FindAllStringIndex(text, -1)
+	word := func(i int) string { return text[spans[i][0]:spans[i][1]] }
+	var found []orPhrase
+	for i := range spans {
+		or, next := orPhrase{start: spans[i][0]}, i+1
 		switch {
-		case w == "veya":
-			phrase = "veya"
-		case w == "ya" && i+1 < len(words) && words[i+1] == "da":
-			phrase, next = "ya da", i+2
+		case word(i) == "veya":
+			or.phrase, or.end = "veya", spans[i][1]
+		case word(i) == "ya" && i+1 < len(spans) && word(i+1) == "da":
+			or.phrase, or.end, next = "ya da", spans[i+1][1], i+2
 		default:
 			continue
 		}
-		if i == 0 || next >= len(words) || !isCity(words[i-1]) || !isCity(words[next]) {
-			return phrase, true
+		if i == 0 || next >= len(spans) || !isCity(word(i-1)) || !isCity(word(next)) {
+			found = append(found, or)
 		}
 	}
-	return "", false
+	return found
 }
 
 func firstMatch(text string, phrases []string) (string, bool) {

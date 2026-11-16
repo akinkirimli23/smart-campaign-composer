@@ -155,8 +155,8 @@ func TestSegmentOptionsMatchTheValidator(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &opts); err != nil {
 		t.Fatal(err)
 	}
-	if len(opts.Cities) != 15 || len(opts.Categories) != 6 || len(opts.Languages) != 2 || len(opts.Genders) != 2 ||
-		len(opts.Events) != 2 || len(opts.Metrics) != 2 {
+	if len(opts.Cities) != 81 || len(opts.Categories) != 6 || len(opts.Languages) != 2 || len(opts.Genders) != 2 ||
+		len(opts.Events) != 2 || len(opts.Metrics) != 3 {
 		t.Fatalf("unexpected option counts: %+v", opts)
 	}
 	if opts.Limits.MaxWithinDays != 365 || opts.Limits.MaxConditions != 10 || opts.Limits.MaxSpent != 1000000 {

@@ -35,7 +35,7 @@ type Options struct {
 
 var (
 	eventLabels  = map[string]string{"cart_add": "Sepete ürün ekleme", "purchase": "Satın alma"}
-	metricLabels = map[string]string{MetricTotalSpent: "Toplam harcama (TL)", MetricOrderCount: "Sipariş sayısı"}
+	metricLabels = map[string]string{MetricTotalSpent: "Toplam harcama (TL)", MetricOrderCount: "Sipariş sayısı", MetricAvgOrderValue: "Ortalama sipariş tutarı (TL)"}
 )
 
 // RuleOptions returns the values and bounds a rule may use.

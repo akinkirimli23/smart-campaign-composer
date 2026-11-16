@@ -1,7 +1,9 @@
 // Package segment defines the audience rule an LLM may propose, validates it
 // and compiles it to parameterised SQL.
 //
-// The rule is a flat list of typed conditions (DECISIONS 13). Nothing the LLM
+// The rule is a list of typed conditions (DECISIONS 13), one of which may be a
+// group of plain conditions with its own AND / OR (DECISIONS 38): exactly one
+// level of nesting, never more. Nothing the LLM
 // or a user writes is ever concatenated into SQL: field names and operators are
 // looked up in the tables below, and every value travels as a bind parameter.
 package segment
@@ -15,15 +17,17 @@ import (
 // Limits enforced by Validate. The LLM-facing JSON schema cannot express
 // numeric or array bounds, so the backend is the only place they are checked.
 const (
-	MaxConditions = 10
-	MinWithinDays = 1
-	MaxWithinDays = 365
-	MinAge        = 0
-	MaxAge        = 120
-	MaxMinCount   = 100     // "at least N times"
-	MaxSignupDays = 3650    // ten years
-	MaxSpent      = 1000000 // TL
-	MaxOrders     = 1000
+	MaxConditions = 10 // plain conditions in a rule, counting those inside groups
+	// A group of one is just that condition; it has to join at least two.
+	MinGroupConditions = 2
+	MinWithinDays      = 1
+	MaxWithinDays      = 365
+	MinAge             = 0
+	MaxAge             = 120
+	MaxMinCount        = 100     // "at least N times"
+	MaxSignupDays      = 3650    // ten years
+	MaxSpent           = 1000000 // TL
+	MaxOrders          = 1000
 )
 
 type Match string
@@ -38,6 +42,9 @@ const (
 	TypeEvent     = "event"
 	TypeSignup    = "signup"
 	TypeMetric    = "metric"
+	// TypeGroup is a condition made of plain conditions joined by its own
+	// match: "(A or B)" inside a rule that is otherwise "and".
+	TypeGroup = "group"
 
 	OpIn      = "in"
 	OpNotIn   = "not_in"
@@ -54,6 +61,9 @@ const (
 	// Metrics are computed from purchase events (DECISIONS 25).
 	MetricTotalSpent = "total_spent" // sum of purchase amounts, TL
 	MetricOrderCount = "order_count" // number of purchases
+	// MetricAvgOrderValue is the mean purchase amount, TL. It is undefined for
+	// a user without purchases: such a user matches neither bound.
+	MetricAvgOrderValue = "avg_order_value"
 
 	// FieldAge is the only attribute that is a range rather than a closed set.
 	// It is derived from birth_year so the LLM never does date arithmetic.
@@ -66,11 +76,16 @@ type Rule struct {
 	Conditions []Condition `json:"conditions"`
 }
 
-// Condition is one of four variants (attribute, event, signup, metric), told
-// apart by Type. Only the fields of that variant are meaningful; Parse rejects
-// JSON that sets a field belonging to another variant.
+// Condition is one of five variants (attribute, event, signup, metric, group),
+// told apart by Type. Only the fields of that variant are meaningful; Parse
+// rejects JSON that sets a field belonging to another variant.
 type Condition struct {
 	Type string
+
+	// Group variant: Conditions joined by Match. They are plain conditions;
+	// a group inside a group is rejected.
+	Match      Match
+	Conditions []Condition
 
 	// Attribute variant.
 	Field  string
@@ -87,12 +102,17 @@ type Condition struct {
 	// MinCount: with Exists, the event happened at least this many times in
 	// the window. 0 and 1 both mean "at least once".
 	MinCount int
+	// MaxCount: with Exists, the event happened at most this many times in
+	// the window (and still at least once, or MinCount times). 0: no upper
+	// bound. "Bought exactly once" is Exists with MaxCount 1.
+	MaxCount int
 
 	// Signup variant: Op (within / older_than) and Days.
 	Days int
 
-	// Metric variant: Metric, Op (gte / lte), Value, and WithinDays where 0
-	// means "all time".
+	// Metric variant: Metric, Op (gte / lte), Value, WithinDays where 0 means
+	// "all time", and Category (shared with the event variant) where empty
+	// means purchases in any category.
 	Metric string
 	Value  int
 }
@@ -115,12 +135,12 @@ var (
 	setFieldOrder  = []string{"city", "language", "gender"}
 	attributeNames = []string{"city", "language", "gender", FieldAge}
 	eventTypes     = []string{"cart_add", "purchase"}
-	conditionTypes = []string{TypeAttribute, TypeEvent, TypeSignup, TypeMetric}
-	metricNames    = []string{MetricTotalSpent, MetricOrderCount}
+	conditionTypes = []string{TypeAttribute, TypeEvent, TypeSignup, TypeMetric, TypeGroup}
+	metricNames    = []string{MetricTotalSpent, MetricOrderCount, MetricAvgOrderValue}
 )
 
 // maxMetricValue is the largest threshold that makes sense per metric.
-var maxMetricValue = map[string]int{MetricTotalSpent: MaxSpent, MetricOrderCount: MaxOrders}
+var maxMetricValue = map[string]int{MetricTotalSpent: MaxSpent, MetricOrderCount: MaxOrders, MetricAvgOrderValue: MaxSpent}
 
 func categories() []string { return seed.Categories }
 
@@ -128,14 +148,27 @@ func categories() []string { return seed.Categories }
 // shape Parse accepts, so a rule round-trips through the frontend unchanged.
 func (c Condition) MarshalJSON() ([]byte, error) {
 	switch {
+	case c.Type == TypeGroup:
+		conditions := c.Conditions
+		if conditions == nil {
+			conditions = []Condition{}
+		}
+		return json.Marshal(struct {
+			Type       string      `json:"type"`
+			Match      Match       `json:"match"`
+			Conditions []Condition `json:"conditions"`
+		}{c.Type, c.Match, conditions})
 	case c.Type == TypeEvent:
 		var category *string
 		if c.Category != "" {
 			category = &c.Category
 		}
-		var minCount *int
+		var minCount, maxCount *int
 		if c.MinCount > 1 {
 			minCount = &c.MinCount
+		}
+		if c.MaxCount > 0 {
+			maxCount = &c.MaxCount
 		}
 		return json.Marshal(struct {
 			Type       string  `json:"type"`
@@ -144,7 +177,8 @@ func (c Condition) MarshalJSON() ([]byte, error) {
 			WithinDays int     `json:"within_days"`
 			Exists     bool    `json:"exists"`
 			MinCount   *int    `json:"min_count"`
-		}{c.Type, c.Event, category, c.WithinDays, c.Exists, minCount})
+			MaxCount   *int    `json:"max_count"`
+		}{c.Type, c.Event, category, c.WithinDays, c.Exists, minCount, maxCount})
 	case c.Type == TypeSignup:
 		return json.Marshal(struct {
 			Type string `json:"type"`
@@ -156,13 +190,18 @@ func (c Condition) MarshalJSON() ([]byte, error) {
 		if c.WithinDays > 0 {
 			within = &c.WithinDays
 		}
+		var category *string
+		if c.Category != "" {
+			category = &c.Category
+		}
 		return json.Marshal(struct {
-			Type       string `json:"type"`
-			Metric     string `json:"metric"`
-			Op         string `json:"op"`
-			Value      int    `json:"value"`
-			WithinDays *int   `json:"within_days"`
-		}{c.Type, c.Metric, c.Op, c.Value, within})
+			Type       string  `json:"type"`
+			Metric     string  `json:"metric"`
+			Op         string  `json:"op"`
+			Value      int     `json:"value"`
+			WithinDays *int    `json:"within_days"`
+			Category   *string `json:"category"`
+		}{c.Type, c.Metric, c.Op, c.Value, within, category})
 	case c.Field == FieldAge:
 		return json.Marshal(struct {
 			Type  string `json:"type"`
@@ -193,4 +232,18 @@ func (c *Condition) UnmarshalJSON(data []byte) error {
 		*c = parsed
 	}
 	return nil
+}
+
+// Leaves returns the plain conditions of the rule: its own, and those inside
+// its groups.
+func (r Rule) Leaves() []Condition {
+	var out []Condition
+	for _, c := range r.Conditions {
+		if c.Type == TypeGroup {
+			out = append(out, c.Conditions...)
+		} else {
+			out = append(out, c)
+		}
+	}
+	return out
 }

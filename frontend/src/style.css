@@ -202,7 +202,7 @@ button.step:hover:not(:disabled) { background: none; color: var(--accent); }
 /* --- forms --- */
 label { display: block; font-weight: 600; margin-bottom: 6px; }
 
-textarea, input[type='text'], select, input[type='number'], input[type='datetime-local'] {
+textarea, input[type='text'], input[type='search'], select, input[type='number'], input[type='datetime-local'] {
   font: inherit;
   color: inherit;
   background: var(--bg);
@@ -229,6 +229,7 @@ code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-siz
 
 .field { margin: 0 0 18px; }
 .field-error { color: var(--error); font-size: 0.88rem; margin: 6px 0 0; }
+.field-hint { color: var(--muted); font-size: 0.88rem; margin: 6px 0 0; }
 
 .row { display: flex; align-items: center; gap: 12px; }
 .between { justify-content: space-between; }
@@ -372,6 +373,19 @@ button.with-icon { display: inline-flex; align-items: center; gap: 8px; }
 /* --- rule editor --- */
 .rule-editor .condition { margin: 14px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
 .rule-editor legend { padding: 0 8px; font-weight: 600; }
+/* A group of conditions: a box around the same forms, marked with the accent. */
+.rule-editor .group {
+  margin: 14px 0;
+  padding: 6px 16px 14px;
+  border: 1px solid var(--accent);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.rule-editor .group > legend { color: var(--accent); }
+.rule-editor .group .condition { background: var(--surface); }
+.conditions .members { list-style: none; margin: 6px 0 0; padding: 0 0 0 14px; border-left: 2px solid var(--accent); display: grid; gap: 4px; font-size: 1rem; }
 .rule-editor label { font-weight: 400; margin: 0; }
 .rule-editor .field > label { font-weight: 600; margin-bottom: 6px; }
 
@@ -379,6 +393,22 @@ button.with-icon { display: inline-flex; align-items: center; gap: 8px; }
 .inline label { display: inline-flex; align-items: center; gap: 6px; }
 .inline.add label { font-weight: 600; }
 
+.picker { margin: 10px 0; }
+.picked { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 10px; }
+.picked-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 14px; border: 1px solid var(--text); border-radius: 999px; background: var(--text); color: var(--bg); cursor: pointer; font: inherit; }
+.picked-chip span { opacity: 0.65; font-size: 1.1em; line-height: 1; }
+.picked-chip:hover span { opacity: 1; }
+.picker-empty { margin: 0 0 10px; color: var(--muted); font-size: 0.92rem; }
+.picker-search { width: 100%; max-width: 340px; padding: 8px 12px; }
+.picker-list { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 10px; max-height: 190px; overflow-y: auto; }
+.picker-option { padding: 4px 12px; border: 1px dashed var(--border-strong); border-radius: 999px; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 0.92rem; }
+.picker-option:hover { border-style: solid; border-color: var(--text); }
+.picker-none { color: var(--muted); font-size: 0.88rem; }
+.brief-note { display: flex; align-items: baseline; gap: 16px; margin: -8px 0 28px; padding: 14px 0 14px 18px; border-left: 2px solid var(--accent); }
+.brief-note-label { flex: none; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.brief-note-text { flex: 1; min-width: 0; margin: 0; font-family: var(--serif); font-style: italic; font-size: 1.15rem; line-height: 1.4; max-width: 72ch; overflow-wrap: anywhere; }
+.brief-note .ghost { flex: none; }
+@media (max-width: 640px) { .brief-note { flex-wrap: wrap; gap: 6px 16px; } .brief-note-text { flex-basis: 100%; order: 3; } }
 .choices { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 10px 0; }
 .choice { display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer; }
 .choice:has(input:checked) { border-color: var(--text); background: var(--text); color: var(--bg); }

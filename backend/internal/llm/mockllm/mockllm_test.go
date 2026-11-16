@@ -53,9 +53,10 @@ func TestUnsupportedBriefs(t *testing.T) {
 	for _, brief := range []string{
 		"En çok harcayan 100 müşteriye teşekkür mesajı gönder",
 		"Herkese merhaba de",
-		// "or" between different conditions must not quietly become "and".
-		"İstanbul veya Ankara'da olup sepete ekleyen ya da son 30 günde satın alanlara gönder",
-		"Kadınlara veya son 7 günde sepete ekleyenlere gönder",
+		// More than one "or" between different conditions is beyond the matcher.
+		"Kadınlara veya son 7 günde sepete ekleyenlere ya da 1000 TL üzeri harcayanlara gönder",
+		// An "or" with nothing recognisable on one side.
+		"Kadınlara veya mutlu olanlara gönder",
 	} {
 		if out := generate(t, brief); out.Unsupported == nil || out.Rule != nil {
 			t.Errorf("brief %q: want unsupported, got %+v", brief, out)
@@ -131,25 +132,21 @@ func TestStillUnsupported(t *testing.T) {
 	}
 }
 
-// A city without data is refused by name, with the list of valid ones; it is
-// never dropped, which would send the campaign to everyone else in the brief.
-func TestCityOutsideTheData(t *testing.T) {
-	for brief, city := range map[string]string{
-		"Elazığ'daki kadın kullanıcılara %10 indirim gönder":                               "Elazığ",
-		"Son 30 günde sepete ekleyen Van ve İstanbul'daki kullanıcılara hatırlatma gönder": "Van",
-		"Şanlıurfa, Ankara ve İzmir için kampanya":                                         "Şanlıurfa",
+// Every province is in the data (DECISIONS 39), so a city outside the
+// fifteen large ones is an ordinary condition.
+func TestProvincesAreCities(t *testing.T) {
+	for brief, want := range map[string][]string{
+		"Elazığ'daki kadın kullanıcılara %10 indirim gönder":                               {"Elazığ"},
+		"Son 30 günde sepete ekleyen Van ve İstanbul'daki kullanıcılara hatırlatma gönder": {"İstanbul", "Van"},
+		"Şanlıurfa, Ankara ve İzmir için kampanya":                                         {"Ankara", "İzmir", "Şanlıurfa"},
 	} {
 		out := generate(t, brief)
-		if out.Unsupported == nil || out.Rule != nil {
-			t.Errorf("brief %q: want unsupported, got %+v", brief, out.Rule)
+		if out.Rule == nil {
+			t.Errorf("brief %q: unsupported %+v", brief, out.Unsupported)
 			continue
 		}
-		if len(out.Unsupported.Phrases) != 1 || out.Unsupported.Phrases[0] != city {
-			t.Errorf("brief %q: phrases = %v, want [%s]", brief, out.Unsupported.Phrases, city)
-		}
-		if !strings.Contains(out.Unsupported.Reason, city+" sistemdeki şehirler arasında yok") ||
-			!strings.Contains(out.Unsupported.Reason, "İstanbul, Ankara") {
-			t.Errorf("brief %q: reason = %q", brief, out.Unsupported.Reason)
+		if got := out.Rule.Conditions[0]; got.Field != "city" || !reflect.DeepEqual(got.Values, want) {
+			t.Errorf("brief %q: got %+v, want %v", brief, got, want)
 		}
 	}
 
@@ -287,5 +284,217 @@ func TestOneSidedAge(t *testing.T) {
 	}
 	if out := generate(t, "Türkçe konuşan kullanıcılara kampanya gönder"); out.Rule == nil || out.Rule.Conditions[0].Values[0] != "tr" {
 		t.Errorf("turkish speakers: got %+v", out.Rule)
+	}
+}
+
+// "or" between different conditions is what it says: those two conditions
+// become an "any" pair, and the rest of the brief still has to hold. It used
+// to be refused, and before that it silently became "and".
+func TestOrBetweenConditionsBecomesAGroup(t *testing.T) {
+	out := generate(t, "İstanbul'da yaşayan ve son 30 günde sepete ekleyen veya 1000 TL üzeri harcayan kullanıcılara gönder")
+	want := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul"}},
+		{Type: segment.TypeGroup, Match: segment.MatchAny, Conditions: []segment.Condition{
+			{Type: segment.TypeEvent, Event: "cart_add", WithinDays: 30, Exists: true},
+			{Type: segment.TypeMetric, Metric: segment.MetricTotalSpent, Op: segment.OpGTE, Value: 1000},
+		}},
+	}}
+	if out.Rule == nil || !reflect.DeepEqual(*out.Rule, want) {
+		t.Fatalf("got %+v\nwant %+v", out.Rule, want)
+	}
+	// The grouping is a reading of an ambiguous sentence, so it is said out
+	// loud, on the group; the spend boundary keeps its own note there too.
+	var grouping, boundary bool
+	for _, a := range out.Assumptions {
+		if a.ConditionIndex != 1 {
+			t.Errorf("assumption on condition %d: %+v", a.ConditionIndex, a)
+		}
+		grouping = grouping || (a.Phrase == "veya" && strings.Contains(a.Interpretation, "en az biri"))
+		boundary = boundary || strings.Contains(a.Interpretation, "1000 TL")
+	}
+	if !grouping || !boundary || len(out.Assumptions) != 2 {
+		t.Errorf("assumptions = %+v", out.Assumptions)
+	}
+
+	// Conditions after the pair still apply to everyone.
+	// (One window for the whole brief: two different ones are refused.)
+	out = generate(t, "Kadınlara ya da son 7 günde üye olanlara, sepete ekleyenlere gönder")
+	if out.Rule == nil || out.Rule.Match != segment.MatchAll || len(out.Rule.Conditions) != 2 ||
+		out.Rule.Conditions[0].Type != segment.TypeGroup || out.Rule.Conditions[1].Event != "cart_add" {
+		t.Errorf("got %+v", out.Rule)
+	}
+}
+
+// With nothing else in the brief the pair is the whole rule: a plain "any".
+func TestOrBetweenTwoConditionsIsAFlatRule(t *testing.T) {
+	out := generate(t, "Kadınlara veya son 7 günde sepete ekleyenlere gönder")
+	want := segment.Rule{Match: segment.MatchAny, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}},
+		{Type: segment.TypeEvent, Event: "cart_add", WithinDays: 7, Exists: true},
+	}}
+	if out.Rule == nil || !reflect.DeepEqual(*out.Rule, want) {
+		t.Fatalf("got %+v\nwant %+v", out.Rule, want)
+	}
+}
+
+// The pair is chosen by where the words are, not by the order the matcher
+// recognises conditions in: "new members or frequent buyers, in İstanbul".
+func TestOrJoinsTheConditionsNextToIt(t *testing.T) {
+	out := generate(t, "Son 7 günde kayıt olan veya en az 5 sipariş vermiş, İstanbul'daki İngilizce konuşan kullanıcılara gönder")
+	if out.Rule == nil || out.Rule.Match != segment.MatchAll || len(out.Rule.Conditions) != 3 {
+		t.Fatalf("got %+v", out.Rule)
+	}
+	var group *segment.Condition
+	for i, c := range out.Rule.Conditions {
+		if c.Type == segment.TypeGroup {
+			group = &out.Rule.Conditions[i]
+		} else if c.Field != "city" && c.Field != "language" {
+			t.Errorf("outside the group: %+v", c)
+		}
+	}
+	if group == nil || len(group.Conditions) != 2 || group.Conditions[0].Type != segment.TypeSignup ||
+		group.Conditions[1].Metric != segment.MetricOrderCount || group.Conditions[1].Value != 5 {
+		t.Fatalf("group = %+v", group)
+	}
+}
+
+// Things the matcher used to get wrong without saying so.
+func TestRefusesWhatItCannotRead(t *testing.T) {
+	for brief, reason := range map[string]string{
+		// A purchase phrased in a way it does not know.
+		"Ankara'daki kadınlara, elektronik alışverişi olanlara kampanya gönder": "alışverişten söz ediyor",
+		// Two conditions with two different windows.
+		"Son 90 günde sepete ekleyip son 30 günde hiç alışveriş yapmayan erkeklere gönder": "tek bir dönem",
+	} {
+		out := generate(t, brief)
+		if out.Unsupported == nil || !strings.Contains(out.Unsupported.Reason, reason) {
+			t.Errorf("brief %q: got rule %+v, unsupported %+v", brief, out.Rule, out.Unsupported)
+		}
+	}
+	// "alışveriş yaptı" is now a purchase, with its category and count.
+	out := generate(t, "Son 60 günde elektronik kategorisinden en az 2 kez alışveriş yaptılarsa kadınlara kampanya gönder")
+	if out.Rule == nil || len(out.Rule.Conditions) != 2 {
+		t.Fatalf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+	if c := out.Rule.Conditions[1]; c.Event != "purchase" || c.Category != "electronics" || c.MinCount != 2 || c.WithinDays != 60 {
+		t.Errorf("purchase = %+v", c)
+	}
+}
+
+// With all 81 provinces in the data, a city is a word, not a substring:
+// ordinary words that contain a province's name must not select it.
+func TestCitiesAreWords(t *testing.T) {
+	for brief, want := range map[string][]string{
+		"Muş'taki müşterilere karşı konulmaz bir fırsat gönder":             {"Muş"},
+		"Ordulu kullanıcılara, bölümünde yeni ürünleri duyur":               {"Ordu"},
+		"vandaki ve KARSTAKİ kullanıcılara kampanya gönder":                 {"Kars", "Van"},
+		"Antep ve Urfa'daki kullanıcılara, İzmit'tekilerle birlikte gönder": {"Gaziantep", "Kocaeli", "Şanlıurfa"},
+		"istanbuldaki kadın müşterilere indirim gönder":                     {"İstanbul"},
+	} {
+		out := generate(t, brief)
+		if out.Rule == nil {
+			t.Errorf("brief %q: unsupported %+v", brief, out.Unsupported)
+			continue
+		}
+		var cities []string
+		for _, c := range out.Rule.Conditions {
+			if c.Field == "city" {
+				cities = c.Values
+			}
+		}
+		if !reflect.DeepEqual(cities, want) {
+			t.Errorf("brief %q: cities = %v, want %v", brief, cities, want)
+		}
+	}
+	// No city at all in a brief full of near misses.
+	if out := generate(t, "Müşterilere karşı ordusu olan bölümün musluk gibi ağrısız avantajlarını kadınlara duyur"); out.Rule == nil || len(out.Rule.Conditions) != 1 || out.Rule.Conditions[0].Field != "gender" {
+		t.Errorf("near misses: got %+v", out.Rule)
+	}
+}
+
+// An "or" between two audiences that each name their own city is read as
+// two clauses, not as one city list with an "or" of the nearest conditions.
+func TestOrBetweenTwoAudiences(t *testing.T) {
+	out := generate(t, "İstanbul'da yaşayan ve son 30 günde sepete ekleyen veya Ankara da yaşayan ve 1000 TL üzeri harcayan kullanıcılara gönder.")
+	if out.Rule == nil || out.Rule.Match != segment.MatchAny || len(out.Rule.Conditions) != 2 {
+		t.Fatalf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+	first, second := out.Rule.Conditions[0], out.Rule.Conditions[1]
+	if first.Type != segment.TypeGroup || first.Match != segment.MatchAll || len(first.Conditions) != 2 ||
+		!reflect.DeepEqual(first.Conditions[0].Values, []string{"İstanbul"}) || first.Conditions[1].Event != "cart_add" {
+		t.Errorf("first side = %+v", first)
+	}
+	if second.Type != segment.TypeGroup || len(second.Conditions) != 2 ||
+		!reflect.DeepEqual(second.Conditions[0].Values, []string{"Ankara"}) || second.Conditions[1].Metric != segment.MetricTotalSpent {
+		t.Errorf("second side = %+v", second)
+	}
+	// The reading is shown to the marketer.
+	said := false
+	for _, a := range out.Assumptions {
+		said = said || strings.Contains(a.Interpretation, "iki ayrı kitle")
+	}
+	if !said {
+		t.Errorf("assumptions = %+v", out.Assumptions)
+	}
+
+	// One side with a single condition stays a plain condition.
+	out = generate(t, "İzmir'deki kadınlara ya da Bursa'dakilere gönder")
+	if out.Rule == nil || out.Rule.Match != segment.MatchAny || out.Rule.Conditions[0].Type != segment.TypeGroup ||
+		!reflect.DeepEqual(out.Rule.Conditions[1].Values, []string{"Bursa"}) {
+		t.Errorf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+
+	// A city on one side only keeps the earlier reading: city AND (a OR b).
+	out = generate(t, "İstanbul'da yaşayan ve son 30 günde sepete ekleyen veya 1000 TL üzeri harcayan kullanıcılara gönder")
+	if out.Rule == nil || out.Rule.Match != segment.MatchAll || len(out.Rule.Conditions) != 2 {
+		t.Errorf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+}
+
+// Counts with an upper bound, the average order value and spend in one
+// category (DECISIONS 40).
+func TestVariety(t *testing.T) {
+	out := generate(t, "Son 90 günde yalnızca bir kez alışveriş yapan İzmirlilere ikinci sipariş indirimi gönder")
+	if out.Rule == nil || len(out.Rule.Conditions) != 2 {
+		t.Fatalf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+	if c := out.Rule.Conditions[1]; c.Event != "purchase" || !c.Exists || c.MaxCount != 1 || c.MinCount != 0 || c.WithinDays != 90 {
+		t.Errorf("only once = %+v", c)
+	}
+
+	out = generate(t, "Son 60 günde en fazla 2 kez sepete ekleyen kadınlara gönder")
+	if out.Rule == nil || out.Rule.Conditions[1].Event != "cart_add" || out.Rule.Conditions[1].MaxCount != 2 {
+		t.Errorf("at most = %+v / %+v", out.Rule, out.Unsupported)
+	}
+
+	// "sepet" in "ortalama sepet tutarı" is not a cart event.
+	out = generate(t, "Ortalama sepet tutarı 800 TL üzeri olan Ankaralılara premium koleksiyonu duyur")
+	if out.Rule == nil || len(out.Rule.Conditions) != 2 {
+		t.Fatalf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+	if c := out.Rule.Conditions[1]; c.Metric != segment.MetricAvgOrderValue || c.Op != segment.OpGTE || c.Value != 800 {
+		t.Errorf("average = %+v", c)
+	}
+
+	// A category with no event to carry it limits the spend, and says so.
+	out = generate(t, "Elektronikte 2000 TL üzeri harcayan erkeklere aksesuar kampanyası gönder")
+	if out.Rule == nil || len(out.Rule.Conditions) != 2 {
+		t.Fatalf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+	if c := out.Rule.Conditions[1]; c.Metric != segment.MetricTotalSpent || c.Category != "electronics" || c.Value != 2000 {
+		t.Errorf("category spend = %+v", c)
+	}
+	said := false
+	for _, a := range out.Assumptions {
+		said = said || strings.Contains(a.Interpretation, "Yalnızca bu kategorideki")
+	}
+	if !said {
+		t.Errorf("assumptions = %+v", out.Assumptions)
+	}
+
+	// With a purchase condition in the brief the category stays on it.
+	out = generate(t, "Son 30 günde elektronik kategorisinden alışveriş yapan ve 1000 TL üzeri harcayan kullanıcılara gönder")
+	if out.Rule == nil || len(out.Rule.Conditions) != 2 || out.Rule.Conditions[0].Category != "" || out.Rule.Conditions[1].Category != "electronics" {
+		t.Errorf("got %+v / %+v", out.Rule, out.Unsupported)
 	}
 }
