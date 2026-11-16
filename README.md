@@ -8,6 +8,28 @@ kullanıcılardır, gönderim bu repodaki mock provider'a yapılır.
 - Kararlar ve gerekçeleri: [DECISIONS.md](DECISIONS.md)
 - Claude ile çalışma kayıtları: [ai-sessions/](ai-sessions/)
 
+## Kapsam durumu
+
+**Case'in zorunlu maddelerinin tamamı karşılandı; yetiştirilemeyen zorunlu madde yok.**
+Dört bonustan üçü yapıldı; A/B varyantları bilinçli olarak yapılmadı.
+
+| Case'teki başlık | Durum |
+|---|---|
+| Kullanıcı akışı (5 adım): kitle, akan mesajlar, insan onayı, kuyrukla gönderim, canlı izleme | Tamamı çalışıyor |
+| Kitle: kural backend'de doğrulanır, LLM çıktısı SQL olarak çalıştırılmaz; izinsiz kanala mesaj gitmez | Karşılandı |
+| İçerik: SMS ≤ 160, email konusu ≤ 80, `{{first_name}}` gibi değişkenler | Karşılandı; limit değişkenler doldurulduktan sonra ölçülür |
+| Gönderim: asenkron kuyruk, kanal başına 100/sn, aynı kişiye iki kez gitmez, retry stratejisi | Karşılandı |
+| Takip: canlı durum, metrics ve health check endpoint'leri | Karşılandı |
+| AI: yapılandırılmış (JSON) çıktı ve backend doğrulaması; testler API key olmadan, mock LLM ile | Karşılandı; gerçek Claude ile de denendi |
+| Kaynaklar: `.env` / `.env.example`, birkaç bin kullanıcılık seed, hata / gecikme / 429 döndüren mock provider | Karşılandı |
+| Teslim: `docker compose up`, `make test`, README, DECISIONS, `ai-sessions/` | Karşılandı; temiz bir kopyada denendi |
+| Bonus: zamanlanmış gönderim, kullanıcının diline göre içerik, CI | Yapıldı |
+| Bonus: A/B varyantları | Yapılmadı; nedeni [Bonuslar](#bonuslar) bölümünde |
+
+Zorunlu maddelerin ötesinde kalan sınırlar ve bilinçli olarak dışarıda bırakılanlar
+[Bilinen eksikler](#bilinen-eksikler) ve [Sonraya bırakılanlar](#sonraya-bırakılanlar)
+bölümlerinde: kimlik doğrulama, kanal seçimi, ekran bileşenlerinin otomatik testi gibi.
+
 ## Kurulum
 
 Gereken tek şey Docker (Compose v2.24+).
