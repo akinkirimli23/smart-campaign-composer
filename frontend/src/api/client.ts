@@ -120,6 +120,18 @@ export const api = {
     return getJSON<RecipientPage>(`/api/campaigns/${id}/recipients?${query}`)
   },
 
+  /**
+   * Where the recipient list is served as a CSV file: the same filters, the
+   * same masked addresses, every matching row. A plain link, so the browser
+   * downloads it.
+   */
+  recipientsCsvUrl: (id: number, filter: RecipientFilter) => {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(filter)) if (value) query.set(key, value)
+    const suffix = query.toString()
+    return `/api/campaigns/${id}/recipients.csv${suffix ? '?' + suffix : ''}`
+  },
+
   /** Stops whatever has not been sent yet; returns the campaign's status. */
   cancelCampaign: (id: number) => postJSON<CampaignStatus>(`/api/campaigns/${id}/cancel`, {}),
 

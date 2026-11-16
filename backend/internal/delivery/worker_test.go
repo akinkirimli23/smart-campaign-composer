@@ -401,9 +401,25 @@ func TestMessagesArePersonalised(t *testing.T) {
 			t.Errorf("body = %q, want %q", c.Body, want)
 		}
 		keys[c.IdempotencyKey] = true
+		// What went out is kept on the row, word for word (DECISIONS 44).
+		var kept string
+		var subject *string
+		if err := pool.QueryRow(context.Background(),
+			`SELECT sent_body, sent_subject FROM messages WHERE campaign_id = $1 AND user_id = $2 AND channel = 'sms'`, created.ID, id).Scan(&kept, &subject); err != nil {
+			t.Fatal(err)
+		}
+		if kept != c.Body || subject != nil {
+			t.Errorf("kept %q (subject %v), sent %q", kept, subject, c.Body)
+		}
 	}
 	if len(keys) != len(calls) || len(calls) != created.Queued["sms"] {
 		t.Errorf("%d calls, %d distinct keys, %d queued", len(calls), len(keys), created.Queued["sms"])
+	}
+	// A message that did not go out keeps no text.
+	var unsent int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM messages WHERE campaign_id = $1 AND status <> 'sent' AND sent_body IS NOT NULL`, created.ID).Scan(&unsent); err != nil || unsent != 0 {
+		t.Errorf("%d unsent messages carry a text, err %v", unsent, err)
 	}
 }
 

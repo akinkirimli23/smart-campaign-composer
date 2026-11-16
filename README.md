@@ -114,7 +114,8 @@ deneme ekranda görülür.
 | `GET /api/campaigns` | Son 100 kampanya, en yenisi üstte: brief, başlangıç zamanı, durum (`scheduled`, `sending`, `done`, `cancelled`) ve mesaj sayıları |
 | `GET /api/campaigns/{id}` | Gönderim durumu: kanal başına `pending` / `sending` / `sent` / `failed` / `skipped` / `cancelled` sayıları, `send_at`, `cancelled_at`, metin dilleri (`languages`) ve `done` |
 | `POST /api/campaigns/{id}/cancel` | Henüz gönderilmemiş mesajları iptal eder; gönderilenler kalır. Tekrarlanabilir |
-| `GET /api/campaigns/{id}/recipients` | Kampanyanın alıcıları: ad, şehir, kanal, dil, durum, deneme sayısı, teslim zamanı, varsa son hata. Süzgeçler: `?status=`, `?channel=`, `?language=`, `?city=`, `?q=` (adda arama), `?suppression=` (`unsubscribed` / `invalid_address`); sayfa: `?offset=`, `?limit=` (varsayılan 50, en fazla 100). `by_status` diğer süzgeçlere uyan mesajları duruma göre sayar. Dikkat isteyenler önce gelir; telefon ve email maskelenir |
+| `GET /api/campaigns/{id}/recipients` | Kampanyanın alıcıları: ad, şehir, kanal, dil, durum, deneme sayısı, teslim zamanı, varsa son hata. Süzgeçler: `?status=`, `?channel=`, `?language=`, `?city=`, `?q=` (adda arama), `?suppression=` (`unsubscribed` / `invalid_address`); sayfa: `?offset=`, `?limit=` (varsayılan 50, en fazla 100). `by_status` diğer süzgeçlere uyan mesajları duruma göre sayar. Dikkat isteyenler önce gelir; telefon ve email maskelenir. Teslim edilen mesajda `text` (email'de ayrıca `subject`): kişiye giden doldurulmuş metin |
+| `GET /api/campaigns/{id}/recipients.csv` | Aynı liste, aynı süzgeçlerle CSV dosyası olarak; sayfa yok, süzgece uyan bütün satırlar. Adresler listede olduğu gibi maskeli; giden konu ve metin dahil (DECISIONS 44) |
 | `POST /api/provider/events` | Sağlayıcının webhook'u: `{"type": "unsubscribed", "reference": "campaign-7-user-12-sms"}`. Teslim edilmiş bir mesajın alıcısı abonelikten çıktığında çağrılır; kişi o kanalda bastırılır. `X-Webhook-Secret` başlığı doğrulanır; yinelenen olay zararsızdır |
 | `GET /api/campaigns/{id}/events` | Canlı gönderim durumu, SSE: `status` (sayılar değiştikçe) ve bitince `done` |
 | `GET /metrics` | Prometheus metin formatı: `scc_campaigns`, `scc_messages{channel,status}`, `scc_provider_requests_total{channel,outcome}` |
@@ -249,12 +250,14 @@ ai-sessions/       Claude oturum export'ları
 ## Veri modeli
 
 - **users**: ad, soyad, email, telefon, şehir (81 il; DECISIONS 39), dil (`tr` / `en`), cinsiyet, doğum yılı,
-  kayıt tarihi, kanal izinleri (`email_opt_in`, `sms_opt_in`).
+  kayıt tarihi, kanal izinleri (`email_opt_in`, `sms_opt_in`), sadakat seviyesi (`loyalty_tier`: bronz / gümüş / altın;
+  toplam alışveriş tutarından türetilir, 3000 ve 8000 TL eşikleriyle; DECISIONS 45).
 - **events**: `cart_add` ve `purchase` olayları; kategori, tutar, zaman.
 - **campaigns**: brief, onaylanan kural ve içerik (JSON; içerik dil başına bir set), kitlenin hesaplandığı an, gönderimin
   başlayacağı an, iptal edildiyse iptal anı.
 - **messages**: kampanya × kullanıcı × kanal; durum (`pending`, `sending`, `sent`, `failed`,
-  `skipped`, `cancelled`), deneme sayısı, bir sonraki deneme zamanı. `UNIQUE (campaign_id, user_id, channel)`.
+  `skipped`, `cancelled`), deneme sayısı, bir sonraki deneme zamanı; teslim edildiyse kişiye giden doldurulmuş metin
+  (`sent_subject`, `sent_body`; DECISIONS 44). `UNIQUE (campaign_id, user_id, channel)`.
 
 Seed deterministiktir: aynı `SEED_USERS` / `SEED_RANDOM` her makinede aynı veriyi üretir. Olay
 zamanları seed'in yüklendiği ana göredir.
@@ -294,19 +297,38 @@ göre toplu sayılır ("N mesaj gönderilmeyecek: …"). Hepsi kanal bazındadı
 
 ## Bilinen eksikler
 
-- Brief'ten gönderim zamanı okuma yalnızca mock LLM ile denendi; mock birkaç sabit kalıbı
-  tanır (DECISIONS 28).
-- Dile göre içerik yalnızca mock LLM ile denendi; mock çeviri yapmaz, her dil için sabit
-  metnini yazar. Gerçek modelin ana metne ne kadar sadık kaldığı ve diğer dilde limitlere ne
-  sıklıkla takıldığı ölçülmedi (DECISIONS 30).
-- **Gerçek Claude ile uçtan uca deneme yapılmadı.** Geliştirme boyunca mock LLM kullanıldı.
-  İstemci (resmi Go SDK, akış, structured outputs) yerel bir sunucuya karşı test edildi, ama
-  gerçek API'nin şemaları kabul ettiği ve modelin ürettiği çıktının kalitesi doğrulanmadı.
+- **Gerçek Claude ile deneme küçük bir örnekle yapıldı (16 Kasım, `claude-opus-5-5`).**
+  Geliştirme mock LLM ile yürüdü; teslimden önce gerçek key ile şunlar denendi: beş brief'ten
+  kural (örnek brief, iki gruplu "veya", "yalnızca bir kez", kategorili harcama + "cuma sabahı"
+  gönderim zamanı, desteklenmeyen bir istek), akışlı Türkçe içerik, İngilizceye yazdırma ve
+  431 mesajlık bir kampanyanın gönderimi. Hepsi ilk denemede geçerli çıktı verdi. Bu deneme iki
+  hata buldu ve ikisi de düzeltildi (DECISIONS 41): API kural şemasını "gramer çok büyük" diye
+  reddediyordu, şema kabul edildikten sonra da model yalnızca "desteklenmiyor" diyebiliyordu.
+  Ardından sınırı zorlayan 32 brief daha denendi (iç içe gruplar, XOR, değilleme, çelişki,
+  enjeksiyon, İngilizce brief); bulunan iki hata daha düzeltildi: "3'ten fazla" tam 3'ü de
+  kapsıyordu, çelişkili brief ve "herkese gönder" ise "yaptı veya yapmadı" koşuluyla herkese
+  açılıyordu (DECISIONS 41 eki ve 42). "Herkese gönder" sonradan açık bir `everyone` işaretiyle
+  desteklendi ve dokuz brief ile gerçek modelde denendi (DECISIONS 43). Sadakat seviyesi eklenince API
+  şemayı yeniden "çok büyük" diye reddetti; kısa kümeli nitelikler modelin şemasında tek seçenekte
+  birleştirildi ve 13 brief ile yeniden denendi (DECISIONS 45). Dokuz kuralın sayısı elle yazılmış SQL ile aynı çıktı.
+  Denenmeyenler: `docs/brief-seti.md`'deki setin tamamı (o belge yalnızca mock sütununu
+  içerir) ve içerik tarafında hata geri besleme turu (kural tarafında bir kez çalıştı). Kitle
+  ekranı arayüzden gerçek modelle bir brief için görüldü; mesaj ve gönderim adımları API
+  üzerinden denendi (arayüz aynı uçları çağırır).
+- Belirsiz cümlelerde gerçek modelin okuması tutarlı değil: "son 30 günde sepete ekleyen veya
+  X TL üzeri harcayan" kalıbında dönem bir brief'te yalnızca sepete, bir diğerinde harcamaya da
+  uygulandı. Her okuma yorum olarak gösterilir; aynı cümlenin her seferinde aynı kurala
+  dönüşeceği garanti değildir.
+- Model şeması API'nin gramer sınırına yakın: yeni bir koşul alanı eklenirse gerçek API'de
+  yeniden denenmeli. Testler bunu yakalayamaz, yalnızca bilinen iki nedeni (null olabilen alan,
+  koşul şemalarının ikinci kopyası) geri gelmesin diye denetler.
 - Arayüz masaüstü genişliğinde denendi; dar ekran yalnızca tarayıcı öykünmesiyle, gerçek cihazda
   değil. Varsayılan tema krem; koyu tema üst menüdeki düğmeyle seçilir ve daha az denendi.
 - Açılış sayfası case'in istediği bir şey değil, sunum için eklendi; araç ondan bağımsız çalışır
   (DECISIONS 32).
-- Alıcı listesinde dışa aktarma yok; gönderim sürerken sayfalar arasında bir satır yer
+- Alıcı listesi CSV olarak indirilebilir, adresler maskeli (DECISIONS 44); açık adresli dosya ve
+  Excel biçimi yok. Giden metin yalnızca 16 Kasım'dan sonra teslim edilen mesajlarda saklıdır.
+  Ekrandaki listede gönderim sürerken sayfalar arasında bir satır yer
   değiştirebilir, "Yenile" düzeltir. Ad araması veritabanının harf kurallarına bağlıdır
   (DECISIONS 33).
 - Geçersiz çıkan adres bastırılır ve sonraki kampanyalara dahil edilmez (DECISIONS 35), ama
@@ -331,6 +353,8 @@ göre toplu sayılır ("N mesaj gönderilmeyecek: …"). Hepsi kanal bazındadı
 | İstek | Örnek |
 |---|---|
 | Şehir, dil, cinsiyet (dahil / hariç), yaş aralığı | "Ankara ve İzmir'deki 25-34 yaş kadınlar" |
+| Sadakat seviyesi: bronz, gümüş, altın (dahil / hariç; DECISIONS 45) | "Altın üyeler", "gümüş ve üzeri üyeler", "altın üye olmayan kadınlar" |
+| Tüm kullanıcılar, yalnızca açıkça istenince (DECISIONS 43) | "Tüm kullanıcılara gönder" |
 | Sepete ekleme / satın alma: yaptı ya da yapmadı, son N günde, isteğe bağlı kategori | "Son 7 günde elektronikte sepete ekleyenler", "60 gündür alışveriş yapmayanlar" |
 | Olay sayısı: en az, en fazla, tam (DECISIONS 40) | "Son 30 günde en az 3 kez sepete ekleyenler", "son 90 günde yalnızca bir kez alışveriş yapanlar" |
 | Üyelik tarihi | "Son 7 günde kayıt olanlar", "1 yıldan eski üyeler" |
@@ -372,13 +396,10 @@ Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
 
 | Konu | Not |
 |---|---|
-| Tüm kullanıcılara gönderim ("herkese gönder") | Koşulsuz kural bilerek yasak: modelin koşulları unutup herkese gönderim yapmasını önler. Açık bir "tüm kullanıcılar" seçeneği sonradan eklenebilir |
 | İki seviyeden derin VE / VEYA | Tek seviye grup var (DECISIONS 38); "A ve (B veya (C ve D))" gibi daha derin istekler ifade edilemez ve reddedilir |
 | Kesin "büyüktür" ("en fazla N kez" ve kategori bazında harcama DECISIONS 40 ile eklendi) | Karşılaştırmalar kapsayıcı; ayrıntılar DECISIONS 25 |
-| Ülke, sadakat seviyesi, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
+| Ülke, sadakat puanı, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
 | Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
 | Zamanlanmış kampanyayı düzenleme, alıcının yerel saatinde gönderim | Zamanlanan kampanya yalnızca iptal edilebilir; saat pazarlamacının saat dilimindedir (DECISIONS 27) |
-| Gönderilen metnin saklanması | Şablon ve kullanıcıdan yeniden üretilebilir; satırda tutulmuyor (DECISIONS 22). Alıcı listesi bu yüzden "ne gitti"yi değil, "kime gitti ve ne oldu"yu gösterir |
-| Alıcı listesini dışa aktarma (CSV / Excel) | Liste sitede canlı ve maskeli gösteriliyor; dosya kişisel veriyi dışarı taşır ve indirildiği anda eskir (DECISIONS 33) |
 | Türkçe ve İngilizce dışındaki diller | Dil kümesi kapalı ve seed'deki iki dille sınırlı; yeni dil `content.Languages` tablosuna ve `users.language` kısıtına eklenir. Çok dilde tek çağrı yerine dil grupları gerekir (DECISIONS 30) |
 | Panoda dil bazında gönderim sayıları | Pano yalnızca kampanyanın hangi dillerde metni olduğunu gösterir |

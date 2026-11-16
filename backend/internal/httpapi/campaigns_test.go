@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,29 @@ func (f *fakeCampaigns) Unsubscribe(_ context.Context, campaignID, userID int64,
 	}
 	f.unsubscribed = append(f.unsubscribed, ref)
 	return true, nil
+}
+
+func (f *fakeCampaigns) EachRecipient(_ context.Context, id int64, filter campaign.RecipientFilter, fn func(campaign.Recipient) error) error {
+	if id != 7 {
+		return campaign.ErrNotFound
+	}
+	if filter.Status == "lost" {
+		return campaign.ErrInvalidFilter
+	}
+	f.recipientsFilter = filter
+	if filter.Status == "skipped" {
+		return nil
+	}
+	sent := fixedNow
+	for _, r := range []campaign.Recipient{
+		{UserID: 12, Name: "Ayşe Yılmaz", Channel: "sms", Address: "+90••••••••12", Language: "tr", City: "İstanbul", Status: "sent", Attempts: 1, SentAt: &sent, Text: "Merhaba Ayşe, \"%30\" indirim!"},
+		{UserID: 13, Name: "=cmd()", Channel: "email", Address: "a•••@example.com", Language: "en", City: "Ankara", Status: "failed", Attempts: 5, Error: "gave up", Suppression: "invalid_address"},
+	} {
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (f *fakeCampaigns) Recipients(_ context.Context, id int64, filter campaign.RecipientFilter, limit, offset int) (campaign.RecipientPage, error) {
@@ -508,5 +532,52 @@ func TestProviderUnsubscribeEvent(t *testing.T) {
 	}
 	if len(store.unsubscribed) != 1 {
 		t.Errorf("a refused event reached the store: %v", store.unsubscribed)
+	}
+}
+
+// The export is the list on screen as a file: same filters, masked
+// addresses, the delivered text, and nothing a spreadsheet would run.
+func TestCampaignRecipientsCSV(t *testing.T) {
+	get := func(store *fakeCampaigns, path string) *httptest.ResponseRecorder {
+		srv := New(Options{DB: fakePinger{}, Campaigns: store, VarLengths: testLengths, Now: func() time.Time { return fixedNow }})
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	store := &fakeCampaigns{}
+	rec := get(store, "/api/campaigns/7/recipients.csv?channel=sms&q=ay%C5%9Fe")
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/csv") ||
+		!strings.Contains(rec.Header().Get("Content-Disposition"), `filename="kampanya-7-alicilar.csv"`) {
+		t.Fatalf("status %d, headers %v", rec.Code, rec.Header())
+	}
+	if want := (campaign.RecipientFilter{Channel: "sms", Query: "ayşe"}); store.recipientsFilter != want {
+		t.Errorf("store got %+v", store.recipientsFilter)
+	}
+	body := rec.Body.String()
+	if !strings.HasPrefix(body, "\xEF\xBB\xBF") {
+		t.Error("no byte order mark; Excel would misread Turkish letters")
+	}
+	rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(body, "\xEF\xBB\xBF"))).ReadAll()
+	if err != nil || len(rows) != 3 || len(rows[0]) != 12 {
+		t.Fatalf("rows = %v, err = %v", rows, err)
+	}
+	if r := rows[1]; r[0] != "Ayşe Yılmaz" || r[1] != "SMS" || !strings.Contains(r[2], "•") || r[5] != "Teslim edildi" || r[11] != `Merhaba Ayşe, "%30" indirim!` {
+		t.Errorf("sent row = %q", r)
+	}
+	// A name that looks like a formula is written as text.
+	if r := rows[2]; r[0] != "'=cmd()" || r[5] != "Başarısız" || r[9] != "Adres geçersiz" || r[8] != "gave up" {
+		t.Errorf("failed row = %q", r)
+	}
+
+	// No rows is still a file, with its header.
+	if rec := get(&fakeCampaigns{}, "/api/campaigns/7/recipients.csv?status=skipped"); rec.Code != http.StatusOK || strings.Count(rec.Body.String(), "\n") != 1 {
+		t.Errorf("empty export: status %d, body %q", rec.Code, rec.Body)
+	}
+	// Errors found before the first row are still JSON errors.
+	if rec := get(&fakeCampaigns{}, "/api/campaigns/8/recipients.csv"); rec.Code != http.StatusNotFound || !strings.Contains(rec.Header().Get("Content-Type"), "json") {
+		t.Errorf("unknown campaign: status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if rec := get(&fakeCampaigns{}, "/api/campaigns/7/recipients.csv?status=lost"); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad filter: status %d", rec.Code)
 	}
 }

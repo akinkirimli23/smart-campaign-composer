@@ -25,6 +25,7 @@ type SegmentGenerator interface {
 type AudienceCounter interface {
 	Count(ctx context.Context, rule segment.Rule, asOf time.Time) (audience.Counts, error)
 	Languages(ctx context.Context, rule segment.Rule, asOf time.Time) ([]audience.LanguageCount, error)
+	Tiers(ctx context.Context, rule segment.Rule, asOf time.Time) ([]audience.TierCount, error)
 }
 
 const (
@@ -40,13 +41,23 @@ type segmentResponse struct {
 	Audience    *audience.Counts     `json:"audience,omitempty"`
 	// Languages of the reachable audience, largest first: the first is the
 	// language the content is written in, the rest are localised (DECISIONS 30).
-	Languages   []segmentLanguage    `json:"languages,omitempty"`
+	Languages []segmentLanguage `json:"languages,omitempty"`
+	// Loyalty tiers of the reachable audience, lowest first, each with the
+	// name a marketer sees.
+	Loyalty     []segmentTier        `json:"loyalty,omitempty"`
 	AsOf        *time.Time           `json:"as_of,omitempty"`
 	Attempts    int                  `json:"attempts,omitempty"`
 	Unsupported *segment.Unsupported `json:"unsupported,omitempty"`
 	// Schedule is a send time read from the brief: a suggestion the UI
 	// pre-fills, never something acted on by itself.
 	Schedule *segment.Schedule `json:"schedule,omitempty"`
+}
+
+// segmentTier is one loyalty tier of the reachable audience.
+type segmentTier struct {
+	Tier      string `json:"tier"`
+	Label     string `json:"label"`
+	Reachable int    `json:"reachable"`
 }
 
 // segmentLanguage is one language of the reachable audience, with the name
@@ -172,10 +183,24 @@ func (s *Server) writeSegment(w http.ResponseWriter, r *http.Request, rule segme
 			languages[i].Label = known.Label
 		}
 	}
+	countedTiers, err := s.audience.Tiers(ctx, rule, asOf)
+	if err != nil {
+		slog.Error("audience tiers failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Kitle sayısı hesaplanamadı", nil)
+		return
+	}
+	tierLabels := map[string]string{}
+	for _, o := range segment.RuleOptions().LoyaltyTiers {
+		tierLabels[o.Value] = o.Label
+	}
+	tiers := make([]segmentTier, len(countedTiers))
+	for i, t := range countedTiers {
+		tiers[i] = segmentTier{Tier: t.Tier, Label: tierLabels[t.Tier], Reachable: t.Reachable}
+	}
 	desc := segment.Describe(rule)
 	writeJSON(w, http.StatusOK, segmentResponse{
 		Status: "ok", Rule: &rule, Description: &desc, Assumptions: assumptions,
-		Audience: &counts, Languages: languages, AsOf: &asOf, Attempts: attempts, Schedule: schedule,
+		Audience: &counts, Languages: languages, Loyalty: tiers, AsOf: &asOf, Attempts: attempts, Schedule: schedule,
 	})
 }
 

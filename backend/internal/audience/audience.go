@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/seed"
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/segment"
 )
 
@@ -61,6 +62,12 @@ func leftOut(reason string) string {
 // the people who will actually receive a text in that language.
 type LanguageCount struct {
 	Language  string `json:"language"`
+	Reachable int    `json:"reachable"`
+}
+
+// TierCount is how many reachable people of the audience hold a loyalty tier.
+type TierCount struct {
+	Tier      string `json:"tier"`
 	Reachable int    `json:"reachable"`
 }
 
@@ -122,4 +129,41 @@ func (c Counter) Languages(ctx context.Context, rule segment.Rule, asOf time.Tim
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// Tiers reports how the reachable part of the audience is spread over the
+// loyalty tiers (DECISIONS 45), one entry per tier of seed.LoyaltyTiers in
+// that order, zero included: a rule for gold members shows that it reaches no
+// one else. Like Languages it counts people who can be sent to on at least
+// one channel, so the shares are those of the people who will get a message.
+func (c Counter) Tiers(ctx context.Context, rule segment.Rule, asOf time.Time) ([]TierCount, error) {
+	q, err := segment.Compile(rule, asOf)
+	if err != nil {
+		return nil, err
+	}
+	sql := "SELECT u.loyalty_tier, count(*) FROM users u WHERE (" + q.Where + ")" +
+		" AND (" + SMSReachable + " OR " + EmailReachable + ")" +
+		" GROUP BY u.loyalty_tier"
+	rows, err := c.DB.Query(ctx, sql, q.Args...)
+	if err != nil {
+		return nil, fmt.Errorf("audience tiers: %w", err)
+	}
+	defer rows.Close()
+	counted := map[string]int{}
+	for rows.Next() {
+		var tier string
+		var n int
+		if err := rows.Scan(&tier, &n); err != nil {
+			return nil, fmt.Errorf("audience tiers: %w", err)
+		}
+		counted[tier] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]TierCount, len(seed.LoyaltyTiers))
+	for i, tier := range seed.LoyaltyTiers {
+		out[i] = TierCount{Tier: tier, Reachable: counted[tier]}
+	}
+	return out, nil
 }

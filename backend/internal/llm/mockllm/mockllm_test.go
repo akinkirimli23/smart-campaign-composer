@@ -52,7 +52,7 @@ func TestOtherBriefs(t *testing.T) {
 func TestUnsupportedBriefs(t *testing.T) {
 	for _, brief := range []string{
 		"En çok harcayan 100 müşteriye teşekkür mesajı gönder",
-		"Herkese merhaba de",
+		"Kampanyadan haberdar et",
 		// More than one "or" between different conditions is beyond the matcher.
 		"Kadınlara veya son 7 günde sepete ekleyenlere ya da 1000 TL üzeri harcayanlara gönder",
 		// An "or" with nothing recognisable on one side.
@@ -122,7 +122,7 @@ func TestCountsMetricsAndSignup(t *testing.T) {
 func TestStillUnsupported(t *testing.T) {
 	for _, brief := range []string{
 		"Son 30 günde en az 3 kez ürün görüntüleyenlere indirim gönder",
-		"Gold üyelere özel erken erişim duyurusu yap",
+		"Platin üyelere özel erken erişim duyurusu yap",
 		"Doğum günü bu hafta olanlara hediye çeki gönder",
 		"iOS kullanan İstanbullulara uygulama duyurusu yap",
 	} {
@@ -496,5 +496,58 @@ func TestVariety(t *testing.T) {
 	out = generate(t, "Son 30 günde elektronik kategorisinden alışveriş yapan ve 1000 TL üzeri harcayan kullanıcılara gönder")
 	if out.Rule == nil || len(out.Rule.Conditions) != 2 || out.Rule.Conditions[0].Category != "" || out.Rule.Conditions[1].Category != "electronics" {
 		t.Errorf("got %+v / %+v", out.Rule, out.Unsupported)
+	}
+}
+
+// Everyone only when the brief says so and says nothing else (DECISIONS 43).
+func TestEveryone(t *testing.T) {
+	for _, brief := range []string{
+		"Tüm kullanıcılara kampanya gönder",
+		"Herkese %50 indirim duyurusu yap",
+		"Bütün müşterilerimize yeni yıl kampanyasını duyur",
+	} {
+		out := generate(t, brief)
+		if out.Rule == nil || !out.Rule.Everyone || len(out.Rule.Conditions) != 0 {
+			t.Errorf("brief %q: got rule %+v, unsupported %+v", brief, out.Rule, out.Unsupported)
+		}
+	}
+	// With a condition, "herkese" only ends the sentence.
+	out := generate(t, "İstanbul'da yaşayan herkese kampanya gönder")
+	if out.Rule == nil || out.Rule.Everyone || len(out.Rule.Conditions) != 1 {
+		t.Errorf("city brief: got %+v", out.Rule)
+	}
+	// No audience named is not a request for everyone.
+	if out := generate(t, "İndirim var, duyur"); out.Rule != nil {
+		t.Errorf("no audience: got rule %+v", out.Rule)
+	}
+	// What the matcher cannot read still refuses, even next to "herkese".
+	if out := generate(t, "iOS kullananlar dahil herkese duyur"); out.Rule != nil {
+		t.Errorf("unsupported next to everyone: got rule %+v", out.Rule)
+	}
+}
+
+// Loyalty tiers are a closed-set attribute like any other (DECISIONS 45).
+func TestLoyaltyTier(t *testing.T) {
+	cases := map[string][]string{
+		"Altın üyelere özel erken erişim duyurusu yap": {"gold"},
+		"Gold üyelere kampanya gönder":                 {"gold"},
+		"Gümüş ve altın üyelere kampanya gönder":       {"silver", "gold"},
+		"Bronz seviyedeki kullanıcılara gönder":        {"bronze"},
+	}
+	for brief, want := range cases {
+		out := generate(t, brief)
+		if out.Rule == nil || len(out.Rule.Conditions) != 1 || out.Rule.Conditions[0].Field != "loyalty_tier" ||
+			out.Rule.Conditions[0].Op != segment.OpIn || !reflect.DeepEqual(out.Rule.Conditions[0].Values, want) {
+			t.Errorf("brief %q: rule %+v, unsupported %+v", brief, out.Rule, out.Unsupported)
+		}
+	}
+	// Next to another condition it is one more condition.
+	out := generate(t, "İstanbul'daki altın üyelere kampanya gönder")
+	if out.Rule == nil || len(out.Rule.Conditions) != 2 {
+		t.Errorf("city and tier: %+v", out.Rule)
+	}
+	// "Altın" on its own is not a tier ("altın günleri kampanyası").
+	if out := generate(t, "İstanbul'daki kullanıcılara altın günleri kampanyasını duyur"); out.Rule == nil || len(out.Rule.Conditions) != 1 {
+		t.Errorf("gold as a word: %+v", out.Rule)
 	}
 }

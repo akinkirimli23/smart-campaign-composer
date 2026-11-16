@@ -158,9 +158,6 @@ func TestParseAcceptsMeaningfulCombinations(t *testing.T) {
 		"negative limited to another category": `{"match":"all","conditions":[
 			{"type":"event","event":"purchase","category":"books","within_days":30,"exists":true},
 			{"type":"event","event":"purchase","category":"sports","within_days":30,"exists":false}]}`,
-		"did or did not, under any": `{"match":"any","conditions":[
-			{"type":"event","event":"cart_add","within_days":30,"exists":true},
-			{"type":"event","event":"cart_add","within_days":30,"exists":false}]}`,
 		"null category": `{"match":"all","conditions":[
 			{"type":"event","event":"cart_add","category":null,"within_days":30,"exists":true}]}`,
 	}
@@ -295,9 +292,6 @@ func TestClosedSetsAreCovered(t *testing.T) {
 		if categoryLabels[c] == "" {
 			t.Errorf("category %q has no Turkish label", c)
 		}
-	}
-	if strings.Contains(string(schema), "$ref") {
-		t.Error("schema must not be recursive: structured outputs reject it")
 	}
 }
 

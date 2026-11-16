@@ -74,6 +74,15 @@ function apply() {
        browser's own blocking tooltips are skipped so every problem is reported
        the same way, by the backend, under the row it belongs to. -->
   <form class="rule-editor" novalidate @submit.prevent="apply">
+    <label class="everyone">
+      <input v-model="draft.everyone" type="checkbox" />
+      Tüm kullanıcılara gönder (koşul yok)
+    </label>
+    <p v-if="draft.everyone" class="alert warn">
+      Kampanya, izni ve adresi olan herkese gider. Koşullar uygulanmaz; kutuyu kaldırırsan geri gelirler.
+    </p>
+
+    <template v-if="!draft.everyone">
     <div class="field">
       <label for="rule-match">Kullanıcı şunları sağlamalı</label>
       <select id="rule-match" v-model="draft.match">
@@ -82,7 +91,7 @@ function apply() {
       </select>
     </div>
 
-    <p v-if="draft.conditions.length === 0" class="hint">Henüz koşul yok. En az bir koşul gerekli.</p>
+    <p v-if="draft.conditions.length === 0" class="hint">Henüz koşul yok. En az bir koşul ekle ya da yukarıdan tüm kullanıcıları seç.</p>
 
     <template v-for="(c, i) in draft.conditions" :key="i">
       <!-- A group: its own box, with the same condition forms inside. -->
@@ -136,6 +145,7 @@ function apply() {
         + Grup ekle <span class="muted">({{ groupLabel.toLocaleLowerCase('tr') }})</span>
       </button>
     </div>
+    </template>
 
     <div v-if="generalErrors(errors).length" class="alert error" role="alert">
       <ul>

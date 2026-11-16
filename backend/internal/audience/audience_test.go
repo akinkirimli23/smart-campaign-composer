@@ -131,6 +131,11 @@ func TestCountsMatchReferenceEvaluation(t *testing.T) {
 		"low average or two fashion orders": {Match: segment.MatchAny, Conditions: cond(
 			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricAvgOrderValue, Op: segment.OpLTE, Value: 200},
 			segment.Condition{Type: segment.TypeMetric, Metric: segment.MetricOrderCount, Category: "fashion", Op: segment.OpGTE, Value: 2})},
+		"gold": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeAttribute, Field: "loyalty_tier", Op: segment.OpIn, Values: []string{"gold"}})},
+		"not bronze, in two cities": {Match: segment.MatchAll, Conditions: cond(
+			segment.Condition{Type: segment.TypeAttribute, Field: "loyalty_tier", Op: segment.OpNotIn, Values: []string{"bronze"}},
+			segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"İstanbul", "Ankara"}})},
 		"any": {Match: segment.MatchAny, Conditions: cond(
 			segment.Condition{Type: segment.TypeAttribute, Field: "city", Op: segment.OpIn, Values: []string{"Trabzon"}},
 			segment.Condition{Type: segment.TypeEvent, Event: "cart_add", Category: "books", WithinDays: 7, Exists: true},
@@ -258,7 +263,7 @@ func holds(c segment.Condition, u seed.User, events []seed.Event, asOf time.Time
 			age := asOf.Year() - u.BirthYear
 			ok = age >= c.Min && age <= c.Max
 		default:
-			value := map[string]string{"city": u.City, "language": u.Language, "gender": u.Gender}[c.Field]
+			value := map[string]string{"city": u.City, "language": u.Language, "gender": u.Gender, "loyalty_tier": u.LoyaltyTier}[c.Field]
 			ok = slices.Contains(c.Values, value) == (c.Op == segment.OpIn)
 		}
 		return ok
@@ -412,5 +417,58 @@ ORDER BY u.id LIMIT 3`, refNow)
 	want.Suppressed, want.Unsubscribed = 2, 2
 	if got != want {
 		t.Errorf("after unsubscribing = %+v, want %+v", got, want)
+	}
+}
+
+// An "everyone" rule counts every user; reachability still splits them.
+func TestEveryoneCountsAllUsers(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 5000, 42, refNow); err != nil {
+		t.Fatal(err)
+	}
+	got, err := audience.Counter{DB: pool}.Count(ctx, segment.Rule{Match: segment.MatchAll, Everyone: true}, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 5000 || got.SMS == 0 || got.SMS >= 5000 || got.Email >= 5000 || got.Unreachable == 0 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// The tier card: every tier listed, lowest first, and together they are the
+// reachable audience.
+func TestTiers(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Load(ctx, pool, 5000, 42, refNow); err != nil {
+		t.Fatal(err)
+	}
+	counter := audience.Counter{DB: pool}
+	tiers, err := counter.Tiers(ctx, exampleRule, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := counter.Count(ctx, exampleRule, refNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := 0
+	for i, tier := range tiers {
+		if tier.Tier != seed.LoyaltyTiers[i] {
+			t.Fatalf("tiers = %+v", tiers)
+		}
+		sum += tier.Reachable
+	}
+	if len(tiers) != 3 || sum != counts.Total-counts.Unreachable {
+		t.Errorf("tiers %+v add up to %d, reachable audience is %d", tiers, sum, counts.Total-counts.Unreachable)
+	}
+
+	// A rule for one tier reaches nobody in the others, and says so.
+	gold := segment.Rule{Match: segment.MatchAll, Conditions: []segment.Condition{
+		{Type: segment.TypeAttribute, Field: "loyalty_tier", Op: segment.OpIn, Values: []string{"gold"}}}}
+	only, err := counter.Tiers(ctx, gold, refNow)
+	if err != nil || only[0].Reachable != 0 || only[1].Reachable != 0 || only[2].Reachable == 0 {
+		t.Errorf("gold rule: %+v, err %v", only, err)
 	}
 }

@@ -27,10 +27,15 @@ func (r Rule) validate(skip map[int]bool) []FieldError {
 	}
 	switch n := len(r.Conditions); {
 	case skip[-1]:
+	case r.Everyone && n > 0:
+		// "Everyone, but only those in İstanbul" is two rules in one; which of
+		// them was meant is not ours to guess.
+		col.add("everyone", "koşullarla birlikte kullanılamaz; ya everyone: true ve boş koşul listesi ya da everyone: false ve koşullar")
+	case r.Everyone:
 	case n == 0:
 		// An empty rule would select every user; that must be an explicit choice
-		// in the product, not something an LLM can produce by omission.
-		col.add("conditions", "en az bir koşul gerekli")
+		// (everyone: true), not something an LLM can produce by omission.
+		col.add("conditions", "en az bir koşul gerekli (tüm kullanıcılar için everyone: true)")
 	case len(r.Leaves()) > MaxConditions:
 		col.add("conditions", "en fazla %d koşul olabilir (%d verildi, gruplardakiler dahil)", MaxConditions, len(r.Leaves()))
 	}
@@ -259,8 +264,13 @@ func validateTogether(col *collector, scope string, conditions []Condition, matc
 					col.add(path, "%s ile aynı koşul", at(j))
 				} else if match == MatchAll {
 					col.add(path, "%s ile çelişiyor; ikisi birlikte kimseyi seçmez", at(j))
+				} else if coversEveryone(other, c) {
+					col.add(path, everyoneByTautology, at(j))
 				}
 				continue
+			}
+			if match == MatchAny && coversEveryone(other, c) {
+				col.add(path, everyoneByTautology, at(j))
 			}
 			if match == MatchAll && other.Exists != c.Exists {
 				pos, neg := other, c
@@ -275,6 +285,29 @@ func validateTogether(col *collector, scope string, conditions []Condition, matc
 			}
 		}
 	}
+}
+
+// everyoneByTautology is the error for a pair that coversEveryone. "Everyone"
+// has one spelling, the rule's own flag; a brief that did not ask for
+// everyone must not arrive there through conditions.
+const everyoneByTautology = "%s ile birlikte herkesi seçer (yaptı veya yapmadı); bu bir kitle koşulu değil. Brief açıkça herkesi istiyorsa everyone: true kullanın, istemiyorsa desteklenmiyor deyin"
+
+// coversEveryone reports whether "a OR b" holds for every user: one says the
+// event happened, the other that it did not, and whoever fails the negative
+// one passes the positive one. That is the positive condition without counts,
+// over a window and a category at least as wide as the negative one's. The
+// real model built exactly this to "send to everyone" and to repair a
+// contradictory brief (DECISIONS 42).
+func coversEveryone(a, b Condition) bool {
+	if a.Exists == b.Exists {
+		return false
+	}
+	pos, neg := a, b
+	if b.Exists {
+		pos, neg = b, a
+	}
+	return pos.MinCount <= 1 && pos.MaxCount == 0 &&
+		pos.WithinDays >= neg.WithinDays && (pos.Category == "" || pos.Category == neg.Category)
 }
 
 // validateRange checks a signup or metric condition against the earlier ones

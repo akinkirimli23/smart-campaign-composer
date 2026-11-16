@@ -51,7 +51,10 @@ func parseRule(col *collector, data []byte) (rule Rule, malformed map[int]bool, 
 		return Rule{}, nil, false
 	}
 	malformed = map[int]bool{}
-	checkKeys(col, "", obj, []string{"match", "conditions"}, nil)
+	checkKeys(col, "", obj, []string{"match", "conditions"}, []string{"everyone"})
+	if raw, present := obj["everyone"]; present {
+		rule.Everyone, _ = boolean(col, "everyone", raw)
+	}
 
 	matchOK := false
 	if raw, present := obj["match"]; present {

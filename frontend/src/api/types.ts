@@ -5,7 +5,7 @@ export interface FieldError {
   message: string
 }
 
-export type SetField = 'city' | 'language' | 'gender'
+export type SetField = 'city' | 'language' | 'gender' | 'loyalty_tier'
 
 /** City, language or gender is (not) one of a closed set of values. */
 export interface SetCondition {
@@ -70,6 +70,8 @@ export type Condition = PlainCondition | GroupCondition
 export interface Rule {
   match: 'all' | 'any'
   conditions: Condition[]
+  /** Every user, no conditions. Absent on every other rule. */
+  everyone?: boolean
 }
 
 export interface Option {
@@ -82,6 +84,7 @@ export interface RuleOptions {
   cities: Option[]
   languages: Option[]
   genders: Option[]
+  loyalty_tiers: Option[]
   categories: Option[]
   events: Option[]
   metrics: Option[]
@@ -137,6 +140,8 @@ export interface SegmentResponse {
   audience?: Audience
   /** Languages of the reachable audience, largest first. */
   languages?: AudienceLanguage[]
+  /** Loyalty tiers of the reachable audience, lowest first; every tier is listed. */
+  loyalty?: { tier: string; label: string; reachable: number }[]
   as_of?: string
   attempts?: number
   unsupported?: { reason: string; phrases: string[] }
@@ -233,6 +238,10 @@ export interface Recipient {
   error?: string
   /** Why this person is not sent to on this channel any more, if they are not. */
   suppression?: Suppression
+  /** What was delivered to this person, personalised; absent until sent. */
+  text?: string
+  /** The email subject that went with it. */
+  subject?: string
 }
 
 export type Suppression = 'unsubscribed' | 'invalid_address'

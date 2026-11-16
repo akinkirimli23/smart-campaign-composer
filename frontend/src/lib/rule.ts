@@ -11,6 +11,7 @@ export const KIND_LABELS: Record<ConditionKind, string> = {
   city: 'Şehir',
   language: 'Dil',
   gender: 'Cinsiyet',
+  loyalty_tier: 'Sadakat seviyesi',
   age: 'Yaş',
   event: 'Davranış (sepet, satın alma)',
   signup: 'Üyelik tarihi',
@@ -55,7 +56,7 @@ export function leafCount(rule: Rule): number {
 export function addableKinds(scope: Condition[], rule: Rule, options: RuleOptions): ConditionKind[] {
   if (leafCount(rule) >= options.limits.max_conditions) return []
   const used = new Set(scope.filter((c): c is PlainCondition => !isGroup(c)).map(kindOf))
-  return KINDS.filter((kind) => !(['city', 'language', 'gender', 'age'].includes(kind) && used.has(kind)))
+  return KINDS.filter((kind) => !(['city', 'language', 'gender', 'loyalty_tier', 'age'].includes(kind) && used.has(kind)))
 }
 
 /** A group needs two members, so there must be room for two more conditions. */
@@ -81,6 +82,9 @@ export function defaultCondition(kind: ConditionKind, options: RuleOptions): Pla
       return { type: 'attribute', field: 'language', op: 'in', values: [options.languages[0]?.value ?? ''] }
     case 'gender':
       return { type: 'attribute', field: 'gender', op: 'in', values: [options.genders[0]?.value ?? ''] }
+    case 'loyalty_tier':
+      // The top tier: the usual reason to ask for one.
+      return { type: 'attribute', field: 'loyalty_tier', op: 'in', values: [options.loyalty_tiers[options.loyalty_tiers.length - 1]?.value ?? ''] }
     case 'age':
       return { type: 'attribute', field: 'age', op: 'between', min: 25, max: 34 }
     case 'event':
@@ -94,7 +98,16 @@ export function defaultCondition(kind: ConditionKind, options: RuleOptions): Pla
 
 /** The values a closed-set field can take. */
 export function valuesOf(field: SetField, options: RuleOptions) {
-  return field === 'city' ? options.cities : field === 'language' ? options.languages : options.genders
+  switch (field) {
+    case 'city':
+      return options.cities
+    case 'language':
+      return options.languages
+    case 'gender':
+      return options.genders
+    case 'loyalty_tier':
+      return options.loyalty_tiers
+  }
 }
 
 /** Lower case without Turkish diacritics, so "sanli" finds Şanlıurfa. */
@@ -158,6 +171,10 @@ export function normaliseRule(rule: Rule): Rule {
         return c.field === 'age' ? { ...c, min: int(c.min), max: int(c.max) } : { ...c, values: [...c.values] }
     }
   }
+
+  // "Everyone" takes no conditions; whatever the draft still holds from
+  // before the box was ticked is not sent.
+  if (rule.everyone) return { match: rule.match, conditions: [], everyone: true }
 
   return {
     match: rule.match,

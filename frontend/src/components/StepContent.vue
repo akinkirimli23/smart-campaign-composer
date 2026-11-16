@@ -9,7 +9,6 @@ import ErrorBox from './ErrorBox.vue'
 
 const store = useCampaignStore()
 
-const variables = computed(() => Object.entries(store.contentMeta?.variables ?? {}))
 const busy = computed(() => store.streaming || store.localizing)
 const editable = computed(() => !busy.value && store.contentMeta !== null)
 const audience = computed(() => store.segment?.audience)
@@ -222,14 +221,6 @@ const otherApproveErrors = computed<FieldError[]>(() =>
           <p v-for="p in approveErrorsFor('email.body')" :key="p" class="field-error">{{ p }}</p>
         </div>
 
-        <template v-if="variables.length">
-          <p class="hint tight">Kişiye özel alanlar (en uzun değerleriyle sayılır):</p>
-          <div class="variables">
-            <span v-for="[name, length] in variables" :key="name">
-              <code v-text="'{{' + name + '}}'" /> · {{ length }} karakter
-            </span>
-          </div>
-        </template>
       </div>
 
       <aside class="preview" aria-label="Önizleme">

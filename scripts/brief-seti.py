@@ -45,7 +45,8 @@ BRIEFS = [
     ('Veride yok', 'Doğum günü bu hafta olanlara kutlama mesajı gönder', 'desteklenmiyor: doğum günü yok'),
     ('Veride yok', 'iPhone kullananlara uygulama güncellemesi duyurusu gönder', 'desteklenmiyor: cihaz yok'),
     ('Veride yok', 'En çok harcayan 100 müşteriye özel davet gönder', 'desteklenmiyor: sıralama / ilk N yok'),
-    ('Veride yok', 'Gold üyelere erken erişim duyurusu gönder', 'desteklenmiyor: sadakat seviyesi yok'),
+    ('Veride yok', 'Platin üyelere erken erişim duyurusu gönder', 'desteklenmiyor: seviye yalnızca bronz / gümüş / altın'),
+    ('Temel', 'Gold üyelere erken erişim duyurusu gönder', 'kural: sadakat seviyesi altın (DECISIONS 45)'),
     ('Veride yok', 'Son kampanya emailini açıp tıklamayanlara hatırlatma gönder', 'desteklenmiyor: açılma / tıklama yok'),
 
     ('Mantık', "İstanbul'da yaşayan ya da 1000 TL üzeri harcayan herkese gönder", 'kural: iki koşuldan en az biri (VEYA)'),
@@ -58,8 +59,8 @@ BRIEFS = [
     ('Mantık', '18 yaşından küçüklere kampanya gönder', 'sınır: en küçük yaş'),
     ('Mantık', '25 yaşından büyük erkeklere kampanya gönder', 'kural: yaş alt sınırı + cinsiyet'),
 
-    ('Herkes', 'Tüm kullanıcılara kampanya gönder', 'reddedilmeli: koşulsuz gönderim yasak'),
-    ('Herkes', 'Herkese %50 indirim duyurusu yap', 'reddedilmeli'),
+    ('Herkes', 'Tüm kullanıcılara kampanya gönder', 'kural: everyone (DECISIONS 43)'),
+    ('Herkes', 'Herkese %50 indirim duyurusu yap', 'kural: everyone'),
     ('Herkes', 'İndirim var, duyur', 'reddedilmeli: kitle belirtilmemiş'),
 
     ('Sınır', 'Son 0 günde sepete ekleyenlere gönder', 'geçersiz gün: reddedilmeli ya da düzeltilmeli'),

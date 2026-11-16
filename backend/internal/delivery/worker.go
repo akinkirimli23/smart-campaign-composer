@@ -303,7 +303,7 @@ func (w *Worker) deliver(ctx context.Context, limiter Waiter, m claimed) {
 	switch {
 	case err == nil:
 		count("ok")
-		w.finish(m, "sent", providerID, "")
+		w.finishSent(m, providerID, out)
 	case ctx.Err() != nil:
 		// We are shutting down and the send was cut short. Give the attempt back.
 		w.retry(m, w.Now(), m.attempts-1, "interrupted by shutdown")
@@ -350,17 +350,27 @@ ON CONFLICT (user_id, channel) DO NOTHING`,
 }
 
 func (w *Worker) finish(m claimed, status, providerID, lastError string) {
-	now := w.Now().UTC()
-	var sentAt *time.Time
-	if status == "sent" {
-		sentAt = &now
-	}
 	w.update(m, `
 UPDATE messages
 SET status = $3, provider_message_id = NULLIF($4, ''), last_error = NULLIF($5, ''),
-    sent_at = $6, locked_until = NULL, updated_at = $7
+    locked_until = NULL, updated_at = $6
 WHERE id = $1 AND status = 'sending' AND attempts = $2`,
-		m.id, m.attempts, status, providerID, lastError, sentAt, now)
+		m.id, m.attempts, status, providerID, lastError, w.Now().UTC())
+}
+
+// finishSent records a delivery together with the text the provider accepted
+// (DECISIONS 44). The text is kept as it went out, not re-rendered later: the
+// recipient's name or the campaign's content may have changed by the time
+// someone asks what this person received. Same fence as finish.
+func (w *Worker) finishSent(m claimed, providerID string, out Outbound) {
+	now := w.Now().UTC()
+	w.update(m, `
+UPDATE messages
+SET status = 'sent', provider_message_id = NULLIF($3, ''), last_error = NULL,
+    sent_at = $4, sent_subject = NULLIF($5, ''), sent_body = $6,
+    locked_until = NULL, updated_at = $4
+WHERE id = $1 AND status = 'sending' AND attempts = $2`,
+		m.id, m.attempts, providerID, now, out.Subject, out.Body)
 }
 
 // retry puts the message back in the queue for a later attempt, unless the

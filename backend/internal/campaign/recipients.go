@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/akinkirimli23/smart-campaign-composer/backend/internal/audience"
 )
 
@@ -32,6 +34,11 @@ type Recipient struct {
 	// Suppression says why this person will not be sent to on this channel
 	// from now on, if they will not: "unsubscribed" or "invalid_address".
 	Suppression string `json:"suppression,omitempty"`
+	// Subject and Text are what the provider accepted for this recipient,
+	// personalised (DECISIONS 44). Empty until the message is sent, and for
+	// messages sent before the text was kept. Subject is the email subject.
+	Subject string `json:"subject,omitempty"`
+	Text    string `json:"text,omitempty"`
 }
 
 // RecipientFilter narrows a recipient list. Empty fields do not filter.
@@ -76,48 +83,16 @@ var ErrInvalidFilter = errors.New("campaign: invalid recipient filter")
 // Every filter value travels as a query parameter; none of them becomes part
 // of the SQL text.
 func (s Store) Recipients(ctx context.Context, id int64, f RecipientFilter, limit, offset int) (RecipientPage, error) {
-	f.Query = strings.TrimSpace(f.Query)
-	switch {
-	case f.Status != "" && !slices.Contains(Statuses, f.Status),
-		f.Channel != "" && !slices.Contains(Channels, f.Channel),
-		f.Suppression != "" && f.Suppression != audience.ReasonUnsubscribed && f.Suppression != audience.ReasonInvalidAddress,
-		utf8.RuneCountInString(f.Query) > MaxRecipientQuery,
-		utf8.RuneCountInString(f.City) > MaxRecipientQuery,
-		utf8.RuneCountInString(f.Language) > 8:
-		return RecipientPage{}, ErrInvalidFilter
+	args, err := s.recipientArgs(ctx, id, f)
+	if err != nil {
+		return RecipientPage{}, err
 	}
+	const who = recipientsFrom
 	if limit <= 0 {
 		limit = DefaultRecipientPage
 	}
 	limit = min(limit, MaxRecipientPage)
 	offset = max(offset, 0)
-
-	var exists bool
-	if err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM campaigns WHERE id = $1)`, id).Scan(&exists); err != nil {
-		return RecipientPage{}, fmt.Errorf("load campaign: %w", err)
-	}
-	if !exists {
-		return RecipientPage{}, ErrNotFound
-	}
-
-	// $1 campaign, $2 channel, $3 language, $4 city, $5 name pattern, $6
-	// suppression reason. The pattern's own wildcards are escaped, so "%" in
-	// a search is just a character.
-	const who = `
-FROM messages m
-JOIN users u ON u.id = m.user_id
-LEFT JOIN suppressions sp ON sp.user_id = m.user_id AND sp.channel = m.channel
-WHERE m.campaign_id = $1
-  AND ($2 = '' OR m.channel = $2)
-  AND ($3 = '' OR u.language = $3)
-  AND ($4 = '' OR u.city = $4)
-  AND ($5 = '' OR (u.first_name || ' ' || u.last_name) ILIKE $5)
-  AND ($6 = '' OR sp.reason = $6)`
-	pattern := ""
-	if f.Query != "" {
-		pattern = "%" + likeEscaper.Replace(f.Query) + "%"
-	}
-	args := []any{id, f.Channel, f.Language, f.City, pattern, f.Suppression}
 
 	page := RecipientPage{Recipients: []Recipient{}, Offset: offset, ByStatus: map[string]int{}}
 	counts, err := s.DB.Query(ctx, `SELECT m.status, count(*)`+who+` GROUP BY m.status`, args...)
@@ -143,9 +118,7 @@ WHERE m.campaign_id = $1
 
 	// Recipients were frozen at approval, so a plain offset is stable enough:
 	// rows only move between statuses, they are never added or removed.
-	rows, err := s.DB.Query(ctx, `
-SELECT m.user_id, u.first_name, u.last_name, m.channel, u.phone, u.email, u.language, u.city,
-       m.status, m.attempts, m.sent_at, COALESCE(m.last_error, ''), COALESCE(sp.reason, '')`+who+`
+	rows, err := s.DB.Query(ctx, recipientSelect+who+`
   AND ($7 = '' OR m.status = $7)
 ORDER BY CASE m.status
            WHEN 'failed' THEN 0 WHEN 'skipped' THEN 1 WHEN 'cancelled' THEN 2
@@ -157,22 +130,108 @@ LIMIT $8 OFFSET $9`, append(args, f.Status, limit, offset)...)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var r Recipient
-		var first, last string
-		var phone, email *string
-		if err := rows.Scan(&r.UserID, &first, &last, &r.Channel, &phone, &email, &r.Language, &r.City,
-			&r.Status, &r.Attempts, &r.SentAt, &r.Error, &r.Suppression); err != nil {
+		r, err := scanRecipient(rows)
+		if err != nil {
 			return RecipientPage{}, err
-		}
-		r.Name = first + " " + last
-		if r.Channel == ChannelSMS && phone != nil {
-			r.Address = MaskPhone(*phone)
-		} else if r.Channel == ChannelEmail && email != nil {
-			r.Address = MaskEmail(*email)
 		}
 		page.Recipients = append(page.Recipients, r)
 	}
 	return page, rows.Err()
+}
+
+// EachRecipient calls fn for every message of the campaign that matches the
+// filter, in the order they were queued, without paging. It is what an export
+// reads (DECISIONS 44): one query, so a campaign that is still sending cannot
+// show a recipient twice or skip one, as walking the pages of Recipients
+// could. Addresses are masked here exactly as they are there.
+func (s Store) EachRecipient(ctx context.Context, id int64, f RecipientFilter, fn func(Recipient) error) error {
+	args, err := s.recipientArgs(ctx, id, f)
+	if err != nil {
+		return err
+	}
+	rows, err := s.DB.Query(ctx, recipientSelect+recipientsFrom+`
+  AND ($7 = '' OR m.status = $7)
+ORDER BY m.id`, append(args, f.Status)...)
+	if err != nil {
+		return fmt.Errorf("list recipients: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		r, err := scanRecipient(rows)
+		if err != nil {
+			return err
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// recipientsFrom selects the messages of a campaign that match a filter.
+// $1 campaign, $2 channel, $3 language, $4 city, $5 name pattern, $6
+// suppression reason; recipientArgs builds them in this order.
+const recipientsFrom = `
+FROM messages m
+JOIN users u ON u.id = m.user_id
+LEFT JOIN suppressions sp ON sp.user_id = m.user_id AND sp.channel = m.channel
+WHERE m.campaign_id = $1
+  AND ($2 = '' OR m.channel = $2)
+  AND ($3 = '' OR u.language = $3)
+  AND ($4 = '' OR u.city = $4)
+  AND ($5 = '' OR (u.first_name || ' ' || u.last_name) ILIKE $5)
+  AND ($6 = '' OR sp.reason = $6)`
+
+// recipientSelect lists the columns scanRecipient reads.
+const recipientSelect = `
+SELECT m.user_id, u.first_name, u.last_name, m.channel, u.phone, u.email, u.language, u.city,
+       m.status, m.attempts, m.sent_at, COALESCE(m.last_error, ''), COALESCE(sp.reason, ''),
+       COALESCE(m.sent_subject, ''), COALESCE(m.sent_body, '')`
+
+// recipientArgs checks the filter and the campaign, and returns the
+// parameters of recipientsFrom. The name pattern's own wildcards are escaped,
+// so "%" in a search is just a character.
+func (s Store) recipientArgs(ctx context.Context, id int64, f RecipientFilter) ([]any, error) {
+	f.Query = strings.TrimSpace(f.Query)
+	switch {
+	case f.Status != "" && !slices.Contains(Statuses, f.Status),
+		f.Channel != "" && !slices.Contains(Channels, f.Channel),
+		f.Suppression != "" && f.Suppression != audience.ReasonUnsubscribed && f.Suppression != audience.ReasonInvalidAddress,
+		utf8.RuneCountInString(f.Query) > MaxRecipientQuery,
+		utf8.RuneCountInString(f.City) > MaxRecipientQuery,
+		utf8.RuneCountInString(f.Language) > 8:
+		return nil, ErrInvalidFilter
+	}
+	var exists bool
+	if err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM campaigns WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("load campaign: %w", err)
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+	pattern := ""
+	if f.Query != "" {
+		pattern = "%" + likeEscaper.Replace(f.Query) + "%"
+	}
+	return []any{id, f.Channel, f.Language, f.City, pattern, f.Suppression}, nil
+}
+
+// scanRecipient reads one row of recipientSelect and masks the address.
+func scanRecipient(rows pgx.Rows) (Recipient, error) {
+	var r Recipient
+	var first, last string
+	var phone, email *string
+	if err := rows.Scan(&r.UserID, &first, &last, &r.Channel, &phone, &email, &r.Language, &r.City,
+		&r.Status, &r.Attempts, &r.SentAt, &r.Error, &r.Suppression, &r.Subject, &r.Text); err != nil {
+		return Recipient{}, err
+	}
+	r.Name = first + " " + last
+	if r.Channel == ChannelSMS && phone != nil {
+		r.Address = MaskPhone(*phone)
+	} else if r.Channel == ChannelEmail && email != nil {
+		r.Address = MaskEmail(*email)
+	}
+	return r, nil
 }
 
 // ErrNotDelivered is returned when someone "unsubscribes" from a message that

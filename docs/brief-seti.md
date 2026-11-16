@@ -21,7 +21,7 @@ ayrı çalıştırılıp iki çıktı karşılaştırılmak üzere tasarlandı.
 | Yazım | Büyük / küçük harf, Türkçe karaktersiz yazım, bitişik ek, İngilizce brief | "ISTANBUL VE ANKARA KULLANICILARINA…" |
 | Veride yok | Şehir, doğum günü, cihaz, sıralama, sadakat seviyesi, açılma / tıklama | "İstanbul ve Van'daki kullanıcılara…" |
 | Mantık | VEYA, hariç tutma, çelişki, tek taraflı yaş | "İstanbul dışındaki kullanıcılara…" |
-| Herkes | Koşulsuz gönderim isteği | "Tüm kullanıcılara kampanya gönder" |
+| Herkes | Koşulsuz gönderim isteği (13 Kasım'da reddediliyordu; DECISIONS 43 ile `everyone` kuralı üretir) | "Tüm kullanıcılara kampanya gönder" |
 | Sınır | 0 gün, 5000 gün, 200 yaş, negatif tutar, %150 indirim | "Son 0 günde sepete ekleyenlere…" |
 | Zaman | Yarın, dün, 3 ay sonra, "akşam", "Kara Cuma", iki ayrı "3 gün" | "Son 3 günde sepete ekleyen… 3 gün sonra hatırlat" |
 | Saldırı | SQL enjeksiyonu, talimat enjeksiyonu, etiket kaçışı, veri sızdırma isteği | "İstanbul'; DROP TABLE users; --…" |

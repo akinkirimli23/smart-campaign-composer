@@ -24,13 +24,14 @@ type Limits struct {
 // rule assembled from these options is valid field by field. Combinations
 // (contradictions, duplicates) are still checked by Parse on submit.
 type Options struct {
-	Cities     []Option `json:"cities"`
-	Languages  []Option `json:"languages"`
-	Genders    []Option `json:"genders"`
-	Categories []Option `json:"categories"`
-	Events     []Option `json:"events"`
-	Metrics    []Option `json:"metrics"`
-	Limits     Limits   `json:"limits"`
+	Cities       []Option `json:"cities"`
+	Languages    []Option `json:"languages"`
+	Genders      []Option `json:"genders"`
+	LoyaltyTiers []Option `json:"loyalty_tiers"`
+	Categories   []Option `json:"categories"`
+	Events       []Option `json:"events"`
+	Metrics      []Option `json:"metrics"`
+	Limits       Limits   `json:"limits"`
 }
 
 var (
@@ -48,12 +49,13 @@ func RuleOptions() Options {
 		return out
 	}
 	return Options{
-		Cities:     options(setFields["city"].values(), nil),
-		Languages:  options(setFields["language"].values(), valueLabels["language"]),
-		Genders:    options(setFields["gender"].values(), valueLabels["gender"]),
-		Categories: options(categories(), categoryLabels),
-		Events:     options(eventTypes, eventLabels),
-		Metrics:    options(metricNames, metricLabels),
+		Cities:       options(setFields["city"].values(), nil),
+		Languages:    options(setFields["language"].values(), valueLabels["language"]),
+		Genders:      options(setFields["gender"].values(), valueLabels["gender"]),
+		LoyaltyTiers: options(setFields["loyalty_tier"].values(), valueLabels["loyalty_tier"]),
+		Categories:   options(categories(), categoryLabels),
+		Events:       options(eventTypes, eventLabels),
+		Metrics:      options(metricNames, metricLabels),
 		Limits: Limits{
 			MaxConditions: MaxConditions,
 			MinWithinDays: MinWithinDays, MaxWithinDays: MaxWithinDays,

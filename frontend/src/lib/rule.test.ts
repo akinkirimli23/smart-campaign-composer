@@ -9,6 +9,7 @@ const options: RuleOptions = {
   cities: [{ value: 'İstanbul', label: 'İstanbul' }, { value: 'Ankara', label: 'Ankara' }],
   languages: [{ value: 'tr', label: 'Türkçe' }, { value: 'en', label: 'İngilizce' }],
   genders: [{ value: 'female', label: 'Kadın' }, { value: 'male', label: 'Erkek' }],
+  loyalty_tiers: [{ value: 'bronze', label: 'Bronz' }, { value: 'silver', label: 'Gümüş' }, { value: 'gold', label: 'Altın' }],
   categories: [{ value: 'electronics', label: 'Elektronik' }],
   events: [{ value: 'cart_add', label: 'Sepete ürün ekleme' }, { value: 'purchase', label: 'Satın alma' }],
   metrics: [{ value: 'total_spent', label: 'Toplam harcama (TL)' }, { value: 'order_count', label: 'Sipariş sayısı' }],
@@ -43,7 +44,7 @@ describe('addableKinds', () => {
   it('offers each attribute once but lets behaviours and metrics repeat', () => {
     const kinds = addableKinds(example.conditions, example, options)
     expect(kinds).not.toContain('city')
-    expect(kinds).toEqual(['language', 'gender', 'age', 'event', 'signup', 'metric'])
+    expect(kinds).toEqual(['language', 'gender', 'loyalty_tier', 'age', 'event', 'signup', 'metric'])
   })
 
   it('offers nothing once the rule is full', () => {
@@ -53,6 +54,14 @@ describe('addableKinds', () => {
 })
 
 describe('normaliseRule', () => {
+  it('sends "everyone" without the conditions left in the draft', () => {
+    expect(normaliseRule({ ...example, everyone: true })).toEqual({ match: example.match, conditions: [], everyone: true })
+  })
+
+  it('leaves the flag out of every other rule', () => {
+    expect('everyone' in normaliseRule({ ...example, everyone: false })).toBe(false)
+  })
+
   it('leaves a rule from the backend unchanged', () => {
     expect(normaliseRule(example)).toEqual(example)
   })

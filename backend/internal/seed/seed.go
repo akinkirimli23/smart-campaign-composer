@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -32,6 +33,33 @@ type User struct {
 	SignupAt   time.Time
 	EmailOptIn bool
 	SMSOptIn   bool
+	// LoyaltyTier is one of LoyaltyTiers, derived from the user's purchases.
+	LoyaltyTier string
+}
+
+// LoyaltyTiers is the closed set of loyalty tiers, lowest first. The segment
+// rule validator accepts only these values (DECISIONS 45).
+var LoyaltyTiers = []string{"bronze", "silver", "gold"}
+
+// Total purchase amount, in TL, from which a user is silver or gold. With
+// the default seed about three in ten users are silver and one in ten gold.
+const (
+	SilverSpend = 3000
+	GoldSpend   = 8000
+)
+
+// TierFor returns the loyalty tier of a user who has spent this much, in
+// kuruş. The tier is computed from the generated purchases, so it draws
+// nothing from the random source: adding it left every other value of the
+// seed, and the reference counts that depend on them, as they were.
+func TierFor(spentKurus int64) string {
+	switch {
+	case spentKurus >= GoldSpend*100:
+		return "gold"
+	case spentKurus >= SilverSpend*100:
+		return "silver"
+	}
+	return "bronze"
 }
 
 type Event struct {
@@ -183,8 +211,17 @@ func Generate(count int, randomSeed int64, now time.Time) ([]User, []Event) {
 		u.SignupAt = now.Add(-time.Duration(1+r.IntN(1000)) * 24 * time.Hour).
 			Add(-time.Duration(r.IntN(86400)) * time.Second)
 
+		own := genEvents(r, u, now)
+		var spent int64
+		for _, e := range own {
+			if e.Type == "purchase" && e.Amount != nil {
+				spent += int64(math.Round(*e.Amount * 100))
+			}
+		}
+		u.LoyaltyTier = TierFor(spent)
+
 		users = append(users, u)
-		events = append(events, genEvents(r, u, now)...)
+		events = append(events, own...)
 	}
 	return users, events
 }
@@ -252,11 +289,11 @@ func Load(ctx context.Context, pool *pgxpool.Pool, count int, randomSeed int64, 
 
 		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"users"},
 			[]string{"id", "first_name", "last_name", "email", "phone", "city", "language", "gender",
-				"birth_year", "signup_at", "email_opt_in", "sms_opt_in"},
+				"birth_year", "signup_at", "email_opt_in", "sms_opt_in", "loyalty_tier"},
 			pgx.CopyFromSlice(len(users), func(i int) ([]any, error) {
 				u := users[i]
 				return []any{u.ID, u.FirstName, u.LastName, u.Email, u.Phone, u.City, u.Language, u.Gender,
-					u.BirthYear, u.SignupAt, u.EmailOptIn, u.SMSOptIn}, nil
+					u.BirthYear, u.SignupAt, u.EmailOptIn, u.SMSOptIn, u.LoyaltyTier}, nil
 			}),
 		); err != nil {
 			return fmt.Errorf("copy users: %w", err)

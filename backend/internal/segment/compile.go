@@ -24,6 +24,11 @@ func Compile(r Rule, asOf time.Time) (Query, error) {
 		return Query{}, err
 	}
 	asOf = asOf.UTC()
+	if r.Everyone {
+		// No condition, no parameter. Who can actually be sent to is decided
+		// by the caller's reachability clause, as for every rule.
+		return Query{Where: "TRUE"}, nil
+	}
 
 	var q Query
 	arg := func(v any) string {

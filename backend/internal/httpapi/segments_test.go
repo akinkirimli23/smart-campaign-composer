@@ -31,6 +31,10 @@ func (f *fakeCounter) Count(_ context.Context, rule segment.Rule, asOf time.Time
 	return audience.Counts{Total: 381, SMS: 222, Email: 254, Unreachable: 58}, nil
 }
 
+func (f *fakeCounter) Tiers(context.Context, segment.Rule, time.Time) ([]audience.TierCount, error) {
+	return []audience.TierCount{{Tier: "bronze", Reachable: 200}, {Tier: "silver", Reachable: 90}, {Tier: "gold", Reachable: 33}}, nil
+}
+
 func (f *fakeCounter) Languages(context.Context, segment.Rule, time.Time) ([]audience.LanguageCount, error) {
 	return []audience.LanguageCount{{Language: "tr", Reachable: 291}, {Language: "en", Reachable: 32}}, nil
 }
@@ -155,7 +159,7 @@ func TestSegmentOptionsMatchTheValidator(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &opts); err != nil {
 		t.Fatal(err)
 	}
-	if len(opts.Cities) != 81 || len(opts.Categories) != 6 || len(opts.Languages) != 2 || len(opts.Genders) != 2 ||
+	if len(opts.Cities) != 81 || len(opts.Categories) != 6 || len(opts.Languages) != 2 || len(opts.Genders) != 2 || len(opts.LoyaltyTiers) != 3 ||
 		len(opts.Events) != 2 || len(opts.Metrics) != 3 {
 		t.Fatalf("unexpected option counts: %+v", opts)
 	}
@@ -163,7 +167,7 @@ func TestSegmentOptionsMatchTheValidator(t *testing.T) {
 		t.Errorf("limits = %+v", opts.Limits)
 	}
 	labels := map[string]string{}
-	for _, group := range [][]segment.Option{opts.Languages, opts.Genders, opts.Categories, opts.Events, opts.Metrics} {
+	for _, group := range [][]segment.Option{opts.Languages, opts.Genders, opts.LoyaltyTiers, opts.Categories, opts.Events, opts.Metrics} {
 		for _, o := range group {
 			labels[o.Value] = o.Label
 		}

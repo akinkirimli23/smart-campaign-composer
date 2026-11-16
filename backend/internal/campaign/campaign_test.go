@@ -3,6 +3,7 @@ package campaign_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -411,6 +412,34 @@ func TestRecipients(t *testing.T) {
 		if r.Channel == "email" && !strings.HasSuffix(r.Address, "@example.com") {
 			t.Fatalf("email address lost its domain: %+v", r)
 		}
+	}
+
+	// The unpaged listing an export reads: every message once, in queue
+	// order, masked, with the text of the delivered ones.
+	exec(`UPDATE messages SET sent_body = 'Merhaba', sent_subject = CASE WHEN channel = 'email' THEN 'Konu' END WHERE campaign_id = $1 AND status = 'sent'`, created.ID)
+	seen, withText := map[string]bool{}, 0
+	err = store.EachRecipient(ctx, created.ID, campaign.RecipientFilter{}, func(r campaign.Recipient) error {
+		seen[fmt.Sprintf("%d/%s", r.UserID, r.Channel)] = true
+		if !strings.Contains(r.Address, "•") {
+			t.Errorf("address not masked: %+v", r)
+		}
+		if r.Text != "" {
+			withText++
+			if r.Status != "sent" || (r.Subject != "") != (r.Channel == "email") {
+				t.Errorf("text on %+v", r)
+			}
+		}
+		return nil
+	})
+	if err != nil || len(seen) != total || withText != 4 {
+		t.Errorf("export saw %d of %d, %d with text, err %v", len(seen), total, withText, err)
+	}
+	failed := 0
+	if err := store.EachRecipient(ctx, created.ID, campaign.RecipientFilter{Status: "failed"}, func(campaign.Recipient) error { failed++; return nil }); err != nil || failed != 2 {
+		t.Errorf("filtered export: %d rows, err %v", failed, err)
+	}
+	if err := store.EachRecipient(ctx, created.ID+99, campaign.RecipientFilter{}, nil); !errors.Is(err, campaign.ErrNotFound) {
+		t.Errorf("unknown campaign: %v", err)
 	}
 
 	// One status at a time; the total is that of the filter.

@@ -269,6 +269,14 @@ button.pill { padding: 13px 24px; font-size: 1.02rem; }
 button.pill.light { background: var(--film-fg); border-color: var(--film-fg); color: var(--film-bg); }
 button.pill.light:hover:not(:disabled) { background: var(--signal); border-color: var(--signal); color: var(--film-bg); }
 button.small { padding: 6px 14px; font-size: 0.9rem; }
+/* A download is a link; it should sit among the buttons as one of them. */
+a.button {
+  display: inline-block; font-weight: 500; padding: 9px 18px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--text); text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+a.button:hover { background: var(--surface-2); border-color: var(--text); }
+a.button.small { padding: 6px 14px; font-size: 0.9rem; }
 button.ghost { border-color: transparent; color: var(--accent); padding: 6px 10px; }
 button.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; }
 button.danger { color: var(--error); }
@@ -365,6 +373,8 @@ button.with-icon { display: inline-flex; align-items: center; gap: 8px; }
 .meter { height: 3px; margin-top: 8px; background: var(--border); overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--text); }
 .language-bar:first-child .meter span { background: var(--accent); }
+/* Tiers are not ranked by size; no bar is singled out. */
+.tier-bar:first-child .meter span { background: var(--text); }
 
 .advanced { margin: 16px 0 0; }
 .advanced summary { cursor: pointer; color: var(--accent); }
@@ -373,6 +383,7 @@ button.with-icon { display: inline-flex; align-items: center; gap: 8px; }
 /* --- rule editor --- */
 .rule-editor .condition { margin: 14px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
 .rule-editor legend { padding: 0 8px; font-weight: 600; }
+.rule-editor .everyone { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 0 0 14px; }
 /* A group of conditions: a box around the same forms, marked with the accent. */
 .rule-editor .group {
   margin: 14px 0;
@@ -443,8 +454,6 @@ button.with-icon { display: inline-flex; align-items: center; gap: 8px; }
 .tab:disabled { opacity: 0.8; }
 .tab .count { font-weight: 400; font-size: 0.82rem; color: var(--muted); }
 
-.variables { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 0; }
-.variables span { font-size: 0.82rem; color: var(--muted); }
 
 /* --- progress --- */
 .status { display: flex; align-items: center; gap: 8px; color: var(--muted); margin: 0 0 14px; }
@@ -699,6 +708,10 @@ body.no-scroll { overflow: hidden; }
 .recipient-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .recipient-table .sub { display: block; margin-top: 2px; color: var(--muted); font-size: 0.82rem; overflow-wrap: anywhere; }
 .recipient-table td:last-child { min-width: 14em; }
+.sent-text { margin-top: 6px; font-size: 0.86rem; }
+.sent-text summary { cursor: pointer; color: var(--muted); }
+.sent-text p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sent-text .subject { font-weight: 600; }
 .more { display: flex; justify-content: center; margin-top: 18px; }
 
 .badge.m-sent { background: var(--ok-soft); color: var(--ok); }

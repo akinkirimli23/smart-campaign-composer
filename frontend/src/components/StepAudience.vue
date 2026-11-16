@@ -59,6 +59,13 @@ const languageShares = computed(() => {
   const total = languages.reduce((sum, l) => sum + l.reachable, 0)
   return languages.map((l) => ({ ...l, percent: total ? Math.round((l.reachable / total) * 100) : 0 }))
 })
+
+// Share of each loyalty tier among the reachable audience, top tier first.
+const tierShares = computed(() => {
+  const tiers = [...(segment.value?.loyalty ?? [])].reverse()
+  const total = tiers.reduce((sum, t) => sum + t.reachable, 0)
+  return tiers.map((t) => ({ ...t, percent: total ? Math.round((t.reachable / total) * 100) : 0 }))
+})
 </script>
 
 <template>
@@ -122,6 +129,11 @@ const languageShares = computed(() => {
           </div>
 
           <p class="summary">{{ segment.description?.summary }}</p>
+          <p v-if="segment.rule.everyone" class="alert warn" role="note">
+            Bu kampanya bir kitleye değil, izni ve adresi olan <strong>herkese</strong> gider:
+            {{ segment.audience?.total }} kişinin {{ (segment.audience?.total ?? 0) - (segment.audience?.unreachable ?? 0) }} tanesine ulaşılabiliyor.
+            Daraltmak için “Koşulları düzenle”.
+          </p>
           <ul class="conditions">
             <li v-for="(line, i) in segment.description?.conditions ?? []" :key="i">
               <span class="check"><AppIcon name="check" :size="14" /></span>
@@ -194,6 +206,20 @@ const languageShares = computed(() => {
             </div>
           </div>
           <p class="hint tight" style="margin-top: 12px">Herkes kendi dilindeki mesajı alır. Metin önce {{ languageShares[0]?.label }} yazılır, diğer diller sonraki adımda eklenir.</p>
+        </section>
+
+        <section v-if="tierShares.some((t) => t.reachable > 0)" class="card">
+          <h2 class="card-title"><span class="icon"><AppIcon name="sparkle" /></span> Sadakat seviyeleri</h2>
+          <div class="language-bars">
+            <div v-for="t in tierShares" :key="t.tier" class="language-bar tier-bar">
+              <div class="row">
+                <span>{{ t.label }}</span>
+                <span class="muted">{{ t.reachable }} kişi · %{{ t.percent }}</span>
+              </div>
+              <div class="meter"><span :style="{ width: t.percent + '%' }" /></div>
+            </div>
+          </div>
+          <p class="hint tight" style="margin-top: 12px">Mesaj gönderilebilen kişilerin seviyeleri. Seviye, toplam alışveriş tutarına göre belirlenir.</p>
         </section>
 
         <section v-if="store.scheduleSuggestion" class="card">

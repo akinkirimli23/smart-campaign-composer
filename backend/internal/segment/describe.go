@@ -24,10 +24,11 @@ type GroupDescription struct {
 
 var (
 	valueLabels = map[string]map[string]string{
-		"language": {"tr": "Türkçe", "en": "İngilizce"},
-		"gender":   {"female": "Kadın", "male": "Erkek"},
+		"language":     {"tr": "Türkçe", "en": "İngilizce"},
+		"gender":       {"female": "Kadın", "male": "Erkek"},
+		"loyalty_tier": {"bronze": "Bronz", "silver": "Gümüş", "gold": "Altın"},
 	}
-	fieldLabels    = map[string]string{"city": "Şehir", "language": "Dil", "gender": "Cinsiyet"}
+	fieldLabels    = map[string]string{"city": "Şehir", "language": "Dil", "gender": "Cinsiyet", "loyalty_tier": "Sadakat seviyesi"}
 	categoryLabels = map[string]string{
 		"electronics": "elektronik", "fashion": "moda", "cosmetics": "kozmetik",
 		"home": "ev", "sports": "spor", "books": "kitap",
@@ -38,6 +39,9 @@ var (
 // from LLM text, so what the marketer reads and approves is exactly what Compile
 // turns into SQL (DECISIONS 14).
 func Describe(r Rule) Description {
+	if r.Everyone {
+		return Description{Summary: "Tüm kullanıcılar (koşul yok)", Conditions: []string{}}
+	}
 	d := Description{Summary: "Aşağıdaki koşulların hepsini sağlayan kullanıcılar"}
 	if r.Match == MatchAny {
 		d.Summary = "Aşağıdaki koşullardan en az birini sağlayan kullanıcılar"

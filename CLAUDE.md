@@ -38,7 +38,7 @@ Bunlar case gereksinimi ya da bilinçli karar. Bozan bir değişiklik yapma.
    şemaya göre doğrular ve parametreli SQL'e kendisi derler. Alan adları, operatörler ve
    değerler beyaz listeden gelir; kullanıcıdan / LLM'den gelen hiçbir metin SQL'e string olarak
    eklenmez.
-2. **Şehir ve kategori kapalı küme.** Geçerli değerler `seed.Cities()` ve `seed.Categories`.
+2. **Şehir, kategori ve sadakat seviyesi kapalı küme.** Geçerli değerler `seed.Cities()`, `seed.Categories` ve `seed.LoyaltyTiers`.
    Kümede olmayan değer doğrulama hatasıdır, sessizce sıfır kişilik kitle değildir.
 3. **İzin + adres birlikte.** Bir kanaldan gönderim için hem `*_opt_in = true` hem adres
    (`email` / `phone`) dolu olmalı. Kitle sayıları kanal bazında bu kuralla raporlanır.
@@ -164,7 +164,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `docker compose up` ile tek komutla kurulum, mock provider dahil | 4 ✅ |
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
-| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (40 kayıt) |
+| `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (45 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 13 Kasım'da güncellendi (açılış sayfası, yeni tasarım ve alıcı listesi dahil); sonrasında çalışılırsa yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
@@ -185,7 +185,7 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   SQL), `Describe` (pazarlamacıya gösterilen açıklama, kuraldan türetilir), `JSONSchema`
   (Claude'a verilen şema, aynı tablolardan üretilir), `Generator` (LLM + hata geri besleme, en
   fazla 3 deneme).
-- Koşul tipleri: `attribute` (şehir, dil, cinsiyet, yaş), `event` (sepet / satın alma, isteğe
+- Koşul tipleri: `attribute` (şehir, dil, cinsiyet, sadakat seviyesi, yaş), `event` (sepet / satın alma, isteğe
   bağlı `min_count` ve `max_count`), `signup` (üyelik tarihi), `metric` (`total_spent`,
   `order_count`, `avg_order_value`; isteğe bağlı `category`). Son üçü DECISIONS 25 ile eklendi;
   `max_count`, ortalama ve metrik kategorisi DECISIONS 40 ile. Alışverişi olmayanın ortalaması
@@ -214,7 +214,37 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   tablosuyla reddeder: DECISIONS 36; uç durum seti `scripts/brief-seti.py`, `docs/brief-seti.md`); `llm/anthropicllm` gerçek istemci (resmi Go SDK,
   DECISIONS 16). SDK'yı yalnızca `anthropicllm` import eder. Testleri yerel bir SSE sunucusuna
   karşı çalışır, key istemez.
-- **Açık iş:** gerçek key ile uçtan uca deneme yapılmadı; README "Bilinen eksikler"de yazıyor.
+- **Modele giden şema kayıtlı kural biçiminden iki yerde ayrılır (DECISIONS 41).** Gerçek API
+  büyük şemayı reddeder ("compiled grammar is too large"), o yüzden: (1) düz koşul şemaları
+  `$defs` altında bir kez tanımlanır, kural ve grup `$ref` ile gösterir; (2) modelin biçiminde
+  null yok: kategori için `"any"`, `min_count` / `max_count` ve metriğin `within_days`'i için
+  `0` yazar, `fromModel` bunları `Parse`'tan önce null'a çevirir. Bu işaret değerleri yalnızca
+  model yolunda geçerlidir; `Parse` ve API hâlâ null ister.
+- **Şemada alan sırası anlam taşır.** Kısıtlı çıktı anahtarları şemadaki sırayla yazar; Go map'i
+  alfabetik sıralar. Bu yüzden `objectSchema` sıralı `field` listesi alır ve her seçenek ayırt
+  edici alanıyla (`kind`, `type`) başlar. Map'e geri dönme: `kind` başta değilken gerçek model
+  yalnızca "desteklenmiyor" diyebiliyordu.
+- "Veya" ile bağlı bir listede aynı olayın "yaptı" ve "yapmadı" hali herkesi kapsıyorsa
+  doğrulayıcı reddeder (`coversEveryone`, DECISIONS 42): gerçek model bunu "herkese gönder" ve
+  çelişkili brief için arka kapı olarak kullandı. Koşulsuz kuralın yasak olmasıyla aynı karar.
+- "Tüm kullanıcılar" kuralda açık bir işarettir (DECISIONS 43): `everyone: true` + boş koşul
+  listesi, `WHERE TRUE` olarak derlenir; ulaşılabilirlik her kuraldaki gibi çağıranda uygulanır.
+  İşaretsiz boş liste hâlâ hatadır; boş listeyi "herkes" sayan bir yol ekleme. Model şemasında
+  `everyone` kuralın ilk alanıdır. Mock yalnızca başka koşul tanımadığında `everyone` döner.
+  Arayüzde formun başındaki kutu ve kitle ekranındaki uyarı (`normaliseRule` koşulları göndermez).
+- Sadakat seviyesi (DECISIONS 45): `users.loyalty_tier`, seed'de toplam alışveriş tutarından
+  türetilir (`seed.TierFor`; üreteçten sayı çekmez, referans sayılar bu yüzden kaymadı).
+  Eşikleri değiştirirsen migration `009`'daki doldurma ile aynı kalmaz; yeni migration yaz.
+  Kuralda bir `setFields` satırıdır, harcama koşulu değil; modelin seviyeyi harcamaya çevirmesi
+  prompt'ta yasak.
+- Kitle yanıtındaki `loyalty` (`audience.Counter.Tiers`): ulaşılabilen kişilerin seviye
+  dağılımı, her seviye sıfır da olsa listelenir; kitle ekranındaki "Sadakat seviyeleri" kartı.
+- Modelin şemasında kısa kümeli nitelikler (dil, cinsiyet, sadakat seviyesi) **tek seçenekte**
+  durur (`plainVariants`, `sharedSetMax`); şehir kendi seçeneğinde. Her niteliğe ayrı seçenek
+  vermeye dönme: gerçek API şemayı reddeder. Alan ile değerin uyuşmasını `Parse` denetler.
+- Reddedilen model çıktısı `segment output rejected` ile loglanır (deneme no + hatalar).
+- Şemaya alan eklersen gerçek API'de dene (`LLM_MODE=auto` + key); sınıra yakın ve testler bunu
+  göremez. Gerçek Claude ile deneme 16 Kasım'da yapıldı (README "Bilinen eksikler").
 
 ## İçerik (aşama 3, kesinleşti)
 
@@ -254,10 +284,18 @@ Kararlar DECISIONS 21–22'de. Kısaca:
 - `internal/campaign`: `Store.Create` kampanyayı ve alıcılarını tek transaction'da yazar (kanal
   başına tek `INSERT … SELECT`, derleyicinin WHERE'i + `audience.*Reachable`); `Store.Status`
   kanal ve durum bazında sayar; `Store.List` son 100 kampanyayı durumlarıyla döner; `Store.Recipients` bir kampanyanın
-  mesajlarını sayfa sayfa, sorunlular önce ve adresler maskeli olarak döner (DECISIONS 33). Aşama 5'in canlı panosu ve metrics endpoint'i bunun üzerine kurulur.
+  mesajlarını sayfa sayfa, sorunlular önce ve adresler maskeli olarak döner (DECISIONS 33; giden metin ve CSV: DECISIONS 44). Aşama 5'in canlı panosu ve metrics endpoint'i bunun üzerine kurulur.
 - `internal/delivery`: `Worker` (kanal başına bir döngü; `FOR UPDATE SKIP LOCKED` ile kiralama,
   gönderimde şablon doldurma ve izin kontrolü, sonuç yazarken `status = 'sending' AND attempts = N`
   koşulu), `Limiter` (eşit aralıklı slot, burst yok, `PauseUntil` ile 429), `HTTPProvider`.
+- Giden metin saklanır (DECISIONS 44): `Worker.finishSent`, sağlayıcının kabul ettiği
+  doldurulmuş metni `sent` durumuyla aynı UPDATE'te `messages.sent_subject` / `sent_body`'ye
+  yazar. Yalnızca teslim edilen mesajda doludur. Metni sonradan yeniden üretip gösteren bir yol
+  ekleme; gösterilen her zaman saklanandır.
+- Dışa aktarma: `GET /api/campaigns/{id}/recipients.csv`, `Store.EachRecipient` (tek sorgu,
+  sayfasız). Liste ile aynı `recipientsFrom` ve `scanRecipient`'i kullanır; adresler maskeli
+  kalır. Dosyaya açık adres yazan bir seçenek ekleme (kimlik doğrulama yok). Kullanıcıdan ya da
+  modelden gelen hücreler `csvCell`'den geçer.
 - Sağlayıcı `recipient_unreachable` koduyla ret verirse (`delivery.Unreachable`) worker kişiyi o
   kanal için bastırır (`Worker.suppress`); karar koda bakar, hata metnine değil. Başka bir kalıcı
   ret (`Permanent`) kimseyi bastırmaz.
@@ -349,7 +387,8 @@ Kararlar DECISIONS 23–24'te. Kısaca:
 - Backend: `GET /api/campaigns/{id}/events` (SSE) ve `GET /metrics` (`internal/metrics`).
 - Compose'ta `web` servisi (nginx, `:3000`). Yerel geliştirme: `cd frontend && npm install &&
   npm run dev` (Vite `/api`'yi `:8080`'e iletir).
-- Tarayıcıda uçtan uca deneme mock LLM ile yapıldı; gerçek Claude key'i ile yapılmadı.
+- Tarayıcıda uçtan uca deneme mock LLM ile yapıldı; gerçek Claude ile deneme API üzerinden
+  yapıldı (16 Kasım, DECISIONS 41).
 
 ## Teslim (aşama 6, tamam)
 
@@ -360,7 +399,7 @@ Bitti ölçütlerinin durumu:
 | Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
 | CI yeşil | ✅ 12 Kasım: üç iş de (backend, frontend, compose) yeşil. İlk dört çalışma GitHub Actions arızası (11 Kasım 20:48 UTC) yüzünden kuyrukta kaldı; iptal edilebilir |
 | `ai-sessions/` temiz | ✅ Üç export var ve tarandı. Üçüncüsü (aşama 3–6) masaüstü uygulamasının dışa aktarımından metne çevrildi; araç çıktıları kısaltıldı, yerel kullanıcı adı ve e-posta gizlendi. 13 Kasım'daki export anına kadarını içerir (zamanlanmış gönderim, kampanyalar ekranı, dile göre içerik, açılış sayfası ve yeni tasarım, alıcı listesi dahil). Bağlam dolduğunda uygulamanın ürettiği özet export'a alınmaz, yerine tek satırlık not düşülür |
-| Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ Yapılmadı; README "Bilinen eksikler"de yazıyor. Key gelirse denenir ve README güncellenir |
+| Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ 16 Kasım'da yapıldı (`claude-opus-5-5`): kural, akışlı içerik, çeviri ve gönderim. İki hata bulundu ve düzeltildi (DECISIONS 41); kapsamı ve denenmeyenler README "Bilinen eksikler"de |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
 
 Bütün ölçütler sağlandı; aşama 6 tamam. Teslimden önce bu oturumda çalışmaya devam edilirse

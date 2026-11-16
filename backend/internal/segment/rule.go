@@ -74,6 +74,26 @@ const (
 type Rule struct {
 	Match      Match       `json:"match"`
 	Conditions []Condition `json:"conditions"`
+	// Everyone selects every user and takes no conditions (DECISIONS 43). It
+	// is a field of its own, not "an empty list", so that a rule which lost
+	// its conditions by accident is still an error. Opt-in, address and
+	// suppression are applied where the rule is used, as for any other rule.
+	Everyone bool `json:"everyone"`
+}
+
+// MarshalJSON writes "everyone" only when it is set, so every other rule
+// keeps the shape it had before the field existed, and never writes a null
+// conditions list, which Parse would refuse.
+func (r Rule) MarshalJSON() ([]byte, error) {
+	conditions := r.Conditions
+	if conditions == nil {
+		conditions = []Condition{}
+	}
+	return json.Marshal(struct {
+		Match      Match       `json:"match"`
+		Conditions []Condition `json:"conditions"`
+		Everyone   bool        `json:"everyone,omitempty"`
+	}{r.Match, conditions, r.Everyone})
 }
 
 // Condition is one of five variants (attribute, event, signup, metric, group),
@@ -128,12 +148,15 @@ var setFields = map[string]setField{
 	"city":     {column: "u.city", values: seed.Cities, noun: "şehir"},
 	"language": {column: "u.language", values: func() []string { return []string{"tr", "en"} }, noun: "dil"},
 	"gender":   {column: "u.gender", values: func() []string { return []string{"female", "male"} }, noun: "cinsiyet"},
+	// A stored attribute like the others; how a user got their tier is the
+	// seed's business, not the rule's (DECISIONS 45).
+	"loyalty_tier": {column: "u.loyalty_tier", values: func() []string { return seed.LoyaltyTiers }, noun: "sadakat seviyesi"},
 }
 
 // Stable orders for schemas and messages (map iteration is random).
 var (
-	setFieldOrder  = []string{"city", "language", "gender"}
-	attributeNames = []string{"city", "language", "gender", FieldAge}
+	setFieldOrder  = []string{"city", "language", "gender", "loyalty_tier"}
+	attributeNames = []string{"city", "language", "gender", "loyalty_tier", FieldAge}
 	eventTypes     = []string{"cart_add", "purchase"}
 	conditionTypes = []string{TypeAttribute, TypeEvent, TypeSignup, TypeMetric, TypeGroup}
 	metricNames    = []string{MetricTotalSpent, MetricOrderCount, MetricAvgOrderValue}

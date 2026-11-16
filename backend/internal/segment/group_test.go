@@ -234,31 +234,30 @@ func TestDescribeGroup(t *testing.T) {
 // The schema offers a group at the top level only: a group's own members
 // are the plain variants, so the model cannot be asked for deeper nesting.
 func TestSchemaGroupIsOneLevel(t *testing.T) {
-	items := JSONSchema()["properties"].(map[string]any)["conditions"].(map[string]any)["items"].(map[string]any)["anyOf"].([]any)
-	var group map[string]any
-	plain := 0
-	for _, v := range items {
-		variant := v.(map[string]any)
-		typ := variant["properties"].(map[string]any)["type"].(map[string]any)["const"]
-		if typ == TypeGroup {
-			group = variant
-		} else {
-			plain++
-		}
+	schema := JSONSchema()
+	items := schema["properties"].(fields).get("conditions").(map[string]any)["items"].(map[string]any)["anyOf"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("the rule offers %d alternatives, want the plain conditions and a group", len(items))
 	}
-	if group == nil {
-		t.Fatal("the schema has no group variant")
+	if ref := items[0].(map[string]any)["$ref"]; ref != conditionRef {
+		t.Errorf("plain conditions = %v", items[0])
 	}
-	members := group["properties"].(map[string]any)["conditions"].(map[string]any)["items"].(map[string]any)["anyOf"].([]any)
-	if len(members) != plain {
-		t.Errorf("a group offers %d variants, the rule %d plain ones", len(members), plain)
+	group := items[1].(map[string]any)
+	if group["properties"].(fields).get("type").(map[string]any)["const"] != TypeGroup {
+		t.Fatalf("second alternative = %v", group)
 	}
-	for _, v := range members {
-		if v.(map[string]any)["properties"].(map[string]any)["type"].(map[string]any)["const"] == TypeGroup {
+	// A group's members are the plain variants, by the same reference.
+	if ref := group["properties"].(fields).get("conditions").(map[string]any)["items"].(map[string]any)["$ref"]; ref != conditionRef {
+		t.Errorf("group members = %v", group)
+	}
+	// The definition itself holds no group and no reference: not recursive.
+	plain := schema["$defs"].(map[string]any)[conditionDef].(map[string]any)["anyOf"].([]any)
+	for _, v := range plain {
+		if v.(map[string]any)["properties"].(fields).get("type").(map[string]any)["const"] == TypeGroup {
 			t.Error("a group may contain a group")
 		}
 	}
-	if raw, _ := json.Marshal(group); strings.Contains(string(raw), "$ref") {
+	if raw, _ := json.Marshal(plain); strings.Contains(string(raw), "$ref") {
 		t.Error("the schema is recursive")
 	}
 }

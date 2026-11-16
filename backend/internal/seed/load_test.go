@@ -34,6 +34,30 @@ func TestLoadIsIdempotent(t *testing.T) {
 			nUsers, nEvents, len(users), len(events))
 	}
 
+	// The tier written by the generator is the one the purchases in the
+	// database add up to; this is also what migration 009 gives a database
+	// seeded before the column existed.
+	var wrong int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*) FROM users u
+LEFT JOIN (SELECT user_id, sum(amount) AS total FROM events WHERE event_type = 'purchase' GROUP BY user_id) t ON t.user_id = u.id
+WHERE u.loyalty_tier <> CASE WHEN COALESCE(t.total, 0) >= $1 THEN 'gold' WHEN COALESCE(t.total, 0) >= $2 THEN 'silver' ELSE 'bronze' END`,
+		seed.GoldSpend, seed.SilverSpend).Scan(&wrong); err != nil || wrong != 0 {
+		t.Fatalf("%d users carry a tier their purchases do not add up to, err %v", wrong, err)
+	}
+	tiers := map[string]int{}
+	for _, u := range users {
+		tiers[u.LoyaltyTier]++
+	}
+	for _, tier := range seed.LoyaltyTiers {
+		if tiers[tier] == 0 {
+			t.Errorf("no %s user among %d: %v", tier, len(users), tiers)
+		}
+	}
+	if len(tiers) != len(seed.LoyaltyTiers) || tiers["bronze"] <= tiers["silver"] || tiers["silver"] <= tiers["gold"] {
+		t.Errorf("tiers = %v", tiers)
+	}
+
 	// The id sequence must continue after the explicit ids we copied in.
 	var next int64
 	if err := pool.QueryRow(ctx,

@@ -148,7 +148,16 @@ var (
 
 	// Requirements the rule format cannot express; the mock answers "unsupported"
 	// for these so that path can be demoed without a real model.
-	unsupportedHints = []string{"dogum gun", "en cok", "sadik", "goruntule", "gold", "silver", "bronze", "ios", "android"}
+	unsupportedHints = []string{"dogum gun", "en cok", "sadik", "goruntule", "platin", "ios", "android"}
+
+	// Loyalty tiers (DECISIONS 45): "altın üyelere", "gold üye", "gümüş ve
+	// altın üyelere", "bronz seviyedeki". The tier word has to lead up to a
+	// word for a member, so "altın günleri kampanyası" is not a tier; every
+	// tier named on the way there counts, so none is dropped.
+	tierPhraseRe = regexp.MustCompile(`((bronze|bronz|gumus|silver|altin|gold)(,| ve| veya| ya da)? )+(uye|seviye|musteri)`)
+	tierWords    = []struct{ tier, words string }{
+		{"bronze", `bronz`}, {"silver", `gumus|silver`}, {"gold", `altin|gold`},
+	}
 
 	timesRe = regexp.MustCompile(`en az (\d+) (kez|kere|defa)`)
 	// "en fazla 2 kez", and "yalnızca 1 kez" / "sadece bir kere" (exactly N).
@@ -160,6 +169,9 @@ var (
 	spentRe  = regexp.MustCompile(`(\d+)\s*(tl|lira)\S*\s+(uzeri|ustu|fazla|ve uzeri|alti|altinda|az)`)
 	ordersRe = regexp.MustCompile(`en az (\d+) siparis|(\d+)\S*\s+fazla siparis`)
 	signupRe = regexp.MustCompile(`kayit ol|uye ol|yeni uye`)
+
+	// An explicit request for all users (DECISIONS 43).
+	everyoneRe = regexp.MustCompile(`\b(herkese|(tum|butun) (kullanici|musteri|uye)\w*)`)
 
 	excludeRe = regexp.MustCompile(`disinda|haric`)
 	ageSideRe = regexp.MustCompile(`(\d+)\s*yas\w*\s+(buyuk|kucuk|ustu|uzeri|alti)`)
@@ -209,7 +221,7 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 		if strings.Contains(text, hint) {
 			return map[string]any{
 				"kind":    "unsupported",
-				"reason":  "Kural formatı sıralama, doğum günü, sadakat seviyesi, cihaz ya da ürün görüntüleme koşullarını ifade edemiyor.",
+				"reason":  "Kural formatı sıralama, doğum günü, bronz / gümüş / altın dışındaki sadakat seviyeleri, cihaz ya da ürün görüntüleme koşullarını ifade edemiyor.",
 				"phrases": []string{original(brief, text, hint)},
 			}
 		}
@@ -304,6 +316,21 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"female"}})
 		case male && !female:
 			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "gender", Op: segment.OpIn, Values: []string{"male"}})
+		}
+		var tiers []string
+		for _, phrase := range tierPhraseRe.FindAllString(text, -1) {
+			for _, t := range tierWords {
+				if regexp.MustCompile(t.words).MatchString(phrase) && !slices.Contains(tiers, t.tier) {
+					tiers = append(tiers, t.tier)
+				}
+			}
+		}
+		// Lowest first, whatever order the brief names them in.
+		slices.SortFunc(tiers, func(a, b string) int { return slices.Index(seed.LoyaltyTiers, a) - slices.Index(seed.LoyaltyTiers, b) })
+		// All three named is everyone with a tier, which is everyone: not a
+		// condition, and the validator would say so.
+		if len(tiers) > 0 && len(tiers) < len(tierWords) {
+			conditions = append(conditions, segment.Condition{Type: segment.TypeAttribute, Field: "loyalty_tier", Op: segment.OpIn, Values: tiers})
 		}
 		if m := ageRe.FindStringSubmatch(text); m != nil {
 			lo, _ := strconv.Atoi(m[1])
@@ -503,6 +530,17 @@ func segmentResult(brief string, clock segment.Clock) map[string]any {
 	}
 
 	if len(conditions) == 0 {
+		// Asked for in so many words, and nothing else was: everyone. With a
+		// condition found, "herkese" is just how the sentence ends ("İstanbul'da
+		// yaşayan herkese") and the conditions above are the rule.
+		if everyoneRe.MatchString(text) {
+			return map[string]any{
+				"kind":        "rule",
+				"rule":        segment.Rule{Match: segment.MatchAll, Everyone: true},
+				"assumptions": []segment.Assumption{},
+				"schedule":    schedule,
+			}
+		}
 		return map[string]any{
 			"kind":    "unsupported",
 			"reason":  "Brief'te tanınan bir kitle koşulu bulunamadı (mock LLM yalnızca şehir, dil, cinsiyet, yaş, üyelik tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır).",
@@ -611,6 +649,8 @@ func positionOf(c segment.Condition, text string) int {
 		return first("ingilizce", "turkce")
 	case c.Field == "gender":
 		return first("kadin", "erkek")
+	case c.Field == "loyalty_tier":
+		return first("bronz", "gumus", "silver", "altin", "gold")
 	}
 	return -1
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { api } from '../api/client'
 import { useCampaignStore } from '../stores/campaign'
 import type { Channel, ChannelCounts, MessageStatus, Recipient, Suppression } from '../api/types'
 import { formatDateTime } from '../lib/time'
@@ -304,6 +305,13 @@ async function cancel() {
         <button class="small" type="button" :disabled="store.recipientsLoading" @click="store.loadRecipients()">
           {{ store.recipientsLoading ? 'Yükleniyor…' : 'Yenile' }}
         </button>
+        <a
+          v-if="store.campaign"
+          class="button small"
+          :href="api.recipientsCsvUrl(store.campaign.id, store.recipientsFilter)"
+          download
+          title="Bu süzgeçlere uyan bütün alıcılar; adresler listede olduğu gibi gizli"
+        >CSV indir</a>
         <button ref="closeButton" class="small" type="button" @click="store.closeRecipients()">Kapat</button>
       </div>
     </div>
@@ -394,6 +402,12 @@ async function cancel() {
                 <span v-if="r.suppression === 'unsubscribed'" class="sub">Bu kanaldan bir daha mesaj almayacak</span>
                 <span v-else-if="r.status === 'failed' && invalidAddress(r.error ?? '')" class="sub">Sonraki kampanyalara dahil edilmeyecek</span>
                 <span v-else-if="r.status === 'failed'" class="sub">Yeniden denenmez</span>
+                <!-- What the provider accepted for this person, as it went out. -->
+                <details v-if="r.text" class="sent-text">
+                  <summary>Giden metni gör</summary>
+                  <p v-if="r.subject" class="subject">{{ r.subject }}</p>
+                  <p class="body">{{ r.text }}</p>
+                </details>
               </td>
             </tr>
           </tbody>
@@ -406,7 +420,7 @@ async function cancel() {
           Daha fazla göster <span class="muted">· {{ store.recipients.length }} / {{ store.recipientsTotal }}</span>
         </button>
       </div>
-      <p class="hint tight" style="margin-top: 12px">Telefon ve email adresleri gizlenerek gösterilir. Liste, “Yenile” ile ya da gönderim bittiğinde güncellenir.</p>
+      <p class="hint tight" style="margin-top: 12px">Telefon ve email adresleri gizlenerek gösterilir; indirilen dosyada da öyle. Liste, “Yenile” ile ya da gönderim bittiğinde güncellenir.</p>
       </aside>
     </div>
   </Teleport>

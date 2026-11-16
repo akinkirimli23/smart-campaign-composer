@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +28,7 @@ type CampaignStore interface {
 	Totals(ctx context.Context) (campaign.Totals, error)
 	List(ctx context.Context, now time.Time) ([]campaign.Summary, error)
 	Recipients(ctx context.Context, id int64, f campaign.RecipientFilter, limit, offset int) (campaign.RecipientPage, error)
+	EachRecipient(ctx context.Context, id int64, f campaign.RecipientFilter, fn func(campaign.Recipient) error) error
 	Unsubscriber
 }
 
@@ -173,11 +176,7 @@ func (s *Server) handleCampaignRecipients(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	filter := campaign.RecipientFilter{
-		Status: query.Get("status"), Channel: query.Get("channel"), Language: query.Get("language"),
-		City: query.Get("city"), Query: query.Get("q"), Suppression: query.Get("suppression"),
-	}
-	page, err := s.campaigns.Recipients(ctx, id, filter, limit, offset)
+	page, err := s.campaigns.Recipients(ctx, id, recipientFilter(query), limit, offset)
 	switch {
 	case errors.Is(err, campaign.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "Kampanya bulunamadı", nil)
@@ -189,6 +188,94 @@ func (s *Server) handleCampaignRecipients(w http.ResponseWriter, r *http.Request
 	default:
 		writeJSON(w, http.StatusOK, page)
 	}
+}
+
+// recipientFilter reads the list's filters from the query string.
+func recipientFilter(query url.Values) campaign.RecipientFilter {
+	return campaign.RecipientFilter{
+		Status: query.Get("status"), Channel: query.Get("channel"), Language: query.Get("language"),
+		City: query.Get("city"), Query: query.Get("q"), Suppression: query.Get("suppression"),
+	}
+}
+
+var csvStatus = map[string]string{
+	"pending": "Bekliyor", "sending": "Gönderiliyor", "sent": "Teslim edildi",
+	"failed": "Başarısız", "skipped": "Atlandı", "cancelled": "İptal edildi",
+}
+
+var csvSuppression = map[string]string{"unsubscribed": "Abonelikten çıktı", "invalid_address": "Adres geçersiz"}
+
+// handleCampaignRecipientsCSV is the recipient list as a file (DECISIONS 44):
+// the same rows, the same filters and the same masked addresses as the list
+// on screen, plus the text each delivered message carried. It holds nothing
+// the screen does not show, so downloading it moves no address out of the
+// system.
+func (s *Server) handleCampaignRecipientsCSV(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "geçersiz kampanya numarası", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	// Headers go out with the first row, so an unknown campaign or a bad
+	// filter can still be answered as a JSON error.
+	var out *csv.Writer
+	start := func() {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="kampanya-%d-alicilar.csv"`, id))
+		w.Header().Set("Cache-Control", "no-store")
+		// The byte order mark is what makes Excel read the file as UTF-8.
+		_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+		out = csv.NewWriter(w)
+		_ = out.Write([]string{"Ad", "Kanal", "Adres (gizli)", "Dil", "Şehir", "Durum", "Deneme", "Gönderim zamanı (UTC)", "Hata", "Bundan sonra", "Konu", "Metin"})
+	}
+	err = s.campaigns.EachRecipient(ctx, id, recipientFilter(r.URL.Query()), func(rec campaign.Recipient) error {
+		if out == nil {
+			start()
+		}
+		sentAt := ""
+		if rec.SentAt != nil {
+			sentAt = rec.SentAt.UTC().Format("2006-01-02 15:04:05")
+		}
+		channel := "SMS"
+		if rec.Channel == campaign.ChannelEmail {
+			channel = "Email"
+		}
+		return out.Write([]string{
+			csvCell(rec.Name), channel, rec.Address, rec.Language, csvCell(rec.City), csvStatus[rec.Status],
+			strconv.Itoa(rec.Attempts), sentAt, csvCell(rec.Error), csvSuppression[rec.Suppression], csvCell(rec.Subject), csvCell(rec.Text),
+		})
+	})
+	switch {
+	case out != nil:
+		// Rows are already on their way; a failure now can only be logged.
+		if err != nil {
+			slog.Error("campaign recipients csv", "err", err)
+		}
+		out.Flush()
+	case errors.Is(err, campaign.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "Kampanya bulunamadı", nil)
+	case errors.Is(err, campaign.ErrInvalidFilter):
+		writeError(w, http.StatusBadRequest, "invalid_request", "geçersiz süzgeç değeri", nil)
+	case err != nil:
+		slog.Error("campaign recipients csv", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Alıcılar okunamadı", nil)
+	default:
+		start() // no rows: a file with only the header
+		out.Flush()
+	}
+}
+
+// csvCell keeps a spreadsheet from running a cell as a formula: text written
+// by a marketer or a model ("=...", "+...") is data. The apostrophe is the
+// spreadsheets' own way of saying so.
+func csvCell(s string) string {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		return "'" + s
+	}
+	return s
 }
 
 // pageNumber reads an optional non-negative integer query parameter.
