@@ -10,8 +10,8 @@ kullanıcılardır, gönderim bu repodaki mock provider'a yapılır.
 
 ## Kapsam durumu
 
-**Case'in zorunlu maddelerinin tamamı karşılandı; yetiştirilemeyen zorunlu madde yok.**
-Dört bonustan üçü yapıldı; A/B varyantları bilinçli olarak yapılmadı.
+**Case'in zorunlu maddelerinin tamamı karşılandı.** Üstüne üç bonus (zamanlanmış gönderim,
+kullanıcının diline göre içerik, CI) ve case'in istemediği birkaç ek yapıldı.
 
 | Case'teki başlık | Durum |
 |---|---|
@@ -23,12 +23,16 @@ Dört bonustan üçü yapıldı; A/B varyantları bilinçli olarak yapılmadı.
 | AI: yapılandırılmış (JSON) çıktı ve backend doğrulaması; testler API key olmadan, mock LLM ile | Karşılandı; gerçek Claude ile de denendi |
 | Kaynaklar: `.env` / `.env.example`, birkaç bin kullanıcılık seed, hata / gecikme / 429 döndüren mock provider | Karşılandı |
 | Teslim: `docker compose up`, `make test`, README, DECISIONS, `ai-sessions/` | Karşılandı; temiz bir kopyada denendi |
-| Bonus: zamanlanmış gönderim, kullanıcının diline göre içerik, CI | Yapıldı |
-| Bonus: A/B varyantları | Yapılmadı; nedeni [Bonuslar](#bonuslar) bölümünde |
+| Bonus: zamanlanmış gönderim (iptal ile), kullanıcının diline göre içerik, CI | Yapıldı |
 
-Zorunlu maddelerin ötesinde kalan sınırlar ve bilinçli olarak dışarıda bırakılanlar
-[Bilinen eksikler](#bilinen-eksikler) ve [Sonraya bırakılanlar](#sonraya-bırakılanlar)
-bölümlerinde: kimlik doğrulama, kanal seçimi, ekran bileşenlerinin otomatik testi gibi.
+Case'in istediğinin üstüne eklenenler:
+
+- Brief'teki gönderim zamanı okunur ve öneri olarak sunulur ("cuma sabahı gönder").
+- Kitle kuralı formla düzenlenir; VE / VEYA grupları, 81 il, sadakat seviyesi, harcama ve
+  sipariş metrikleri desteklenir.
+- Geçersiz çıkan adres ve abonelikten çıkan kişi sonraki kampanyalara dahil edilmez.
+- Alıcı listesi: kime ne gitti, ne oldu; süzgeçler, giden metin ve maskeli CSV.
+- Gerçek Claude API ile 60'tan fazla brief denendi; bulunan hatalar düzeltildi ve belgelendi.
 
 ## Kurulum
 
