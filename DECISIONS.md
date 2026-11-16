@@ -11,6 +11,10 @@ Kayıtlar proje ilerledikçe eklenir; eski kararlar değişirse silinmez, günce
 kullanıldığı için sabittir. Değişen karar silinmez: eski kayıt yerinde durur, sonuna
 "Güncelleme" notu düşülür ve aşağıdaki tabloda yenisini gösterir.
 
+Kayıtlarda geçen README "Bilinen eksikler" ve "Sonraya bırakılanlar" bölümleri 17 Kasım'da
+README'den kaldırıldı (README yalnızca yapılanı anlatır); o atıflar yazıldıkları günün
+durumudur. Her kararın sınırı kendi kaydındaki "Bedeli / sınırı" kısmındadır.
+
 **Önce bunlar.** Sistemin nasıl kurulduğunu en çok bu kararlar belirledi:
 
 | Konu | Kararlar |

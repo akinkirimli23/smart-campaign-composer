@@ -16,8 +16,10 @@ Case'in kapsam notu: her şeyi yapmak yerine çekirdek akışı sağlam yap, yet
   eski kaydı silme, nedenini yaz. Başındaki "Hızlı bakış" tablosunda her kararın durumu var:
   yeni karar eklersen ya da birini değiştirirsen o satırı da güncelle. Numaralar koddan ve
   dokümanlardan başvurulduğu için sabittir.
-- `README.md`: kurulum, mimari özeti, testler, "Bilinen eksikler" ve "Sonraya bırakılanlar".
-  Yeni bir eksik ya da ertelenen iş çıkarsa oraya yaz.
+- `README.md`: kapsam durumu, kurulum, kullanım, mimari özeti, testler, bonuslar. "Bilinen
+  eksikler" ve "Sonraya bırakılanlar" bölümleri 17 Kasım'da kullanıcının kararıyla kaldırıldı:
+  README yalnızca yapılanı anlatır. Bir özelliğin sınırı ya da ertelenen bir iş çıkarsa
+  README'ye değil, ilgili DECISIONS kaydının "Bedeli / sınırı" kısmına yaz.
 
 ## Komutlar
 
@@ -168,7 +170,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
 | `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (45 kayıt) |
 | `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ dört dosya. Üçüncü oturum iki dosyada: 13 Kasım'a kadarı ve devamı (17 Kasım'a kadar: ince ayar, gerçek Claude denemesi, herkese gönder, giden metin + CSV, sadakat seviyesi). Sonrasında çalışılırsa devam dosyası yeniden alınmalı |
-| Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
+| Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ Zorunlu maddelerin hepsi karşılandı (README "Kapsam durumu"); yapılmayan tek bonus A/B, README "Bonuslar"da. Sınırlar DECISIONS'ta, her kararın "Bedeli / sınırı" kısmında |
 
 ### Bonus (isteğe bağlı)
 
@@ -246,7 +248,7 @@ Format ve gerekçesi DECISIONS 13–15'te. Kısaca:
   vermeye dönme: gerçek API şemayı reddeder. Alan ile değerin uyuşmasını `Parse` denetler.
 - Reddedilen model çıktısı `segment output rejected` ile loglanır (deneme no + hatalar).
 - Şemaya alan eklersen gerçek API'de dene (`LLM_MODE=auto` + key); sınıra yakın ve testler bunu
-  göremez. Gerçek Claude ile deneme 16 Kasım'da yapıldı (README "Bilinen eksikler").
+  göremez. Gerçek Claude ile deneme 16 Kasım'da yapıldı (README "Testler").
 
 ## İçerik (aşama 3, kesinleşti)
 
@@ -323,7 +325,7 @@ Kararlar DECISIONS 21–22'de. Kısaca:
   adrese bağlı kalıcı rettir (`422`): "başarısız" durumunun çalışan sistemde görünmesini sağlar
   (DECISIONS 34).
 - Segment kuralına `min_count`, harcama / sipariş metrikleri ve üyelik tarihi aşama 5'ten sonra
-  eklendi (DECISIONS 25). "Herkese gönder" ve diğer eksikler README "Sonraya bırakılanlar"da.
+  eklendi (DECISIONS 25). "Herkese gönder" sonradan eklendi (DECISIONS 43).
 
 ## Arayüz (aşama 5, kesinleşti)
 
@@ -401,7 +403,7 @@ Bitti ölçütlerinin durumu:
 | Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
 | CI yeşil | ✅ 12 Kasım: üç iş de (backend, frontend, compose) yeşil. İlk dört çalışma GitHub Actions arızası (11 Kasım 20:48 UTC) yüzünden kuyrukta kaldı; iptal edilebilir |
 | `ai-sessions/` temiz | ✅ Dört dosya var ve tarandı. Üçüncü oturum masaüstü uygulamasının dışa aktarımından metne çevrildi ve iki dosyada durur: `…-03-…` 13 Kasım'daki export anına kadar, `2026-11-13-04-…` oradan 17 Kasım'a kadar (temiz kurulum denemesi ve doküman düzeni dahil). Araç çıktıları kısaltıldı; yerel kullanıcı adı, e-posta, ad soyad, API anahtarının adı ve API istek / çalışma alanı kimlikleri gizlendi; ekran görüntüleri alınmadı. Bağlam dolduğunda uygulamanın ürettiği özet export'a alınmaz, yerine tek satırlık not düşülür |
-| Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ 16 Kasım'da yapıldı (`claude-opus-5-5`): kural, akışlı içerik, çeviri ve gönderim. İki hata bulundu ve düzeltildi (DECISIONS 41); kapsamı ve denenmeyenler README "Bilinen eksikler"de |
+| Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ 16 Kasım'da yapıldı (`claude-opus-5-5`): kural, akışlı içerik, çeviri ve gönderim. İki hata bulundu ve düzeltildi (DECISIONS 41); kapsamı README "Testler"de, denenmeyenler DECISIONS 41'de |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
 
 Bütün ölçütler sağlandı; aşama 6 tamam. Teslimden önce bu oturumda çalışmaya devam edilirse

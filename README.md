@@ -32,7 +32,7 @@ Case'in istediğinin üstüne eklenenler:
   sipariş metrikleri desteklenir.
 - Geçersiz çıkan adres ve abonelikten çıkan kişi sonraki kampanyalara dahil edilmez.
 - Alıcı listesi: kime ne gitti, ne oldu; süzgeçler, giden metin ve maskeli CSV.
-- Gerçek Claude API ile 60'tan fazla brief denendi; bulunan hatalar düzeltildi ve belgelendi.
+- Gerçek Claude API ile yaklaşık 60 brief denendi; bulunan hatalar düzeltildi ve belgelendi.
 
 ## Kurulum
 
@@ -322,6 +322,14 @@ Uç durum brief seti (51 brief: yazım, veride olmayan istekler, çelişkiler, s
 enjeksiyon denemeleri) `python scripts/brief-seti.py` ile çalışan bir yığına karşı koşturulur;
 ne denediği ve ilk çalıştırmada ne bulunduğu `docs/brief-seti.md` içinde.
 
+**Gerçek Claude ile deneme.** Geliştirme mock LLM ile yürüdü; teslimden önce gerçek API ile
+(`claude-opus-5-5`) uçtan uca denendi: brief'ten kural, akışlı Türkçe içerik, İngilizceye
+yazdırma ve kampanya gönderimi. Ardından sınırı zorlayan yaklaşık 55 brief daha koşturuldu (iç içe
+gruplar, değilleme, çelişki, talimat enjeksiyonu, İngilizce brief, sadakat seviyesi, "tüm
+kullanıcılar"). Dokuz kuralın kişi sayısı elle yazılmış SQL ile karşılaştırıldı ve aynı çıktı.
+Bu denemeler mock ile görülemeyen dört hatayı buldu; hepsi düzeltildi ve nedenleriyle yazıldı
+(DECISIONS 41, 42, 45).
+
 ### Bir alıcı listede nasıl görünür
 
 | Durum | Ne oldu | O kampanyada | Sonraki kampanyada |
@@ -334,59 +342,6 @@ ne denediği ve ilk çalıştırmada ne bulunduğu `docs/brief-seti.md` içinde.
 
 Kuyruğa girmeyenler sonraki kampanyanın alıcı listesinde yer almaz; kitle ekranında nedenine
 göre toplu sayılır ("N mesaj gönderilmeyecek: …"). Hepsi kanal bazındadır (DECISIONS 35, 37).
-
-## Bilinen eksikler
-
-- **Gerçek Claude ile deneme küçük bir örnekle yapıldı (16 Kasım, `claude-opus-5-5`).**
-  Geliştirme mock LLM ile yürüdü; teslimden önce gerçek key ile şunlar denendi: beş brief'ten
-  kural (örnek brief, iki gruplu "veya", "yalnızca bir kez", kategorili harcama + "cuma sabahı"
-  gönderim zamanı, desteklenmeyen bir istek), akışlı Türkçe içerik, İngilizceye yazdırma ve
-  431 mesajlık bir kampanyanın gönderimi. Hepsi ilk denemede geçerli çıktı verdi. Bu deneme iki
-  hata buldu ve ikisi de düzeltildi (DECISIONS 41): API kural şemasını "gramer çok büyük" diye
-  reddediyordu, şema kabul edildikten sonra da model yalnızca "desteklenmiyor" diyebiliyordu.
-  Ardından sınırı zorlayan 32 brief daha denendi (iç içe gruplar, XOR, değilleme, çelişki,
-  enjeksiyon, İngilizce brief); bulunan iki hata daha düzeltildi: "3'ten fazla" tam 3'ü de
-  kapsıyordu, çelişkili brief ve "herkese gönder" ise "yaptı veya yapmadı" koşuluyla herkese
-  açılıyordu (DECISIONS 41 eki ve 42). "Herkese gönder" sonradan açık bir `everyone` işaretiyle
-  desteklendi ve dokuz brief ile gerçek modelde denendi (DECISIONS 43). Sadakat seviyesi eklenince API
-  şemayı yeniden "çok büyük" diye reddetti; kısa kümeli nitelikler modelin şemasında tek seçenekte
-  birleştirildi ve 13 brief ile yeniden denendi (DECISIONS 45). Dokuz kuralın sayısı elle yazılmış SQL ile aynı çıktı.
-  Denenmeyenler: `docs/brief-seti.md`'deki setin tamamı (o belge yalnızca mock sütununu
-  içerir) ve içerik tarafında hata geri besleme turu (kural tarafında bir kez çalıştı). Kitle
-  ekranı arayüzden gerçek modelle bir brief için görüldü; mesaj ve gönderim adımları API
-  üzerinden denendi (arayüz aynı uçları çağırır).
-- Belirsiz cümlelerde gerçek modelin okuması tutarlı değil: "son 30 günde sepete ekleyen veya
-  X TL üzeri harcayan" kalıbında dönem bir brief'te yalnızca sepete, bir diğerinde harcamaya da
-  uygulandı. Her okuma yorum olarak gösterilir; aynı cümlenin her seferinde aynı kurala
-  dönüşeceği garanti değildir.
-- Model şeması API'nin gramer sınırına yakın: yeni bir koşul alanı eklenirse gerçek API'de
-  yeniden denenmeli. Testler bunu yakalayamaz, yalnızca bilinen iki nedeni (null olabilen alan,
-  koşul şemalarının ikinci kopyası) geri gelmesin diye denetler.
-- Arayüz masaüstü genişliğinde denendi; dar ekran yalnızca tarayıcı öykünmesiyle, gerçek cihazda
-  değil. Varsayılan tema krem; koyu tema üst menüdeki düğmeyle seçilir ve daha az denendi.
-- Açılış sayfası case'in istediği bir şey değil, sunum için eklendi; araç ondan bağımsız çalışır
-  (DECISIONS 32).
-- Alıcı listesi CSV olarak indirilebilir, adresler maskeli (DECISIONS 44); açık adresli dosya ve
-  Excel biçimi yok. Giden metin yalnızca 16 Kasım'dan sonra teslim edilen mesajlarda saklıdır.
-  Ekrandaki listede gönderim sürerken sayfalar arasında bir satır yer
-  değiştirebilir, "Yenile" düzeltir. Ad araması veritabanının harf kurallarına bağlıdır
-  (DECISIONS 33).
-- Geçersiz çıkan adres bastırılır ve sonraki kampanyalara dahil edilmez (DECISIONS 35), ama
-  bastırmayı kaldırmanın arayüzü yok ve tek bir ret yeterli sayılıyor.
-- Abonelikten çıkma yalnızca sağlayıcının bildirimiyle işlenir (DECISIONS 37): gelen STOP mesajı
-  ayrıştırılmaz, emailde çıkma bağlantısı ve yeniden abone olma yoktur; webhook basit bir
-  paylaşılan anahtarla korunur.
-- Kampanyada kanal seçilemiyor: her kampanya izni olan herkese hem SMS hem email olarak gider.
-  Uç durum brief setinde bulunan diğer açıklar `docs/brief-seti.md` içinde.
-- Ekran bileşenleri için otomatik test yok; mantık ve durum birim testleriyle, ekranlar tarayıcıda
-  elle denendi.
-- Oluşturma adımlarındayken (brief, kitle, içerik) sayfa yenilenirse akış baştan başlar.
-  Onaylanan kampanyaların panosu ve liste ise adreslenebilir.
-- Kimlik doğrulama yok: arayüze ulaşan herkes her kampanyayı görür ve iptal edebilir.
-- Kampanya listesinde sayfalama, arama ve filtre yok (son 100 kampanya).
-- Provider sürekli 429 dönerse mesaj süresiz bekler; toplam bekleme için üst sınır yok
-  (DECISIONS 21).
-- LLM çağrıları için metrik yok, yalnızca log (DECISIONS 23).
 
 ## Segment kuralı neleri ifade edebilir
 
@@ -429,17 +384,3 @@ numarasından türetilen deterministik bir atamayla bir varyanta bağlanır ve a
 yazılır (yeniden denemede aynı kişi aynı varyantı alır, "iki kez gitmez" kuralı bozulmaz);
 worker metni dil ve varyanta göre seçer; sağlayıcının açılma / tıklama geri bildirimleri mesaja
 bağlanır ve fark anlamlı olmadan kazanan gösterilmez. Ayrıntısı DECISIONS 31'de.
-
-## Sonraya bırakılanlar
-
-Zaman kalırsa ele alınacaklar ve bilinçli olarak yapılmayanlar.
-
-| Konu | Not |
-|---|---|
-| İki seviyeden derin VE / VEYA | Tek seviye grup var (DECISIONS 38); "A ve (B veya (C ve D))" gibi daha derin istekler ifade edilemez ve reddedilir |
-| Kesin "büyüktür" ("en fazla N kez" ve kategori bazında harcama DECISIONS 40 ile eklendi) | Karşılaştırmalar kapsayıcı; ayrıntılar DECISIONS 25 |
-| Ülke, sadakat puanı, cihaz; ürün görüntüleme, uygulama / email açma | Seed verisinde yok |
-| Gerçek SMS kodlaması (Türkçe karakterde 70 karakterlik parça) | Limit case'teki gibi düz karakter sayısı (DECISIONS 19) |
-| Zamanlanmış kampanyayı düzenleme, alıcının yerel saatinde gönderim | Zamanlanan kampanya yalnızca iptal edilebilir; saat pazarlamacının saat dilimindedir (DECISIONS 27) |
-| Türkçe ve İngilizce dışındaki diller | Dil kümesi kapalı ve seed'deki iki dille sınırlı; yeni dil `content.Languages` tablosuna ve `users.language` kısıtına eklenir. Çok dilde tek çağrı yerine dil grupları gerekir (DECISIONS 30) |
-| Panoda dil bazında gönderim sayıları | Pano yalnızca kampanyanın hangi dillerde metni olduğunu gösterir |
