@@ -165,7 +165,7 @@ Aşama 6'da teslimden önce madde madde kontrol edilir; karşılanmayan README'd
 | `make test` ile çalışan testler | 1 ✅ (her aşamada korunur) |
 | `README.md`: kurulum ve kısa mimari özeti | 6 ✅ |
 | `DECISIONS.md`: önemli kararlar ve nedenleri | her aşama ✅ (45 kayıt) |
-| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ üç oturum. Üçüncüsü 13 Kasım'da güncellendi (açılış sayfası, yeni tasarım ve alıcı listesi dahil); sonrasında çalışılırsa yeniden alınmalı |
+| `ai-sessions/`: tüm Claude session export'ları, API key ve kişisel bilgiden temizlenmiş | ✅ dört dosya. Üçüncü oturum iki dosyada: 13 Kasım'a kadarı ve devamı (16 Kasım akşamına kadar: ince ayar, gerçek Claude denemesi, herkese gönder, giden metin + CSV, sadakat seviyesi). Sonrasında çalışılırsa devam dosyası yeniden alınmalı |
 | Yetiştirilemeyenler README'de belirtilmiş | 6 ✅ ("Bilinen eksikler", "Sonraya bırakılanlar") |
 
 ### Bonus (isteğe bağlı)
@@ -398,12 +398,12 @@ Bitti ölçütlerinin durumu:
 |---|---|
 | Temiz bir clone'da `docker compose up --build` ve testler çalışıyor | ✅ 11 Kasım'da denendi: taze seed 381 / 222 / 254 / 58 verdi, kampanya gönderildi, backend ve frontend testleri geçti |
 | CI yeşil | ✅ 12 Kasım: üç iş de (backend, frontend, compose) yeşil. İlk dört çalışma GitHub Actions arızası (11 Kasım 20:48 UTC) yüzünden kuyrukta kaldı; iptal edilebilir |
-| `ai-sessions/` temiz | ✅ Üç export var ve tarandı. Üçüncüsü (aşama 3–6) masaüstü uygulamasının dışa aktarımından metne çevrildi; araç çıktıları kısaltıldı, yerel kullanıcı adı ve e-posta gizlendi. 13 Kasım'daki export anına kadarını içerir (zamanlanmış gönderim, kampanyalar ekranı, dile göre içerik, açılış sayfası ve yeni tasarım, alıcı listesi dahil). Bağlam dolduğunda uygulamanın ürettiği özet export'a alınmaz, yerine tek satırlık not düşülür |
+| `ai-sessions/` temiz | ✅ Dört dosya var ve tarandı. Üçüncü oturum masaüstü uygulamasının dışa aktarımından metne çevrildi ve iki dosyada durur: `…-03-…` 13 Kasım'daki export anına kadar, `2026-11-13-04-…` oradan 16 Kasım akşamına kadar. Araç çıktıları kısaltıldı; yerel kullanıcı adı, e-posta, ad soyad, API anahtarının adı ve API istek / çalışma alanı kimlikleri gizlendi; ekran görüntüleri alınmadı. Bağlam dolduğunda uygulamanın ürettiği özet export'a alınmaz, yerine tek satırlık not düşülür |
 | Gerçek Claude denemesi yapıldı ya da yapılmadığı README'de yazıyor | ✅ 16 Kasım'da yapıldı (`claude-opus-5-5`): kural, akışlı içerik, çeviri ve gönderim. İki hata bulundu ve düzeltildi (DECISIONS 41); kapsamı ve denenmeyenler README "Bilinen eksikler"de |
 | Gereksinim listesi madde madde kontrol edildi | ✅ `case.pdf` yeniden okundu; fonksiyonel, AI, kaynak ve teslim maddelerinin hepsi karşılanıyor. Bonuslardan yalnızca CI var |
 
 Bütün ölçütler sağlandı; aşama 6 tamam. Teslimden önce bu oturumda çalışmaya devam edilirse
-üçüncü export yeniden alınır.
+devam dosyası (`ai-sessions/2026-11-13-04-…`) yeniden alınır.
 
 - CI üç iş çalıştırır: backend (gofmt, vet, `-race` ile testler, Postgres servisine karşı),
   frontend (`npm ci`, test, build), compose (README'deki kurulum + örnek brief'in kitle sayısı).
