@@ -13,7 +13,9 @@ Case'in kapsam notu: her şeyi yapmak yerine çekirdek akışı sağlam yap, yet
 ## Önce oku
 
 - `DECISIONS.md`: alınmış kararlar ve gerekçeleri. Bir kararı değiştirirsen orayı güncelle,
-  eski kaydı silme, nedenini yaz.
+  eski kaydı silme, nedenini yaz. Başındaki "Hızlı bakış" tablosunda her kararın durumu var:
+  yeni karar eklersen ya da birini değiştirirsen o satırı da güncelle. Numaralar koddan ve
+  dokümanlardan başvurulduğu için sabittir.
 - `README.md`: kurulum, mimari özeti, testler, "Bilinen eksikler" ve "Sonraya bırakılanlar".
   Yeni bir eksik ya da ertelenen iş çıkarsa oraya yaz.
 

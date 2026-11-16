@@ -5,6 +5,72 @@ Kayıtlar proje ilerledikçe eklenir; eski kararlar değişirse silinmez, günce
 
 ---
 
+## Hızlı bakış
+
+45 karar var; numaralar koddaki yorumlarda, README'de ve CLAUDE.md'de başvuru olarak
+kullanıldığı için sabittir. Değişen karar silinmez: eski kayıt yerinde durur, sonuna
+"Güncelleme" notu düşülür ve aşağıdaki tabloda yenisini gösterir.
+
+**Önce bunlar.** Sistemin nasıl kurulduğunu en çok bu kararlar belirledi:
+
+| Konu | Kararlar |
+|---|---|
+| LLM çıktısını güvenilir yapmak | 13 (kural biçimi), 14 (açıklamayı backend üretir), 15 (model "desteklenmiyor" diyebilir), 19 (karakter limiti en kötü durumla), 41 (gerçek API: şema ve alan sırası), 42 (kitleyi genişleten kural reddedilir) |
+| Gönderim güvenilirliği | 2 (kuyruk Postgres'te), 3 (hız limiti), 21 (retry ve 429), 22 (alıcılar onayda dondurulur), 35 ve 37 (geçersiz adres ve abonelikten çıkma) |
+| Kapsam kararları | 30 (dile göre içerik), 31 (A/B neden yok), 38 (tek seviye grup), 43 (tüm kullanıcılar), 45 (sadakat seviyesi) |
+
+**Tüm kararlar.**
+
+| # | Karar | Durum |
+|---|---|---|
+| 1 | Backend dili: Go | geçerli |
+| 2 | Kuyruk: ayrı bir broker değil, Postgres tablosu | geçerli |
+| 3 | Hız limiti: şimdilik süreç içinde, yatay ölçeklemede Redis | geçerli |
+| 4 | Davranış verisi: özet kolonlar değil, olay tablosu | geçerli |
+| 5 | Seed verisi deterministik | geçerli |
+| 6 | Kanal izni ve adres birlikte zorunlu | geçerli |
+| 7 | Segment kuralı yalnızca kapalı değer kümeleriyle çalışır | geçerli; kümeler genişledi (39, 45) |
+| 8 | Migration'lar binary'ye gömülü, advisory lock ile korunuyor | geçerli |
+| 9 | Sağlık kontrolü: liveness ve readiness ayrı | geçerli |
+| 10 | LLM modu: key yoksa mock'a düş | geçerli |
+| 11 | Test stratejisi | geçerli |
+| 12 | Veritabanı kısıtları: yapısal kurallar CHECK ile, iş değerleri uygulamada | geçerli |
+| 13 | Segment kuralı formatı: düz, tipli koşul listesi | geçerli; grup (38) ve `everyone` (43) eklendi |
+| 14 | Kitle açıklamasını backend üretir, Claude yalnızca yorumlarını bildirir | geçerli |
+| 15 | Claude "desteklenmiyor" diyebilir; kısmi kural üretilmez | geçerli |
+| 16 | Claude istemcisi: resmi Go SDK, `llm.Client` arayüzünün arkasında | geçerli |
+| 17 | İçerik tek dilde; dile göre içerik bonusu yapılmadı | **değişti** → 30 |
+| 18 | İçerik akışı: backend alan bazlı olaylar yollar | geçerli |
+| 19 | Karakter limiti: en kötü durum, tüm kullanıcıların en uzun değeriyle | geçerli |
+| 20 | Segment kuralının kapsamı şimdilik genişletilmiyor; kısmi kural yine yok | kapsam kısmı **değişti** → 25, 38, 40, 43, 45; "kısmi kural yok" geçerli |
+| 21 | Retry durumu veritabanında; üstel backoff, 429'da kanal duraklar | geçerli |
+| 22 | Şablonlar gönderim anında doldurulur; alıcılar onayda dondurulur | geçerli; "metin saklanmaz" kısmı **değişti** → 44 |
+| 23 | Canlı pano SSE ile; metrics Prometheus metin formatında | geçerli |
+| 24 | Arayüz ayrı bir container'da, nginx arkasında | geçerli |
+| 25 | Segment kuralına olay sayısı, üyelik tarihi ve satın alma metrikleri eklendi | geçerli |
+| 26 | Kitle kuralı formla düzenlenir; JSON yalnızca geliştirici görünümünde | geçerli |
+| 27 | Zamanlanmış gönderim ve iptal: zamanlayıcı yok, kuyruk zaten bekletiyor | geçerli |
+| 28 | Brief'teki gönderim zamanı öneri olarak okunur | geçerli |
+| 29 | Kampanyalar ekranı; adres çubuğu yönlendirici kütüphanesi olmadan | geçerli |
+| 30 | Dile göre içerik: ana dil için bir çağrı, diğer dillerin tamamı için bir çağrı | geçerli |
+| 31 | A/B varyantları yapılmadı: ölçecek veri yok | geçerli |
+| 32 | Açılış sayfası ve editoryal tasarım; kaydırmayla oynayan sahne video değil, kod | geçerli |
+| 33 | Alıcı listesi: panoda değil, istenince açılan panelde; adresler maskeli | geçerli; "dışa aktarma yok" kısmı **değişti** → 44 |
+| 34 | Mock sağlayıcıda kalıcı ret: bazı alıcılara hiç ulaşılamaz | geçerli |
+| 35 | Geçersiz adres bastırılır: sağlayıcının "yok" dediği adrese bir daha gönderilmez | geçerli |
+| 36 | Uç durum brief seti; mock LLM atamayacağı isteği reddeder | geçerli; iki ret kalktı (43, 45) |
+| 37 | Abonelikten çıkma: sağlayıcı webhook'la bildirir, kişi o kanalda bastırılır | geçerli |
+| 38 | Kuralda tek seviye grup: "(A veya B) ve C" ifade edilebilir | geçerli; şemadaki `$ref` notu 41 ile değişti |
+| 39 | 81 il: veri genişler, örnek brief'in sayıları değişmez; arayüzde aranabilir seçici | geçerli |
+| 40 | Koşul çeşitleri: "en fazla N kez", ortalama sipariş tutarı, metriklerde kategori | geçerli |
+| 41 | Gerçek Claude denemesi: modele giden şema küçültüldü ve alan sırası sabitlendi | geçerli; seçenek sayısı 45 ile değişti |
+| 42 | "Yaptı veya yapmadı" bir kitle değildir: doğrulayıcı herkesi seçen koşul çiftini reddeder | geçerli |
+| 43 | "Tüm kullanıcılara gönder" desteklenir: kuralda açık bir `everyone` işareti | geçerli |
+| 44 | Giden metin mesaj satırında saklanır; alıcı listesi maskeli CSV olarak indirilebilir | geçerli |
+| 45 | Sadakat seviyesi: harcamadan türetilen, kapalı kümeli bir kullanıcı niteliği; modelin şemasında kısa kümeler tek seçenekte | geçerli |
+
+---
+
 ## 1. Backend dili: Go
 
 **Karar.** Backend Go ile yazıldı.
@@ -123,6 +189,9 @@ bu durumu sessizce sıfır kişilik bir kitleye dönüştürmek yerine açık bi
 
 **Güncelleme (15 Kasım, karar 39).** Şehir kümesi 15'ten 81 ile çıktı. Karar aynı: küme hâlâ
 kapalı ve `seed.Cities()` tek kaynağı; yalnızca daha büyük.
+
+**Güncelleme (16 Kasım, karar 45).** Kapalı kümelere sadakat seviyesi eklendi (bronz, gümüş,
+altın). Karar aynı: kümede olmayan değer ("platin") doğrulama hatasıdır.
 
 ---
 
@@ -250,6 +319,10 @@ seviye grup içerebilir. Bu kararın gerekçeleri (kapalı kümeler, tipli koşu
 metin değil yapı üretmesi) aynen geçerli; değişen yalnızca VE ile VEYA'nın tek kuralda birlikte
 kullanılabilmesi.
 
+**Güncelleme (16 Kasım, karar 43).** Kurala isteğe bağlı `everyone` alanı eklendi: "tüm
+kullanıcılar" yalnızca bu açık işaretle yazılır, koşul listesi o zaman boştur. İşaretsiz boş
+liste hâlâ hatadır; bu kararın "en az bir koşul" kuralı o yüzden yerinde.
+
 ---
 
 ## 14. Kitle açıklamasını backend üretir, Claude yalnızca yorumlarını bildirir
@@ -331,7 +404,7 @@ eşlemesini kendimiz yazıp test ederiz.
 
 ---
 
-## 17. İçerik tek dilde; dile göre içerik bonusu yapılmadı
+## 17. İçerik tek dilde; dile göre içerik bonusu yapılmadı (karar 30 ile değişti)
 
 **Karar.** Kampanya başına tek bir içerik seti üretilir (`sms`, `email.subject`, `email.body`).
 Seed'deki `language = en` kullanıcılar da aynı metni alır. Bonus README'de "yapılmadı" olarak
@@ -413,7 +486,7 @@ Gerçek bir provider'a geçerken `content.checkField` içine eklenir.
 
 ---
 
-## 20. Segment kuralının kapsamı şimdilik genişletilmiyor; kısmi kural yine yok
+## 20. Segment kuralının kapsamı şimdilik genişletilmiyor; kısmi kural yine yok (kapsam kısmı karar 25, 38, 40, 43, 45 ile değişti)
 
 **Bağlam.** Örnek brief tek bir durum. Gerçek bir pazarlamacı üyelik tarihi, sadakat seviyesi,
 cihaz, ürün görüntüleme, "en az 3 kez", toplam harcama, sipariş sayısı ve iç içe VE / VEYA da
@@ -453,6 +526,11 @@ yakalayamaz. Savunma, prompt'taki açık yasak ve pazarlamacının kuraldan tür
 **Alternatif.** Kısmi kural: `rule` + `unsupported: [...]` birlikte döner, arayüz uyarı gösterir,
 karar pazarlamacıya kalır. Pazarlamacıya bir başlangıç verir; ama eksik koşullu kural her zaman
 daha geniş kitledir ve uyarı gözden kaçarsa onaylanır.
+
+**Güncelleme (16 Kasım).** Bu kararın iki yarısından biri değişti, biri duruyor. Kapsam
+sonradan genişledi: olay sayısı, üyelik tarihi ve metrikler (25), tek seviye grup (38), sayı üst
+sınırı, ortalama ve kategori bazında metrik (40), tüm kullanıcılar (43), sadakat seviyesi (45).
+"Kısmi kural yok" yarısı aynen geçerli: ifade edilemeyen istek atlanmaz, kural üretilmez.
 
 ---
 
@@ -523,6 +601,10 @@ bir `rendered_body` kolonu eklenir.
 **Alternatif.** Kuyruğa alırken doldurmak: her alıcının metni onayda üretilip satıra yazılır.
 Gönderilen metin denetlenebilir ve worker çok basit olur; ama kuyruğa alma Go'da döngü + toplu
 ekleme gerektirir ve izin değişikliği için yine gönderimde ayrı kontrol gerekir.
+
+**Güncelleme (16 Kasım, karar 44).** "Gönderilen metin satırda tutulmaz" kısmı değişti: worker,
+sağlayıcının kabul ettiği doldurulmuş metni `sent` durumuyla aynı UPDATE'te satıra yazar.
+Şablonun gönderim anında doldurulması ve alıcıların onayda dondurulması aynen geçerli.
 
 ---
 
@@ -1106,6 +1188,10 @@ bir kampanyada belirli birini ya da bir grubu bulmak mümkün değildi.
 - *Sınırı:* ad araması `ILIKE` ile yapılır; veritabanının harf kuralları Türkçe değilse "I" ile
   "ı" eşleşmeyebilir. Ad aramasında indeks yok; çok büyük kampanyada yavaşlar.
 
+**Güncelleme (16 Kasım, karar 44).** "Dışa aktarma yok" kısmı değişti: liste CSV olarak
+indirilebilir. Bu kararın gerekçesi (dosya kişisel veriyi dışarı taşır) çözümü belirledi:
+dosyada adresler listede olduğu gibi maskelidir. Maskelemenin backend'de olması aynen geçerli.
+
 ---
 
 ## 34. Mock sağlayıcıda kalıcı ret: bazı alıcılara hiç ulaşılamaz
@@ -1235,6 +1321,11 @@ için mock'un davranışı ürünün davranışı gibi görünür.
   uzunluğa ve değişkenlere bakar, anlamına değil.
 - **Sınır hatasının dili.** "Son 0 günde" için yanıt "model geçerli bir kural üretemedi"dir;
   doğru ama pazarlamacıya "gün sayısı 1–365 arası olmalı" demek daha yardımcı olurdu.
+
+**Güncelleme (16 Kasım, karar 43 ve 45).** Mock'un reddettikleri listesinden iki istek çıktı:
+başka koşul yokken "herkese" / "tüm kullanıcılara" artık `everyone` kuralı üretir, "altın /
+gümüş / bronz üye" de sadakat seviyesi koşulu. İlke aynı: mock tanımadığı bir niteliği atıp
+kalanıyla kural kurmaz.
 
 ---
 
@@ -1477,6 +1568,21 @@ karar 36'daki ilkenin uygulamasıdır (ifade et ya da reddet, sessizce atma):
   kitleye giriyordu. Her yan kendi başına eşleştirilir (`clauses`); okuma yorum olarak gösterilir.
   Çalışan sistemde sayı, iki yarının ayrı sayımlarının toplamına eşit çıktı (733 + 245 = 978).
   Şehir yalnızca bir yanda ise eski okuma geçerlidir: şehir VE (A VEYA B).
+
+---
+
+## Ek not (karar 38'e): "ya da" ile "veya" aynı okunur (16 Kasım)
+
+Dilbilgisinde "ya da" birbirini dışlayan seçenekler için kullanılır; gündelik yazıda ikisi
+aynıdır. Sistem ikisini de **kapsayan veya** olarak okur: iki koşuldan en az birine uyan,
+ikisine birden uyan dahil. Neden: kitle seçiminde dışlayan okuma neredeyse hiç kastedilmez.
+"Kadınlara ya da son 7 günde sepete ekleyenlere gönder" diyen pazarlamacı, sepete eklemiş bir
+kadının mesajı almamasını istemiyordur; dışlayan okuma o kişiyi kitleden çıkarırdı.
+
+"Yalnızca birine uyanlar" istenirse açık yazılmalıdır ("ama ikisine birden uyanlara gönderme");
+bu, iki "ve" grubunun "veya"sı olarak ifade edilebilir ve gerçek modelle denendi (karar 41'in
+eki). Bedeli: brief "ya da"yı dışlayan anlamda kullandıysa sistem bunu fark etmez ve ayrıca
+uyarmaz; pazarlamacının güvencesi kitle ekranındaki açıklama ve kişi sayısıdır.
 
 ---
 

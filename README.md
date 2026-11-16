@@ -24,6 +24,16 @@ Bu komut sırayla:
 4. API'yi ve içindeki gönderim worker'ını açar (`http://localhost:8080`),
 5. arayüzü açar: **http://localhost:3000**
 
+İlk kurulum, Go, Node ve Postgres imajları indirildiği için birkaç dakika sürebilir; sonraki
+açılışlar bir iki dakikadır. Şu dört port boş olmalı; biri doluysa o servis açılmaz:
+
+| Port | Servis |
+|---|---|
+| 3000 | Arayüz |
+| 8080 | API |
+| 8090 | Mock SMS / email provider |
+| 5433 | Postgres (yerel bir Postgres ile çakışmasın diye 5432 değil) |
+
 API key gerekmez; key yokken her şey mock LLM ile çalışır. Gerçek Claude ile denemek için:
 
 ```bash
@@ -62,7 +72,9 @@ dönülebilir; her adımın ana düğmeleri ekranın altında sabit durur.
 1. **Brief.** Kampanyayı kendi cümlelerinle yaz ya da hazır örneklerden birini seç.
 2. **Kitle.** Kuraldan türetilen açıklama, modelin yorumları ve kanal bazlı kişi sayıları.
    "Koşulları düzenle" bir form açar: koşullar listeden seçilerek değiştirilir, eklenir ya da
-   kaldırılır; uygulandığında kural yeniden doğrulanır ve sayılar güncellenir.
+   kaldırılır; uygulandığında kural yeniden doğrulanır ve sayılar güncellenir. Yanda kitlenin
+   dil ve sadakat seviyesi dağılımı görünür. Brief açıkça herkesi istiyorsa ("tüm kullanıcılara
+   gönder") kural koşulsuzdur ve ekran bunu uyarıyla söyler; aynı seçenek formun başında da var.
 3. **İçerik ve onay.** SMS ve email metinleri ekrana akar. Bittikten sonra düzenlenebilir;
    sayaçlar değişkenler doldurulmuş halini ölçer, yanda örnek bir alıcı için önizleme durur.
    Gönderim hemen yapılabilir ya da ileri bir tarihe zamanlanabilir; brief'te bir zaman
@@ -81,12 +93,14 @@ Sağ üstteki **Kampanyalar** tüm kampanyaları listeler: zamanlanmış, gönde
 ve iptal edilmiş olanlar. Bir satıra tıklayınca o kampanyanın panosu açılır; zamanlanmış bir
 kampanya oradan iptal edilir. Panodaki "Alıcıları gör" butonu, mesajların kimlere gittiğini ve gitmeyenlerin nedenini
 gösteren bir panel açar (adresler maskeli); liste duruma, kanala, dile, şehre ve ada göre
-süzülür. Kampanyalar listesi de duruma ve metne göre süzülür. Mock sağlayıcı alıcıların yaklaşık
+süzülür. Teslim edilen satırda "Giden metni gör" o kişiye giden doldurulmuş metni gösterir;
+"CSV indir" süzgece uyan bütün alıcıları, yine maskeli adreslerle, dosya olarak verir. Kampanyalar listesi de duruma ve metne göre süzülür. Mock sağlayıcı alıcıların yaklaşık
 %2'sini kalıcı olarak reddettiği için her kampanyada birkaç "başarısız" mesaj görülür. Ekranlar adreslenebilir (`#/olustur`, `#/kampanyalar`, `#/kampanya/12`), yani
 sayfa yenilense de aynı yerde kalır.
 
-Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, üyelik
-tarihi, sepet, satın alma, harcama ve sipariş sayısı ifadelerini tanır; içerik için brief'teki
+Mock LLM bir dil modeli değil, anahtar kelime eşleştiricidir: şehir, dil, cinsiyet, yaş, sadakat
+seviyesi ("altın üyeler"), üyelik tarihi, sepet, satın alma, harcama ve sipariş sayısı
+ifadelerini, başka koşul yokken de "herkese" / "tüm kullanıcılara" isteğini tanır; içerik için brief'teki
 indirim oranını sabit bir metne yerleştirir (Türkçe ya da İngilizce). Çeviri yapmaz: diğer dil
 istendiğinde o dildeki sabit metnini yazar, ana metne elle yapılan değişikliği taşımaz. Çıktısı
 gerçek modelinkiyle aynı doğrulamadan geçer. Brief'e `#demo-retry` eklenirse içerik adımında ilk deneme bilerek reddedilir ve yeniden
