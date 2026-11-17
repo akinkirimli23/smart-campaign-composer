@@ -11,10 +11,6 @@ Kayıtlar proje ilerledikçe eklenir; eski kararlar değişirse silinmez, günce
 kullanıldığı için sabittir. Değişen karar silinmez: eski kayıt yerinde durur, sonuna
 "Güncelleme" notu düşülür ve aşağıdaki tabloda yenisini gösterir.
 
-Kayıtlarda geçen README "Bilinen eksikler" ve "Sonraya bırakılanlar" bölümleri 17 Kasım'da
-README'den kaldırıldı (README yalnızca yapılanı anlatır); o atıflar yazıldıkları günün
-durumudur. Her kararın sınırı kendi kaydındaki "Bedeli / sınırı" kısmındadır.
-
 **Önce bunlar.** Sistemin nasıl kurulduğunu en çok bu kararlar belirledi:
 
 | Konu | Kararlar |
@@ -712,7 +708,7 @@ koşullar için de Go'da yazılmış referans hesapla karşılaştırılarak tes
 - Metrikler her sorguda olay tablosundan hesaplanır. Seed boyutunda sorun değil; büyük veride
   kullanıcı başına özet tablo gerekir (DECISIONS 4'teki ödünleşim).
 
-**Hâlâ yok** (README "Sonraya bırakılanlar"): tüm kullanıcılara gönderim, iç içe VE / VEYA
+**Hâlâ yok:** tüm kullanıcılara gönderim, iç içe VE / VEYA
 grupları, ülke, sadakat seviyesi, cihaz, ürün görüntüleme, uygulama / email açma.
 
 ---
@@ -1650,7 +1646,7 @@ verilir ve bu bir yorum olarak gösterilir; eskiden kategori sessizce düşüyor
 
 **Alternatif.** Seed'e yeni olay türleri eklemek (ürün görüntüleme, favori): Davranış listesini
 gerçekten uzatırdı, ama veri üretimini değiştirir, referans sayıları korumak için özel bir yol
-ister ve teslime iki gün kala en riskli seçenekti. "Sonraya bırakılanlar"a uygun bir iş.
+ister ve teslime iki gün kala en riskli seçenekti. Sonraya bırakıldı.
 
 **Güncelleme notu (karar 25).** Karar 25'in "ifade edilemeyenler" listesindeki "en fazla N kez"
 ve "kategori bazında harcama" bu kararla ifade edilebilir oldu; kesin "büyüktür" hâlâ yok.
@@ -1807,7 +1803,7 @@ ediyordu (bir test bunu "çelişki değil" diye bilerek geçiriyordu).
   veya son 90 günde yapmadı", "elektronik aldı veya hiçbir şey almadı".
 - Prompt: brief'in dediği, ifade edilebilsin diye değiştirilmez. Birbiriyle çelişen istekler ve
   kitle tarif etmeyen istek ("herkese gönder") `unsupported` döner; "ve" "veya"ya çevrilmez.
-- README'deki "koşulsuz kural bilerek yasak" kararının (Sonraya bırakılanlar) arka kapısı
+- "Koşulsuz kural bilerek yasak" kararının arka kapısı
   böylece kapandı; açık bir "tüm kullanıcılar" seçeneği hâlâ sonraya bırakılmış durumda.
 
 **Düzeltmeden sonra (gerçek model).** Çelişkili brief ve "tüm kullanıcılara" reddediliyor,
@@ -1850,7 +1846,7 @@ edemediği. Hepsinde ortak ilke karar 15: ifade edilemeyen koşul atlanmaz ya da
 | "İstanbul'da sepete ekledikten sonra 3 gün içinde almayanlara veya Ankara'da 1000 TL üzeri harcayanlara gönder" | Olayların sırası ve birbirine göre zamanı ifade edilemiyor | Olay koşulu "dönemde oldu / olmadı" der; iki olayı sıraya koyan koşul yok (karar 7) |
 | "Uygulamayı son bir haftada açmayan kullanıcılara bildirim gönder" | Uygulama açma bir olay olarak yok | Olay türleri kapalı küme: sepete ekleme ve satın alma |
 | "Son 30 günde alışveriş yapan ve son 30 günde hiç alışveriş yapmayan İstanbullulara gönder" | İki koşul aynı anda sağlanamaz; hangisinin kastedildiği netleştirilmeli | Çelişki: "ve" altında doğrulayıcı reddeder, "veya"ya çevirmek karar 42 ile yasak |
-| "Tüm kullanıcılara gönder" | Brief bir hedef kitle tanımlamıyor | Koşulsuz kural bilerek yasak (README "Sonraya bırakılanlar"); herkesi seçen koşul çifti karar 42 ile reddedilir. **Güncelleme: karar 43 ile artık destekleniyor (`everyone`)** |
+| "Tüm kullanıcılara gönder" | Brief bir hedef kitle tanımlamıyor | Koşulsuz kural bilerek yasak; herkesi seçen koşul çifti karar 42 ile reddedilir. **Güncelleme: karar 43 ile artık destekleniyor (`everyone`)** |
 | "18 yaşından küçük ve 65 yaşından büyük kullanıcılara gönder" | Biri aynı anda ikisi olamaz; "veya" ile yazılması istenir | Aynı çelişki kuralı; günlük dildeki "ikisi de" okuması bilerek seçilmez |
 
 İlk yedisi biçimin ya da verinin sınırıdır ve kalıcıdır (yeni koşul tipi ya da veri eklenene
@@ -1859,7 +1855,7 @@ arayüz gerekçeyi ve ifadeyi gösterir, brief düzeltilip yeniden gönderilir.
 
 ## 43. "Tüm kullanıcılara gönder" desteklenir: kuralda açık bir `everyone` işareti
 
-**Bağlam.** Koşulsuz kural baştan beri yasaktı (README "Sonraya bırakılanlar"; karar 42 de
+**Bağlam.** Koşulsuz kural baştan beri yasaktı (karar 42 de
 modelin "yaptı veya yapmadı" ile herkese açılmasını kapattı). Yasağın nedeni kazaydı: modelin
 koşulları unutup herkese gönderim yapması. Ama isteğin kendisi meşru: bir duyurudan bütün
 müşterilerin istisnasız haberdar olması istenebilir. Gerçek model "Tüm kullanıcılara gönder"
@@ -1919,8 +1915,7 @@ edildi (gramer sınırı aşılmadı).
   listesine bağlı; listede olmayan bir nitelik "herkese" ile birlikte yazılırsa mock `everyone`
   döner.
 
-**Güncellenen kayıtlar.** README "Sonraya bırakılanlar"daki "tüm kullanıcılara gönderim" satırı
-ve karar 42'nin ekindeki "Tüm kullanıcılara gönder" satırı bu kararla geçersiz: brief artık
+**Güncellenen kayıtlar.** Karar 42'nin ekindeki "Tüm kullanıcılara gönder" satırı bu kararla geçersiz: brief artık
 kural üretir. Karar 42'nin kendisi (koşul çiftiyle herkes yasak) geçerli. `docs/brief-seti.md`
 13 Kasım'daki çalıştırmayı anlatır; oradaki "herkese gönder: kural üretilmedi" o günün
 davranışıdır.
@@ -1930,7 +1925,7 @@ davranışıdır.
 **Bağlam.** İkisi de bilinçli olarak yapılmamıştı. Karar 22: şablon gönderim anında doldurulur ve
 metin satırda tutulmaz, çünkü şablon ve kullanıcıdan yeniden üretilebilir. Karar 33: alıcı
 listesi dışa aktarılmaz, çünkü dosya kişisel veriyi dışarı taşır ve indirildiği anda eskir.
-README "Sonraya bırakılanlar"da duruyorlardı; kullanıcı ikisinin de eklenmesini istedi.
+Kullanıcı ikisinin de eklenmesini istedi.
 
 ### Giden metin
 
@@ -2099,8 +2094,7 @@ olmadı.
 
 **Güncellenen kayıtlar.** Karar 41'deki "düz koşul şemaları `$defs` altında bir kez tanımlanır"
 geçerli; seçeneklerin sayısı değişti (her nitelik için bir seçenek yerine şehir + kısa kümeler).
-Karar 42'nin ekindeki "sadakat programında altın üye" satırı ve README "Sonraya
-bırakılanlar"daki sadakat seviyesi maddesi bu kararla geçersiz. `docs/brief-seti.md` 13 Kasım'ı
+Karar 42'nin ekindeki "sadakat programında altın üye" satırı bu kararla geçersiz. `docs/brief-seti.md` 13 Kasım'ı
 anlatır; oradaki "sadakat seviyesi veride yok" o günün durumudur.
 
 **Ek (karar 45'e): kitle ekranında seviye dağılımı.** Kitle yanıtına `loyalty` eklendi:

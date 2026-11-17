@@ -16,9 +16,7 @@ Case'in kapsam notu: her şeyi yapmak yerine çekirdek akışı sağlam yap, yet
   eski kaydı silme, nedenini yaz. Başındaki "Hızlı bakış" tablosunda her kararın durumu var:
   yeni karar eklersen ya da birini değiştirirsen o satırı da güncelle. Numaralar koddan ve
   dokümanlardan başvurulduğu için sabittir.
-- `README.md`: kapsam durumu, kurulum, kullanım, mimari özeti, testler, bonuslar. "Bilinen
-  eksikler" ve "Sonraya bırakılanlar" bölümleri 17 Kasım'da kullanıcının kararıyla kaldırıldı:
-  README yalnızca yapılanı anlatır. Bir özelliğin sınırı ya da ertelenen bir iş çıkarsa
+- `README.md`: kapsam durumu, kurulum, kullanım, mimari özeti, testler, bonuslar. README yalnızca yapılanı anlatır. Bir özelliğin sınırı ya da ertelenen bir iş çıkarsa
   README'ye değil, ilgili DECISIONS kaydının "Bedeli / sınırı" kısmına yaz.
 
 ## Komutlar
